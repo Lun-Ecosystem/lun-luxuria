@@ -1,0 +1,17 @@
+name: Inbox
+description: Une observation, un retour ou une idée. Triée une fois par semaine, jamais traitée au fil de l'eau.
+title: '[inbox] '
+labels: ['inbox']
+body:
+  - type: textarea
+    id: observation
+    attributes:
+      label: Observation
+      description: Ce qui a été constaté ou imaginé.
+    validations:
+      required: true
+  - type: textarea
+    id: contexte
+    attributes:
+      label: Contexte
+      description: Où, quand, pendant quel chantier.

@@ -1,0 +1,38 @@
+/* Copie générée depuis lun-docs/design/tokens.css : ne pas modifier ici */
+/* Jetons de référence de l’écosystème Lun' (règle B : socle commun, accent du monde).
+   Seule source : les dépôts en gardent une copie générée par tools/sync-tokens.mjs. */
+:root {
+  /* socle Lun' : identique pour toutes les interfaces */
+  --encre:#0D0B09; --encre-2:#1A1612; --ivoire:#F0EBE1; --papier:#E8E2D6; --lune:#C8C0B0; --lavis:#8A9BAE; --rouge:#7A1818;
+  --fond:var(--encre); --surface-1:var(--encre-2); --surface-2:#221D18; --surface-3:#2B251F;
+  --survol:rgba(240,235,225,.045); --appui:rgba(240,235,225,.08);
+  --bordure:rgba(200,192,176,.12); --bordure-forte:rgba(200,192,176,.24);
+  --texte:var(--ivoire); --texte-2:var(--lune); --texte-3:#958C7E;
+  /* tons : couleur, fond doux, bordure (communs) */
+  --ok:#7CC29B; --ok-doux:rgba(124,194,155,.12); --ok-bord:rgba(124,194,155,.38);
+  --attention:#E0B36A; --attention-doux:rgba(224,179,106,.12); --attention-bord:rgba(224,179,106,.38);
+  --danger:#E3A0A0; --danger-plein:#7A1818; --danger-doux:rgba(227,160,160,.10); --danger-bord:rgba(227,160,160,.38);
+  --info:#8A9BAE; --info-doux:rgba(138,155,174,.12); --info-bord:rgba(138,155,174,.38);
+  --ia:#B9A7E0; --ia-doux:rgba(185,167,224,.11); --ia-bord:rgba(185,167,224,.36);
+  /* forme */
+  --r-1:6px; --r-2:10px; --r-3:14px; --r-rond:999px;
+  --ombre-1:0 1px 2px rgba(0,0,0,.35);
+  --ombre-2:0 12px 32px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+  --serif:'Cormorant Garamond',Georgia,serif; --sans:'Inter',system-ui,sans-serif;
+  /* marques du monde (sceau, fil, étoile) : ivoire atténué */
+  --marque:rgba(240,235,225,.78); --marque-doux:rgba(240,235,225,.22);
+  /* cadre de focus façon Ender Lilies : filet clair et halo très doux */
+  --cadre-focus:0 0 0 1px rgba(240,235,225,.34), 0 0 14px rgba(240,235,225,.07);
+}
+
+/* monde : seule couche qui change d’une interface à l’autre.
+   data-monde se pose sur la racine de chaque vue, pas sur la page.
+   Chaque monde est encadré par @monde / @fin-monde : tools/sync-tokens.mjs --monde le filtre. */
+
+/* magenta Luxuria : sur son fond de scène (contraste du libellé ivoire : 7,3) */
+[data-monde='luxuria'] {
+  --accent:#8A1E5A; --accent-survol:#9A2767; --accent-texte:#E7A9CB;
+  --accent-doux:rgba(138,30,90,.26); --accent-bord:rgba(231,169,203,.40);
+  --scene:#100409;
+}
+

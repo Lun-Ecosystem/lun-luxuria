@@ -1,0 +1,37 @@
+name: Chantier
+description: Un travail à mener, avec un périmètre figé et des critères de fin.
+title: '[chantier] '
+body:
+  - type: textarea
+    id: besoin
+    attributes:
+      label: Besoin
+      description: Ce qu'il faut obtenir, et pourquoi.
+    validations:
+      required: true
+  - type: textarea
+    id: criteres
+    attributes:
+      label: Critères de fin
+      description: Vérifiables en local, de bout en bout. Le chantier se ferme quand ils sont prouvés.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: dropdown
+    id: niveau
+    attributes:
+      label: Niveau
+      description: Choisit l'agent de dev. Poser aussi l'étiquette niveau:* correspondante.
+      options:
+        - trivial
+        - standard
+        - critique
+        - exceptionnel
+    validations:
+      required: true
+  - type: textarea
+    id: hors-perimetre
+    attributes:
+      label: Hors périmètre
+      description: Ce que ce chantier ne fait pas.

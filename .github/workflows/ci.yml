@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: No internal address
+        run: |
+          git clone --depth 1 https://github.com/Lun-Ecosystem/lun-docs "$RUNNER_TEMP/lun-docs"
+          node "$RUNNER_TEMP/lun-docs/tools/check-repo.mjs" --addresses .
+      - name: Conventional PR title
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf '%s\n' "$TITLE" | grep -Eq '^(feat|fix|docs|chore|ci|test|refactor)(\([a-z0-9-]+\))?!?: .+' \
+            || { echo "PR title must follow Conventional Commits: $TITLE"; exit 1; }

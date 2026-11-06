@@ -1,0 +1,10 @@
+#!/bin/sh
+# Core privé : refuse tout push vers main (pas de protection de branche sans GitHub Pro).
+# Activer avec : git config core.hooksPath hooks
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "pre-push: push vers main refusé. Pousser une branche et ouvrir une PR." >&2
+    exit 1
+  fi
+done
+exit 0
