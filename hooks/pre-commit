@@ -1,0 +1,3 @@
+#!/bin/sh
+# Format and lint before every commit. Enable with: git config core.hooksPath hooks
+npm run --silent format:check && npm run --silent lint

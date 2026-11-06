@@ -1,0 +1,9 @@
+#!/bin/sh
+# Conventional Commits. Enable with: git config core.hooksPath hooks
+pattern='^(feat|fix|docs|chore|ci|test|refactor)(\([a-z0-9-]+\))?!?: .+'
+first_line=$(head -n 1 "$1")
+case "$first_line" in Merge*|Revert*) exit 0 ;; esac
+if ! printf '%s\n' "$first_line" | grep -Eq "$pattern"; then
+  echo "commit-msg: \"$first_line\" ne suit pas Conventional Commits (feat|fix|docs|chore|ci|test|refactor)." >&2
+  exit 1
+fi
