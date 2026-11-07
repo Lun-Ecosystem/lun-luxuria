@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LiveEvent, SendEvent } from './brain.ts';
-import { LocalBrain, sentences, unsafeAddress } from './local.ts';
+import { LocalBrain, sentences, spoken, unsafeAddress } from './local.ts';
 import { DEFAULTS, type Settings } from './settings.ts';
 
 const settings = (model: Partial<Settings['model']> = {}): Settings => ({
@@ -64,6 +64,43 @@ describe('sentences', () => {
       rest: 'M. Durand arr',
     });
   });
+
+  it('says the marks a model writes, and leaves the text it means', () => {
+    expect(
+      [
+        '*Il pleut.',
+        'Prends.*',
+        '_Il pleut.',
+        'Prends._',
+        '![une carte](u.png)',
+        '- [ ] acheter',
+        '+ plus',
+        '> > dit-il',
+        '~~barré~~',
+        '2*3*4 font 24',
+        'ma_variable_longue',
+      ].map(spoken),
+    ).toEqual([
+      'Il pleut.',
+      'Prends.',
+      'Il pleut.',
+      'Prends.',
+      'une carte',
+      'acheter',
+      'plus',
+      'dit-il',
+      'barré',
+      '2*3*4 font 24',
+      'ma_variable_longue',
+    ]);
+  });
+
+  it('keeps a list number and a closing emphasis with their sentence', () => {
+    expect(sentences('1. Acheter du pain.\n**Il pleut.** Prends').done).toEqual([
+      '1. Acheter du pain.',
+      '**Il pleut.**',
+    ]);
+  });
 });
 
 describe('unsafeAddress', () => {
@@ -92,6 +129,25 @@ describe('LocalBrain', () => {
       { type: 'speech', id: 2, n: 2, text: 'Comment vas-tu', why: 'reply' },
       { type: 'speech-end', id: 2, why: 'reply' },
     ]);
+  });
+
+  it('says the reply without its markdown, and the thread keeps it written', async () => {
+    const text =
+      '## Le temps\n**Il pleut.** Prends un `parapluie`.\n- _vraiment_ utile\n1. Voir [la carte](https://x.test/m)\n---\n> Bonne journée.';
+    const f = model([text.slice(0, 20), text.slice(20)]);
+    const { heard, turn } = harness(f as unknown as typeof fetch);
+    const events = await turn('Météo ?');
+    expect(events.at(-1)).toMatchObject({ type: 'done', message: { text } });
+    const said = heard.flatMap((e) => (e.type === 'speech' ? [e] : []));
+    expect(said.map((e) => e.text)).toEqual([
+      'Le temps',
+      'Il pleut.',
+      'Prends un parapluie.',
+      'vraiment utile',
+      'Voir la carte',
+      'Bonne journée.',
+    ]);
+    expect(said.map((e) => e.n)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it('names the agent in the system turn, sends the key, keeps what was said in the context', async () => {
