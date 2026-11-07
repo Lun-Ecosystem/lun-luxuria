@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import * as autostart from '@tauri-apps/plugin-autostart';
+import { untrack } from 'svelte';
 import { STATE_LABELS, type BodyState } from '../body/body.ts';
 import type { Session } from '../session.svelte.ts';
 import type { Settings } from '../settings.ts';
@@ -14,7 +15,10 @@ export function trayOf(state: BodyState): TrayState {
 }
 
 export interface TrayDeps {
-  call: (cmd: 'tray_state', args: { state: TrayState; tooltip: string }) => Promise<unknown>;
+  call: (
+    cmd: 'tray_state',
+    args: { state: TrayState; tooltip: string; silenced: boolean },
+  ) => Promise<unknown>;
   listen: (event: 'tray', on: (e: { payload: string }) => void) => Promise<() => void>;
   win: () => Pick<ReturnType<typeof getCurrentWindow>, 'show' | 'unminimize' | 'setFocus' | 'close'>;
 }
@@ -24,9 +28,14 @@ const tauri: TrayDeps = { call: invoke, listen, win: getCurrentWindow };
 /** The tray icon follows the state, and its menu shows the window, switches the mute, or quits. */
 export function trayFollows(session: Session, deps: TrayDeps = tauri): void {
   const state$ = $derived(trayOf(session.state));
+  // The mute entry says the mute itself: unreachable hides it on the icon, not on the entry.
+  const silenced$ = $derived(session.silenced);
   $effect(() => {
     const state = state$;
-    void deps.call('tray_state', { state, tooltip: `Lun'Luxuria : ${STATE_LABELS[state]}` }).catch(() => {});
+    const silenced = silenced$;
+    void deps
+      .call('tray_state', { state, tooltip: `Lun'Luxuria : ${STATE_LABELS[state]}`, silenced })
+      .catch(() => {});
   });
   void deps.listen('tray', ({ payload }) => {
     const w = deps.win();
@@ -59,19 +68,26 @@ export function autostartFollows(session: Session, plugin: Autostart = autostart
     })
     .catch((err: unknown) => (session.startSaid = `Démarrage avec Windows illisible : ${String(err)}`));
 
-  const wanted$ = $derived(session.settings.display.startWithWindows);
-  $effect(() => {
-    const wanted = wanted$;
-    if (known === undefined || wanted === known) return;
-    (wanted ? plugin.enable() : plugin.disable()).then(
-      () => {
+  // One call at a time, until Windows says what the switch says: a quick on then off ends off.
+  let queue = Promise.resolve();
+  const sync = async () => {
+    while (known !== undefined) {
+      const wanted = untrack(() => session.settings.display.startWithWindows);
+      if (wanted === known) return;
+      try {
+        await (wanted ? plugin.enable() : plugin.disable());
         known = wanted;
         session.startSaid = '';
-      },
-      (err: unknown) => {
+      } catch (err) {
         session.startSaid = `Démarrage avec Windows refusé : ${err instanceof Error ? err.message : String(err)}`;
-        put(known as boolean);
-      },
-    );
+        put(known);
+        return;
+      }
+    }
+  };
+  const wanted$ = $derived(session.settings.display.startWithWindows);
+  $effect(() => {
+    void wanted$;
+    queue = queue.then(sync);
   });
 }

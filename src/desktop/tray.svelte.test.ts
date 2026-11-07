@@ -17,7 +17,7 @@ beforeEach(() => {
 
 function tray() {
   let menu: (id: string) => void = () => {};
-  const calls: { state: string; tooltip: string }[] = [];
+  const calls: { state: string; tooltip: string; silenced: boolean }[] = [];
   const win = {
     show: vi.fn(async () => {}),
     unminimize: vi.fn(async () => {}),
@@ -26,7 +26,8 @@ function tray() {
   };
   const deps: TrayDeps = {
     call: vi.fn(
-      async (_cmd: string, args: { state: string; tooltip: string }) => void calls.push(args),
+      async (_cmd: string, args: { state: string; tooltip: string; silenced: boolean }) =>
+        void calls.push(args),
     ) as TrayDeps['call'],
     listen: vi.fn(async (_e: string, on: (e: { payload: string }) => void) => {
       menu = (id) => on({ payload: id });
@@ -56,7 +57,22 @@ describe('the tray icon', () => {
     expect(t.calls).toHaveLength(1);
     session.toggleMute();
     await settle();
-    expect(t.calls.at(-1)).toEqual({ state: 'silenced', tooltip: "Lun'Luxuria : En sourdine" });
+    expect(t.calls.at(-1)).toEqual({
+      state: 'silenced',
+      tooltip: "Lun'Luxuria : En sourdine",
+      silenced: true,
+    });
+    stop();
+  });
+
+  it('silenced and unreachable at once, the mute entry still says the mute', async () => {
+    const session = new Session();
+    const t = tray();
+    const stop = $effect.root(() => trayFollows(session, t.deps));
+    session.toggleMute();
+    session.linked = false;
+    await settle();
+    expect(t.calls.at(-1)).toMatchObject({ state: 'unreachable', silenced: true });
     stop();
   });
 
@@ -120,6 +136,25 @@ describe('starting with Windows', () => {
     withStart(session, false);
     await settle();
     expect(p.calls).toEqual(['enable', 'disable']);
+    stop();
+  });
+
+  it('switched on then off before Windows answers, it ends off', async () => {
+    const session = new Session();
+    const p = plugin(false);
+    let answer: () => void = () => {};
+    const enable = p.enable;
+    p.enable = () => new Promise<void>((r) => (answer = () => void enable().then(r)));
+    const stop = $effect.root(() => autostartFollows(session, p));
+    await settle();
+    withStart(session, true);
+    await settle();
+    withStart(session, false);
+    await settle();
+    answer();
+    await settle();
+    expect(p.calls).toEqual(['enable', 'disable']);
+    expect(await p.isEnabled()).toBe(false);
     stop();
   });
 

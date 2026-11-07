@@ -41,7 +41,8 @@
   {/if}
   <SettingsRow
     label="Démarrer avec Windows"
-    hint={session.startSaid || 'À l’ouverture de la session, avec son icône près de l’horloge.'}
+    hint="À l’ouverture de la session, la fenêtre et son icône près de l’horloge."
+    error={session.startSaid || null}
   >
     {#snippet children({ labelId })}
       <Switch

@@ -61,9 +61,14 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// The page's state on the icon: `present`, `silenced` or `unreachable`, and its tooltip.
+/// The page's state on the icon: `present`, `silenced` or `unreachable`, its tooltip, and the mute for the entry.
 #[tauri::command]
-pub fn tray_state(app: AppHandle, state: String, tooltip: String) -> Result<(), String> {
+pub fn tray_state(
+    app: AppHandle,
+    state: String,
+    tooltip: String,
+    silenced: bool,
+) -> Result<(), String> {
     if !matches!(state.as_str(), "present" | "silenced" | "unreachable") {
         return Err(format!("état inconnu : {state}"));
     }
@@ -74,10 +79,9 @@ pub fn tray_state(app: AppHandle, state: String, tooltip: String) -> Result<(), 
     tray.set_icon(Some(Image::new_owned(rgba, base.width(), base.height())))
         .map_err(|e| e.to_string())?;
     tray.set_tooltip(Some(tooltip)).map_err(|e| e.to_string())?;
-    // shortcut: unreachable hides a mute that is also on, the entry then shows unchecked; pass the mute itself if it misleads.
     app.state::<MuteItem>()
         .0
-        .set_checked(state == "silenced")
+        .set_checked(silenced)
         .map_err(|e| e.to_string())
 }
 
