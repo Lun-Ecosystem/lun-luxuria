@@ -44,6 +44,11 @@ Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des R�
 - **Le service voix** : s'il ne répond pas, l'appli peut le lancer elle-même (`uv run service.py` dans le dossier
   choisi, un argument par ligne), sans console. Sa sortie va dans `voix.log`, au dossier des journaux de l'appli
   (`%LOCALAPPDATA%\io.github.lun-ecosystem.luxuria\logs`). Il s'arrête avec l'appli, et seulement celui qu'elle a lancé.
+- **L'icône près de l'horloge** : elle dit l'un de trois états, disponible (l'icône), en sourdine (grise), injoignable
+  (grise et pâle), avec l'état en infobulle. Un clic ramène la fenêtre ; son menu l'affiche, met ou lève la sourdine, et
+  quitte comme la fermeture (la présence finit de la même façon).
+- **Démarrer avec Windows** : l'interrupteur pose ou retire l'entrée de démarrage de la session (la clé `Run` de
+  l'utilisateur). À l'ouverture, l'écran prend ce que Windows dit ; un refus s'affiche sous l'interrupteur, qui revient.
 
 ## Un tour de parole
 

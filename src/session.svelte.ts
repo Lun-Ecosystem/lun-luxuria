@@ -71,6 +71,8 @@ export class Session {
   bodySaid = $state('');
   /** In the window: whether the voice service answers, was started, or why not. */
   voiceSaid = $state('');
+  /** In the window: why starting with Windows could not be read or changed. */
+  startSaid = $state('');
   token = $state<string | null>(stored(TOKEN_KEY));
 
   /** In the window, the page's paths go where the browser's proxy sent them. */
