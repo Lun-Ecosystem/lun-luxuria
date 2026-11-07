@@ -58,6 +58,8 @@ export class Session {
   latencies = $state<{ ms: number; speculated: boolean }[]>([]);
   thread = $state<Message[]>([]);
   entered = $state(false);
+  /** The thread over the scene; in the window's small mode, it turns the thumbnail into a panel. */
+  threadOpen = $state(false);
   token = $state<string | null>(stored(TOKEN_KEY));
 
   /** In the window, the page's paths go where the browser's proxy sent them. */

@@ -1,10 +1,13 @@
 <script lang="ts">
   import { Button, CodeInput, Segmented, Toaster } from './lib/ui/index.ts';
+  import { inWindow } from './desktop/net.ts';
+  import { windowFollows } from './desktop/window.svelte.ts';
   import Reglages from './Reglages.svelte';
   import Scene from './Scene.svelte';
   import { Session } from './session.svelte.ts';
 
   const session = new Session();
+  if (inWindow) windowFollows(session);
   let code = $state('');
   let refused = $state('');
   let settingsOpen = $state(false);

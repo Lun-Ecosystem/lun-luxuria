@@ -16,7 +16,8 @@
         "title": "Lun'Luxuria",
         "width": 1280,
         "height": 760,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {

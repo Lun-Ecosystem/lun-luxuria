@@ -2,6 +2,7 @@
   import X from '@lucide/svelte/icons/x';
   import { IconButton, Segmented, SettingsCard, SettingsRow, TextArea, TextInput } from './lib/ui/index.ts';
   import Switch from './lib/ui/Switch.svelte';
+  import Fenetre from './desktop/Fenetre.svelte';
   import { inWindow, serverWarning } from './desktop/net.ts';
   import { DEFAULTS, type Settings, type TalkMode } from './settings.ts';
   import type { Session } from './session.svelte.ts';
@@ -152,6 +153,10 @@
         )}
       {/if}
     </SettingsCard>
+
+    {#if inWindow}
+      <Fenetre {session} {set} />
+    {/if}
 
     <SettingsCard title="Lui parler" description="Tout agit tout de suite. Rien ne reste figé dans le code.">
       <SettingsRow label="Dans la scène">

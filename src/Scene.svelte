@@ -8,12 +8,12 @@
   import VolumeX from '@lucide/svelte/icons/volume-x';
   import { SvelteSet } from 'svelte/reactivity';
   import { Mouth, STATE_LABELS } from './body/body.ts';
+  import { inWindow } from './desktop/net.ts';
   import Fil from './Fil.svelte';
   import { IconButton } from './lib/ui/index.ts';
   import type { Session } from './session.svelte.ts';
 
   let { session, openSettings }: { session: Session; openSettings: () => void } = $props();
-  let threadOpen = $state(false);
   const mouth = new Mouth();
   const open = $derived(mouth.next(session.level));
   const small = $derived(session.layout === 'small');
@@ -26,7 +26,12 @@
   const scale = $derived(1 + Math.min(session.level * 2.2, 0.35));
 </script>
 
-<div class={['scene', { small }]} data-etat={session.state}>
+<!-- In the window, the thumbnail moves by its background. -->
+<div
+  class={['scene', { small }]}
+  data-etat={session.state}
+  data-tauri-drag-region={small && inWindow ? '' : undefined}
+>
   <!-- Layers: body, subtitles, controls, thread. They stay apart for the stream to come. -->
   <div class="corps" aria-hidden="true">
     {#if images}
@@ -65,9 +70,9 @@
     />
     <IconButton
       icon={MessageSquare}
-      label={threadOpen ? 'Fermer le fil' : 'Ouvrir le fil'}
-      aria-pressed={threadOpen}
-      onclick={() => (threadOpen = !threadOpen)}
+      label={session.threadOpen ? 'Fermer le fil' : 'Ouvrir le fil'}
+      aria-pressed={session.threadOpen}
+      onclick={() => (session.threadOpen = !session.threadOpen)}
     />
     <IconButton
       icon={small ? Maximize2 : Minimize2}
@@ -77,7 +82,7 @@
     <IconButton icon={Settings2} label="Réglages" onclick={openSettings} />
   </div>
 
-  {#if threadOpen}
+  {#if session.threadOpen}
     <Fil {session} />
   {/if}
 </div>
