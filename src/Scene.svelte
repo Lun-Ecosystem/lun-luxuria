@@ -6,6 +6,7 @@
   import Minimize2 from '@lucide/svelte/icons/minimize-2';
   import Settings2 from '@lucide/svelte/icons/settings-2';
   import VolumeX from '@lucide/svelte/icons/volume-x';
+  import { SvelteSet } from 'svelte/reactivity';
   import { Mouth, STATE_LABELS } from './body/body.ts';
   import Fil from './Fil.svelte';
   import { IconButton } from './lib/ui/index.ts';
@@ -17,8 +18,10 @@
   const open = $derived(mouth.next(session.level));
   const small = $derived(session.layout === 'small');
   const { body } = $derived(session.settings);
-  let imageBroken = $state(false);
-  const images = $derived(body.level === 'images' && body.rest !== '' && !imageBroken);
+  // By address: a repaired address is a new one and shows at once; a broken one never loads again.
+  const broken = new SvelteSet<string>();
+  const src = $derived(open && body.talking && !broken.has(body.talking) ? body.talking : body.rest);
+  const images = $derived(body.level === 'images' && body.rest !== '' && !broken.has(body.rest));
   // The breath follows the sound really played: stopped, it is at rest at once.
   const scale = $derived(1 + Math.min(session.level * 2.2, 0.35));
 </script>
@@ -27,11 +30,8 @@
   <!-- Layers: body, subtitles, controls, thread. They stay apart for the stream to come. -->
   <div class="corps" aria-hidden="true">
     {#if images}
-      <img
-        src={open && body.talking ? body.talking : body.rest}
-        alt=""
-        onerror={() => (imageBroken = true)}
-      />
+      <!-- The address that failed, not the one shown now: the mouth may have moved meanwhile. -->
+      <img {src} alt="" onerror={(e) => broken.add(e.currentTarget.getAttribute('src') ?? src)} />
     {:else}
       <div class="souffle" style:transform="scale({scale})"></div>
     {/if}

@@ -99,6 +99,19 @@ describe('the presence', () => {
     expect(init.headers).toMatchObject({ authorization: 'Bearer t' });
   });
 
+  it('a beat the server does not take resolves to gone, any other refusal still throws', async () => {
+    let status = 410;
+    const client = new CoreClient('t', (async () =>
+      status === 204 ? new Response(null, { status }) : Response.json({}, { status })) as typeof fetch);
+    await expect(client.presence('beat', { busy: false })).resolves.toBe('gone');
+    status = 204;
+    await expect(client.presence('beat', { busy: false })).resolves.toBe('taken');
+    status = 401;
+    await expect(client.presence('beat', { busy: false })).rejects.toThrow();
+    status = 410;
+    await expect(client.presence('started')).rejects.toThrow();
+  });
+
   it('names its tab, the same on every call, so closing another tab does not end this one', async () => {
     const bodies: { state: string; tab: string }[] = [];
     const client = new CoreClient('t', (async (_url: string, init: RequestInit) => {
