@@ -1,7 +1,7 @@
 import { openMicrophone, webOutput } from './audio.ts';
 import { stateOf, type BodyState } from './body/body.ts';
 import { Conversation } from './conversation.ts';
-import type { Brain, LiveEvent, Message } from './brain.ts';
+import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
 import { CoreClient } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
 import { pageNet } from './desktop/net.ts';
@@ -14,6 +14,7 @@ import { appsOnMicrophone, busyWith, synthesize, transcribe } from './voice.ts';
 
 const SETTINGS_KEY = 'luxuria.settings';
 const MIC_KEY = 'luxuria.mic';
+const MUTE_KEY = 'luxuria.mute';
 const TOKEN_KEY = 'luxuria.token';
 const LAYOUT_KEY = 'luxuria.layout';
 const BEAT_MS = 30_000;
@@ -43,6 +44,8 @@ export class Session {
   layout = $state<Layout>(stored(LAYOUT_KEY) === 'small' ? 'small' : 'scene');
   /** A cut microphone never comes back on by itself: only the button changes this. */
   micOn = $state(stored(MIC_KEY) === 'on');
+  /** The desk mute: no capture, nothing said of herself, nothing sent. Never lifted by itself either. */
+  silenced = $state(stored(MUTE_KEY) === 'on');
   linked = $state(true);
   capturing = $state(false);
   busy = $state(false);
@@ -93,15 +96,19 @@ export class Session {
       thinking: this.thinking,
       micOn: this.capturing,
       busy: this.busy && !this.busyOverride,
+      silenced: this.silenced,
       hearing: this.hearing,
     });
   }
 
   saveSettings(next: Settings): void {
+    const p0Changed = next.speak.p0 !== this.settings.speak.p0;
     this.settings = next;
     store(SETTINGS_KEY, JSON.stringify(next));
     this.#endpointer.params = this.#params();
     void this.#applyMic();
+    // The server must know at once that a P0 will not be said here, or it would drop its notification.
+    if (p0Changed && this.entered) void this.#beat();
   }
 
   async pair(code: string): Promise<void> {
@@ -161,6 +168,7 @@ export class Session {
       settings: () => this.settings,
       layout: () => this.layout,
       keyHeld: () => this.#keyHeld,
+      silenced: () => this.silenced,
       now: () => Date.now(),
       on: (e) => {
         if (e.type === 'thinking') this.thinking = e.on;
@@ -224,14 +232,26 @@ export class Session {
   #presence = presenceKeeper(
     async () => {
       try {
-        await this.brain.presence('started', { ritual: this.settings.speak.ritual });
+        await this.brain.presence('started', {
+          ...this.#flags(),
+          ritual: this.settings.speak.ritual && !this.silenced,
+        });
         this.linked = true;
       } catch {
         this.linked = false;
       }
     },
-    () => this.brain.presence('beat', { busy: this.busy }),
+    () => this.brain.presence('beat', this.#flags()),
   );
+
+  /** Sent on every start and beat. A P0 the desk will not say goes to the phone. */
+  #flags(): PresenceFlags {
+    return {
+      busy: this.busy,
+      ...(this.silenced ? { muted: true } : {}),
+      ...(this.settings.speak.p0 ? {} : { silentAnnounce: true }),
+    };
+  }
   #announce = this.#presence.announce;
   #beat = this.#presence.beat;
 
@@ -268,7 +288,7 @@ export class Session {
 
   /** The held key, from this window or, in the desktop window, from any other. */
   holdKey(held: boolean): void {
-    if (!this.settings.key.on) return;
+    if (!this.settings.key.on || this.silenced) return;
     this.#keyHeld = held;
   }
 
@@ -296,7 +316,10 @@ export class Session {
   async #applyMic(): Promise<void> {
     if (!this.entered) return;
     const should =
-      this.micOn && this.settings.talk[this.layout] !== 'muted' && (!this.busy || this.busyOverride);
+      this.micOn &&
+      !this.silenced &&
+      this.settings.talk[this.layout] !== 'muted' &&
+      (!this.busy || this.busyOverride);
     if (should === (this.#mic !== null)) return;
     if (!should) {
       this.#mic?.stop();
@@ -335,6 +358,15 @@ export class Session {
     void this.#applyMic();
   }
 
+  /** Muting while she speaks cuts her, as the button would. */
+  toggleMute(): void {
+    if (this.speaking) this.silence();
+    this.silenced = !this.silenced;
+    store(MUTE_KEY, this.silenced ? 'on' : null);
+    void this.#applyMic();
+    if (this.entered) void this.#beat();
+  }
+
   takeBackMic(): void {
     this.busyOverride = !this.busyOverride;
     void this.#applyMic();
@@ -351,6 +383,7 @@ export class Session {
   }
 
   async write(text: string): Promise<void> {
+    if (this.silenced) return;
     try {
       await this.#convo?.write(text);
     } catch (err) {

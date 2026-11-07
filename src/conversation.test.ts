@@ -18,7 +18,7 @@ const message = (id: number): Message => ({
   at: '',
 });
 
-function setup(over: Partial<Settings> = {}, heard = 'Bonjour toi') {
+function setup(over: Partial<Settings> = {}, heard = 'Bonjour toi', silenced = () => false) {
   let clock = 1000;
   const calls: string[] = [];
   const events: ConversationEvent[] = [];
@@ -52,6 +52,7 @@ function setup(over: Partial<Settings> = {}, heard = 'Bonjour toi') {
     settings: () => ({ ...DEFAULTS, ...over }),
     layout: () => 'scene',
     keyHeld: () => false,
+    silenced,
     now: () => clock,
     on: (e) => events.push(e),
   });
@@ -229,6 +230,21 @@ describe('what is said aloud', () => {
     t.say(2, 'Oui.');
     await tick();
     expect(t.sounds).toHaveLength(1);
+  });
+
+  it('muted, only a P0 sounds, and only if its switch is on', async () => {
+    const t = setup({}, 'Bonjour toi', () => true);
+    for (const why of ['ritual', 'spontaneous', 'reply'] as const)
+      t.convo.onLive({ type: 'speech', id: 1, n: 1, text: 'x', why });
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    t.convo.onLive({ type: 'speech', id: 2, n: 1, text: 'Urgent : x.', why: 'p0' });
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    const off = setup({ speak: { ...DEFAULTS.speak, p0: false } }, 'Bonjour toi', () => true);
+    off.convo.onLive({ type: 'speech', id: 3, n: 1, text: 'Urgent : x.', why: 'p0' });
+    await tick();
+    expect(off.sounds).toHaveLength(0);
   });
 
   it('a failed turn is said, not swallowed', async () => {

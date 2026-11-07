@@ -25,6 +25,8 @@ export interface ConversationDeps {
   settings(): Settings;
   layout(): Layout;
   keyHeld(): boolean;
+  /** The desk mute: only a P0 may still be said. */
+  silenced?(): boolean;
   now(): number;
   on(e: ConversationEvent): void;
 }
@@ -69,6 +71,7 @@ export class Conversation {
   onLive(e: LiveEvent): void {
     if (e.type === 'speech') {
       const speak = this.#d.settings().speak;
+      if (this.#d.silenced?.() && e.why !== 'p0') return;
       if (e.why !== 'reply' && !speak[e.why]) return;
       this.#d.speaker.add(e.id, e.text);
     } else if (e.type === 'speech-end') {

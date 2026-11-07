@@ -1,6 +1,14 @@
 /** The states of §5.3: what is shown is what is true. */
 export type BodyState =
-  'present' | 'listening' | 'thinking' | 'speaking' | 'busy' | 'muted' | 'unreachable' | 'capped';
+  | 'present'
+  | 'listening'
+  | 'thinking'
+  | 'speaking'
+  | 'busy'
+  | 'muted'
+  | 'silenced'
+  | 'unreachable'
+  | 'capped';
 
 export const STATE_LABELS: Record<BodyState, string> = {
   present: 'Disponible',
@@ -9,6 +17,7 @@ export const STATE_LABELS: Record<BodyState, string> = {
   speaking: 'Parle',
   busy: 'Micro occupé',
   muted: 'Micro coupé',
+  silenced: 'En sourdine',
   unreachable: 'Injoignable',
   capped: 'Plafond atteint',
 };
@@ -38,11 +47,14 @@ export function stateOf(f: {
   thinking: boolean;
   micOn: boolean;
   busy: boolean;
+  /** The desk mute: she neither listens nor speaks of herself. */
+  silenced: boolean;
   hearing: boolean;
 }): BodyState {
   if (!f.linked) return 'unreachable';
   if (f.speaking) return 'speaking';
   if (f.capped) return 'capped';
+  if (f.silenced) return 'silenced';
   if (f.busy) return 'busy';
   if (f.thinking) return 'thinking';
   if (!f.micOn) return 'muted';
