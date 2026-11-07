@@ -294,7 +294,9 @@
         {@render toggle('L’accueil, à ton arrivée', undefined, s.speak.ritual, (v) =>
           set((d) => (d.speak.ritual = v)),
         )}
-        {@render toggle('Les urgences', undefined, s.speak.p0, (v) => set((d) => (d.speak.p0 = v)))}
+        {@render toggle('Les urgences', 'Vaut aussi en sourdine.', s.speak.p0, (v) =>
+          set((d) => (d.speak.p0 = v)),
+        )}
         {@render toggle(
           'La parole spontanée',
           'À activer aussi sur le serveur relié.',

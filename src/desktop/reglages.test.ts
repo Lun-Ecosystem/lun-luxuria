@@ -71,3 +71,13 @@ describe('the server’s address', () => {
     expect(JSON.parse(localStorage.getItem('luxuria.settings')!).server).toBe('https://serveur.exemple');
   });
 });
+
+describe('the desk mute', () => {
+  it('its shortcut is set in the window, and the urgent switch says it holds in the mute too', () => {
+    localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
+    const session = new Session();
+    render(Reglages, { session, close: () => {} });
+    expect(screen.getByRole('textbox', { name: 'Raccourci de la sourdine' })).toHaveValue('Control+Shift+M');
+    expect(screen.getByText('Vaut aussi en sourdine.')).toBeInTheDocument();
+  });
+});

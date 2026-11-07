@@ -8,6 +8,7 @@ const base = {
   thinking: false,
   micOn: true,
   busy: false,
+  silenced: false,
   hearing: false,
 };
 
@@ -34,5 +35,9 @@ describe('the body', () => {
     expect(stateOf({ ...base, speaking: true, thinking: true })).toBe('speaking');
     expect(stateOf({ ...base, linked: false, speaking: true })).toBe('unreachable');
     expect(stateOf({ ...base, capped: true })).toBe('capped');
+    expect(stateOf({ ...base, silenced: true, micOn: false, busy: true })).toBe('silenced');
+    expect(stateOf({ ...base, silenced: true, speaking: true })).toBe('speaking');
+    expect(stateOf({ ...base, silenced: true, linked: false })).toBe('unreachable');
+    expect(stateOf({ ...base, silenced: true, capped: true })).toBe('capped');
   });
 });

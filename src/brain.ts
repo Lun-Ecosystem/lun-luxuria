@@ -21,6 +21,9 @@ export type SendEvent =
   | { type: 'delta'; text: string }
   | { type: 'done'; message: Message };
 
+/** `muted` and `silentAnnounce` are sent only when true: an older server refuses a field it does not know. */
+export type PresenceFlags = { busy?: boolean; ritual?: boolean; muted?: boolean; silentAnnounce?: boolean };
+
 export type SendOptions = { surface: 'voice' | 'desktop'; confidence?: number };
 
 /**
@@ -29,10 +32,7 @@ export type SendOptions = { surface: 'voice' | 'desktop'; confidence?: number };
  */
 export interface Brain {
   /** A beat resolves to `gone` when the server did not take it: the body, still there, announces itself again. */
-  presence(
-    state: 'started' | 'beat' | 'stopped',
-    opts?: { busy?: boolean; ritual?: boolean },
-  ): Promise<unknown>;
+  presence(state: 'started' | 'beat' | 'stopped', opts?: PresenceFlags): Promise<unknown>;
   /** Ends when the turn ends; `on` hears the stored fragment first, then the id of the reply. */
   send(text: string, opts: SendOptions, on: (e: SendEvent) => void): Promise<void>;
   /** What was really heard of a reply; empty if nothing was. */

@@ -25,6 +25,8 @@ export interface ConversationDeps {
   settings(): Settings;
   layout(): Layout;
   keyHeld(): boolean;
+  /** The desk mute: only a P0 may still be said. */
+  silenced?(): boolean;
   now(): number;
   on(e: ConversationEvent): void;
 }
@@ -69,6 +71,7 @@ export class Conversation {
   onLive(e: LiveEvent): void {
     if (e.type === 'speech') {
       const speak = this.#d.settings().speak;
+      if (this.#d.silenced?.() && e.why !== 'p0') return;
       if (e.why !== 'reply' && !speak[e.why]) return;
       this.#d.speaker.add(e.id, e.text);
     } else if (e.type === 'speech-end') {
@@ -139,6 +142,8 @@ export class Conversation {
     const d = this.#d;
     try {
       const heard = await d.stt(audio);
+      // Muted while it was transcribed: nothing leaves, nothing is paid.
+      if (d.silenced?.()) attempt.dropped = true;
       if (attempt.dropped) return;
       const verdict = decide(
         heard.text,
@@ -206,6 +211,11 @@ export class Conversation {
   /** Written in the thread; it answers aloud too. */
   write(text: string): Promise<void> {
     return this.#d.brain.send(text, { surface: 'desktop' }, () => {});
+  }
+
+  /** The mute comes: a fragment held for the end of the sentence is withdrawn. */
+  mute(): void {
+    this.#dropAttempt();
   }
 
   /** The button that exists only while it speaks. */

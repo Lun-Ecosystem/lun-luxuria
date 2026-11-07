@@ -3,6 +3,7 @@ import {
   type Brain,
   type LiveEvent,
   type Message,
+  type PresenceFlags,
   type SendEvent,
   type SendOptions,
 } from './brain.ts';
@@ -64,7 +65,7 @@ export class CoreClient implements Brain {
 
   async presence(
     state: 'started' | 'beat' | 'stopped',
-    opts: { busy?: boolean; ritual?: boolean } = {},
+    opts: PresenceFlags = {},
   ): Promise<'taken' | 'gone' | undefined> {
     try {
       await this.#call('/presence', {
