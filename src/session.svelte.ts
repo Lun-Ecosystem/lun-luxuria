@@ -3,6 +3,7 @@ import { stateOf, type BodyState } from './body/body.ts';
 import { Conversation } from './conversation.ts';
 import type { Brain, LiveEvent, Message } from './brain.ts';
 import { CoreClient } from './core.ts';
+import { pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
 import { presenceKeeper, watchPage } from './page.ts';
@@ -59,7 +60,9 @@ export class Session {
   entered = $state(false);
   token = $state<string | null>(stored(TOKEN_KEY));
 
-  core = new CoreClient(this.token);
+  /** In the window, the page's paths go where the browser's proxy sent them. */
+  #net = pageNet(() => this.settings.server);
+  core = new CoreClient(this.token, this.#net.server);
   /** Chosen when entering: a change of brain goes through a reload. */
   brain: Brain = this.core;
   #keyHeld = false;
@@ -114,19 +117,29 @@ export class Session {
     if (this.entered) location.reload();
   }
 
+  /** A token never goes to another address: a new server means pairing again. */
+  setServer(url: string): void {
+    if (url === this.settings.server) return;
+    this.saveSettings({ ...($state.snapshot(this.settings) as Settings), server: url });
+    this.token = null;
+    store(TOKEN_KEY, null);
+    this.core = new CoreClient(null, this.#net.server);
+    if (this.entered) location.reload();
+  }
+
   /** A click starts it: a browser plays no sound without one. */
   async enter(): Promise<void> {
     this.entered = true;
     this.brain =
       this.settings.brain === 'linked'
         ? this.core
-        : new LocalBrain(() => this.settings, { get: stored, set: store });
+        : new LocalBrain(() => this.settings, { get: stored, set: store }, this.#net.server);
     const out = webOutput(() => this.settings.voice.volume);
     const convo: Conversation = new Conversation({
       brain: this.brain,
-      stt: transcribe,
+      stt: (audio) => transcribe(audio, this.#net.voice),
       speaker: (this.#speaker = new Speaker(
-        (text) => synthesize(text),
+        (text) => synthesize(text, this.#net.voice),
         out,
         (e: SpeakerEvent) => this.#onSpeaker(e, convo),
       )),
@@ -245,7 +258,10 @@ export class Session {
       this.busy = false;
       return this.#applyMic();
     }
-    const taken = busyWith(await appsOnMicrophone().catch(() => []), this.settings.busy.ignored);
+    const taken = busyWith(
+      await appsOnMicrophone(this.#net.voice).catch(() => []),
+      this.settings.busy.ignored,
+    );
     const now = Date.now();
     if (taken) this.#busySince = now;
     const next = taken || now - this.#busySince < this.settings.busy.returnSeconds * 1000;

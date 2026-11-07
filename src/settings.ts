@@ -5,6 +5,8 @@ export type Layout = 'scene' | 'small';
 export interface Settings {
   /** Alone on a model, or linked to a server that thinks for it. */
   brain: 'alone' | 'linked';
+  /** Linked, in the window: where the server answers. In a browser tab, the page's proxy decides. */
+  server: string;
   /** Its name is also the word that calls it. */
   agent: { name: string; context: string };
   /**
@@ -38,6 +40,7 @@ export interface Settings {
 
 export const DEFAULTS: Settings = {
   brain: 'alone',
+  server: 'http://127.0.0.1:8788',
   agent: {
     name: 'Agent',
     context: 'Tu parles à voix haute : des phrases courtes, sans liste ni mise en forme.',

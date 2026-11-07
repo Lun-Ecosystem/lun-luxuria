@@ -2,6 +2,7 @@
   import X from '@lucide/svelte/icons/x';
   import { IconButton, Segmented, SettingsCard, SettingsRow, TextArea, TextInput } from './lib/ui/index.ts';
   import Switch from './lib/ui/Switch.svelte';
+  import { inWindow, serverWarning } from './desktop/net.ts';
   import { DEFAULTS, type Settings, type TalkMode } from './settings.ts';
   import type { Session } from './session.svelte.ts';
 
@@ -109,6 +110,15 @@
           onchange={(v) => session.switchBrain(v as 'alone' | 'linked')}
         />
       </SettingsRow>
+      {#if inWindow && s.brain === 'linked'}
+        {@render field(
+          'Adresse du serveur',
+          serverWarning(s.server) ?? 'Changer efface l’appairage : un nouveau code sera demandé.',
+          s.server,
+          undefined,
+          (v) => v.trim() && session.setServer(v.trim()),
+        )}
+      {/if}
       {#if s.brain === 'alone'}
         {@render field(
           'Adresse du modèle',
