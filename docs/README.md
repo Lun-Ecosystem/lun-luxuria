@@ -34,7 +34,8 @@ Le filtre ne regarde qu'une phrase transcrite localement : refusée, elle ne par
 `Brain` (`src/brain.ts`) est tout ce que le corps demande : `presence`, `send`, `cut`, `withdraw`, `thread`, `live`.
 
 **Seul** (`src/local.ts`) : un appel `POST <adresse>/chat/completions` en flux par tour, les 30 derniers messages du jour
-en contexte, découpés en phrases pour la voix. Le plafond est vérifié avant l'appel : la réponse qui le franchit va à son
+en contexte, découpés en phrases pour la voix. La voix ne lit pas le markdown (titres, puces, emphase, liens, code) ;
+le fil le garde écrit. Le plafond est vérifié avant l'appel : la réponse qui le franchit va à son
 terme, la suivante est refusée. Le fil ne garde que le jour courant. Une clé ne part jamais en clair hors du poste.
 
 **Relié** (`src/core.ts`), entrant : `speech { id, n, text, why }` et `speech-end { id, why }` sur `GET /api/live`.

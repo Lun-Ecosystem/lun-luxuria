@@ -22,7 +22,21 @@ export interface LocalStore {
 }
 
 // A dot in « 3.5 » or after « M. » does not end a sentence.
-const SENTENCE_END = /(?<!\b(?:M|Mme|Dr))[.!?…]+["»)]*\s+|\n+/g;
+// Not after a title, nor after a list number at the start of a line; a closing emphasis stays with its sentence.
+const SENTENCE_END = /(?<!\b(?:M|Mme|Dr))(?<!(?:^|\n)[ \t]*\d+)[.!?…]+["»)*_`]*\s+|\n+/g;
+
+/** What the model writes in markdown, said without its marks: the thread keeps them. */
+const SPOKEN: [RegExp, string][] = [
+  [/\[([^\]\n]*)\]\([^)\s]*\)/g, '$1'], // a link says its text
+  [/^[ \t]*([-*_])[ \t]*(?:\1[ \t]*){2,}$/gm, ''], // a rule
+  [/^[ \t]*(?:#{1,6}|>|[-*•]|\d+[.)])[ \t]+/gm, ''], // title, quote, bullet, number
+  [/(\*{1,3})(?=\S)([^*\n]*?\S)\1/g, '$2'],
+  [/(^|[^\p{L}\p{N}_])(_{1,2})(?=\S)([^_\n]*?\S)\2(?![\p{L}\p{N}_])/gu, '$1$3'],
+  [/\*{2,}|`/g, ''],
+  [/[ \t]{2,}/g, ' '],
+];
+export const spoken = (text: string): string =>
+  SPOKEN.reduce((t, [re, to]) => t.replace(re, to), text).trim();
 
 /** The whole sentences of what the model has written so far, and what is still being written. */
 export function sentences(text: string): { done: string[]; rest: string } {
@@ -195,8 +209,10 @@ export class LocalBrain implements Brain {
       if (!res.ok || !res.body) return finish('error', `Le modèle a répondu ${res.status}.`);
       let n = 0;
       let pending = '';
-      const say = (sentence: string) =>
-        this.#live?.({ type: 'speech', id: reply.id, n: ++n, text: sentence, why: 'reply' });
+      const say = (sentence: string) => {
+        const text = spoken(sentence);
+        if (text) this.#live?.({ type: 'speech', id: reply.id, n: ++n, text, why: 'reply' });
+      };
       for await (const { data } of frames(res.body)) {
         if (data === '[DONE]') continue;
         const chunk = JSON.parse(data) as {
