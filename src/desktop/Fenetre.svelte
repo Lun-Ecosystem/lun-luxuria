@@ -111,4 +111,18 @@
       }}
     />
   </SettingsRow>
+  <SettingsRow
+    label="Raccourci de la sourdine"
+    hint="Coupe l’écoute et la parole d’un geste, sauf les urgences si elles sont dites. Exemple : Control+Shift+M."
+  >
+    <TextInput
+      value={s.display.muteShortcut}
+      size="petit"
+      aria-label="Raccourci de la sourdine"
+      onchange={(e) => {
+        const v = (e.currentTarget as HTMLInputElement).value.trim();
+        if (v) set((d) => (d.display.muteShortcut = v));
+      }}
+    />
+  </SettingsRow>
 </SettingsCard>

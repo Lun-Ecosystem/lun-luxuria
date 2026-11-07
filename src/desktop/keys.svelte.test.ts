@@ -47,7 +47,7 @@ describe('keysFollow', () => {
     const { held, shortcuts, press } = fake();
     const stop = $effect.root(() => keysFollow(session, shortcuts));
     await settle();
-    expect([...held.keys()]).toEqual(['Control+Shift+L', 'F9']);
+    expect([...held.keys()]).toEqual(['Control+Shift+L', 'Control+Shift+M', 'F9']);
 
     press('Control+Shift+L', 'Pressed');
     expect(session.layout).toBe('small');
@@ -70,11 +70,11 @@ describe('keysFollow', () => {
     await settle();
     session.saveSettings({ ...session.settings, key: { on: true, code: 'KeyV' } } as Settings);
     await settle();
-    expect([...held.keys()]).toEqual(['Control+Shift+L']);
+    expect([...held.keys()]).toEqual(['Control+Shift+L', 'Control+Shift+M']);
     expect(session.keysSaid).toMatch(/écrit/);
     session.saveSettings({ ...session.settings, key: { on: false, code: 'F8' } } as Settings);
     await settle();
-    expect([...held.keys()]).toEqual(['Control+Shift+L']);
+    expect([...held.keys()]).toEqual(['Control+Shift+L', 'Control+Shift+M']);
     expect(session.keysSaid).toBe('');
     stop();
   });
@@ -84,7 +84,7 @@ describe('keysFollow', () => {
     const { held, shortcuts } = fake(['F9']);
     const stop = $effect.root(() => keysFollow(session, shortcuts));
     await settle();
-    expect([...held.keys()]).toEqual(['Control+Shift+L']);
+    expect([...held.keys()]).toEqual(['Control+Shift+L', 'Control+Shift+M']);
     expect(session.keysSaid).toMatch(/F9 déjà prise/);
     stop();
   });
@@ -95,13 +95,55 @@ describe('keysFollow', () => {
     const register = vi.spyOn(shortcuts, 'register');
     const stop = $effect.root(() => keysFollow(session, shortcuts));
     await settle();
-    expect(register).toHaveBeenCalledTimes(2);
+    expect(register).toHaveBeenCalledTimes(3);
     session.saveSettings({
       ...session.settings,
       body: { ...session.settings.body, folder: 'D:\\corps' },
     } as Settings);
     await settle();
-    expect(register).toHaveBeenCalledTimes(2);
+    expect(register).toHaveBeenCalledTimes(3);
+    stop();
+  });
+
+  it('the mute shortcut switches the mute on the press only, and a taken one is said', async () => {
+    const session = new Session();
+    const { shortcuts, press } = fake();
+    const toggle = vi.spyOn(session, 'toggleMute');
+    const stop = $effect.root(() => keysFollow(session, shortcuts));
+    await settle();
+    press('Control+Shift+M', 'Pressed');
+    press('Control+Shift+M', 'Released');
+    expect(toggle).toHaveBeenCalledOnce();
+    stop();
+
+    const taken = new Session();
+    const busy = fake(['Control+Shift+M']);
+    const stop2 = $effect.root(() => keysFollow(taken, busy.shortcuts));
+    await settle();
+    expect(taken.keysSaid).toMatch(/Control\+Shift\+M déjà pris/);
+    stop2();
+  });
+
+  it('a mute shortcut that doubles another key is not taken, and the screen says it doubles it', async () => {
+    const session = new Session();
+    const { held, shortcuts } = fake();
+    const stop = $effect.root(() => keysFollow(session, shortcuts));
+    await settle();
+    session.saveSettings({
+      ...session.settings,
+      display: { ...session.settings.display, muteShortcut: 'control+shift+l' },
+    });
+    await settle();
+    expect([...held.keys()]).toEqual(['Control+Shift+L', 'F9']);
+    expect(session.keysSaid).toMatch(/double/);
+    expect(session.keysSaid).not.toMatch(/autre appli/);
+    session.saveSettings({
+      ...session.settings,
+      display: { ...session.settings.display, muteShortcut: 'F9' },
+    });
+    await settle();
+    expect([...held.keys()]).toEqual(['Control+Shift+L', 'F9']);
+    expect(session.keysSaid).toMatch(/double/);
     stop();
   });
 });

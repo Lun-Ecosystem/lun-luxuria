@@ -37,11 +37,16 @@
       </li>
     {/each}
   </ol>
+  {#if session.silenced}
+    <p class="sourdine" id="fil-sourdine">En sourdine. Sortir de la sourdine pour lui écrire.</p>
+  {/if}
   <TextArea
     bind:value={draft}
     rows={2}
     aria-label="Lui écrire"
     placeholder="Lui écrire"
+    disabled={session.silenced}
+    aria-describedby={session.silenced ? 'fil-sourdine' : undefined}
     onkeydown={(e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -108,6 +113,12 @@
   }
   .attente {
     color: var(--texte-3);
+  }
+  .sourdine {
+    margin: 0;
+    color: var(--texte-3);
+    font-family: Inter, sans-serif;
+    font-size: 13px;
   }
   .erreur {
     color: var(--attention);

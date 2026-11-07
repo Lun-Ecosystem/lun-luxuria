@@ -4,6 +4,7 @@
   import Mic from '@lucide/svelte/icons/mic';
   import MicOff from '@lucide/svelte/icons/mic-off';
   import Minimize2 from '@lucide/svelte/icons/minimize-2';
+  import Moon from '@lucide/svelte/icons/moon';
   import Settings2 from '@lucide/svelte/icons/settings-2';
   import VolumeX from '@lucide/svelte/icons/volume-x';
   import { SvelteSet } from 'svelte/reactivity';
@@ -73,6 +74,12 @@
     {#if session.speaking}
       <IconButton icon={VolumeX} label="Faire taire" onclick={() => session.silence()} />
     {/if}
+    <IconButton
+      icon={Moon}
+      label={session.silenced ? 'Sortir de la sourdine' : 'Mettre en sourdine'}
+      aria-pressed={session.silenced}
+      onclick={() => session.toggleMute()}
+    />
     <IconButton
       icon={session.micOn ? Mic : MicOff}
       label={session.micOn ? 'Couper le micro' : 'Ouvrir le micro'}

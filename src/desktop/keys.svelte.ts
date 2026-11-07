@@ -16,20 +16,22 @@ export function refusedGlobally(code: string): string | undefined {
 export type Shortcuts = Pick<typeof plugin, 'register' | 'unregister'>;
 
 /**
- * The window's keys, from any window: the shortcut switches scene and small mode, the held key opens the
- * microphone. Windows gives a global key to one app only: a key already taken stays on the window's own
- * listener, and the screen says so.
+ * The window's keys, from any window: the shortcut switches scene and small mode, the mute shortcut
+ * switches the mute, the held key opens the microphone. Windows gives a global key to one app only: a key
+ * already taken stays on the window's own listener, and the screen says so.
  */
 export function keysFollow(session: Session, shortcuts: Shortcuts = plugin): void {
   let taken: string[] = [];
   let queue = Promise.resolve();
 
-  // Saving any setting replaces the whole object: only these three values may take the keys again.
+  // Saving any setting replaces the whole object: only these four values may take the keys again.
   const toggle$ = $derived(session.settings.display.shortcut);
+  const mute$ = $derived(session.settings.display.muteShortcut);
   const on$ = $derived(session.settings.key.on);
   const code$ = $derived(session.settings.key.code);
   $effect(() => {
     const toggle = toggle$;
+    const mute = mute$;
     const on = on$;
     const code = code$;
     queue = queue.then(async () => {
@@ -43,6 +45,19 @@ export function keysFollow(session: Session, shortcuts: Shortcuts = plugin): voi
         taken.push(toggle);
       } catch {
         said.push(`Raccourci ${toggle} déjà pris par une autre appli.`);
+      }
+      const same = (a: string) => a.toLowerCase() === mute.toLowerCase();
+      if (same(toggle) || (on && same(code)))
+        said.push(`Raccourci de la sourdine ${mute} : il double une autre touche, choisis-en un autre.`);
+      else {
+        try {
+          await shortcuts.register(mute, (e: ShortcutEvent) => {
+            if (e.state === 'Pressed') session.toggleMute();
+          });
+          taken.push(mute);
+        } catch {
+          said.push(`Raccourci ${mute} déjà pris par une autre appli.`);
+        }
       }
       const refused = on ? refusedGlobally(code) : undefined;
       if (on && refused) said.push(refused);
