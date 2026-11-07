@@ -3,6 +3,7 @@ import { stateOf, type BodyState } from './body/body.ts';
 import { Conversation } from './conversation.ts';
 import type { Brain, LiveEvent, Message } from './brain.ts';
 import { CoreClient } from './core.ts';
+import type { BodyView } from './desktop/corps.svelte.ts';
 import { pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
@@ -62,6 +63,9 @@ export class Session {
   threadOpen = $state(false);
   /** In the window: what the global keys could not take, said on the settings screen. */
   keysSaid = $state('');
+  /** In the window: the body read from its folder, and what that reading says. */
+  bodyView = $state<BodyView | null>(null);
+  bodySaid = $state('');
   token = $state<string | null>(stored(TOKEN_KEY));
 
   /** In the window, the page's paths go where the browser's proxy sent them. */

@@ -320,25 +320,28 @@
         s.voice.noiseSuppression,
         (v) => set((d) => (d.voice.noiseSuppression = v)),
       )}
-      <SettingsRow label="Corps">
-        <Segmented
-          options={BODY}
-          value={s.body.level}
-          label="Corps"
-          size="petit"
-          onchange={(v) => set((d) => (d.body.level = v as 'breath' | 'images'))}
-        />
-      </SettingsRow>
-      {@render field(
-        'Image au repos',
-        'Adresse de l’image. Sans elle, le souffle.',
-        s.body.rest,
-        undefined,
-        (v) => set((d) => (d.body.rest = v.trim())),
-      )}
-      {@render field('Image pendant la parole', undefined, s.body.talking, undefined, (v) =>
-        set((d) => (d.body.talking = v.trim())),
-      )}
+      <!-- In the window, the body comes from its folder (the window card). -->
+      {#if !inWindow}
+        <SettingsRow label="Corps">
+          <Segmented
+            options={BODY}
+            value={s.body.level}
+            label="Corps"
+            size="petit"
+            onchange={(v) => set((d) => (d.body.level = v as 'breath' | 'images'))}
+          />
+        </SettingsRow>
+        {@render field(
+          'Image au repos',
+          'Adresse de l’image. Sans elle, le souffle.',
+          s.body.rest,
+          undefined,
+          (v) => set((d) => (d.body.rest = v.trim())),
+        )}
+        {@render field('Image pendant la parole', undefined, s.body.talking, undefined, (v) =>
+          set((d) => (d.body.talking = v.trim())),
+        )}
+      {/if}
     </SettingsCard>
 
     <SettingsCard title="Mesures de cette session">

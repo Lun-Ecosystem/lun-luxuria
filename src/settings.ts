@@ -35,7 +35,8 @@ export interface Settings {
   /** Said aloud or not; the thread keeps them either way. */
   speak: { ritual: boolean; p0: boolean; spontaneous: boolean };
   voice: { volume: number; echoCancellation: boolean; noiseSuppression: boolean };
-  body: { level: 'breath' | 'images'; rest: string; talking: string };
+  /** `folder`: in the window, the body's folder, whose `corps.json` decides; the addresses serve the browser. */
+  body: { level: 'breath' | 'images'; rest: string; talking: string; folder: string };
   /**
    * In the window: the scene's screen, by name (empty, the first that is not the main one), and the global
    * shortcut between scene and small mode.
@@ -62,7 +63,7 @@ export const DEFAULTS: Settings = {
   endOfSpeech: { silenceMs: 500, speculate: true, pauseMs: 160, floorDb: -50, minSpeechMs: 250 },
   speak: { ritual: true, p0: true, spontaneous: true },
   voice: { volume: 1, echoCancellation: true, noiseSuppression: true },
-  body: { level: 'breath', rest: '', talking: '' },
+  body: { level: 'breath', rest: '', talking: '', folder: '' },
   display: { screen: '', shortcut: 'Control+Shift+L' },
 };
 

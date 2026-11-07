@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button, CodeInput, Segmented, Toaster } from './lib/ui/index.ts';
   import { inWindow } from './desktop/net.ts';
+  import { bodyFollows } from './desktop/corps.svelte.ts';
   import { keysFollow } from './desktop/keys.svelte.ts';
   import { windowFollows } from './desktop/window.svelte.ts';
   import Reglages from './Reglages.svelte';
@@ -11,6 +12,7 @@
   if (inWindow) {
     windowFollows(session);
     keysFollow(session);
+    bodyFollows(session);
   }
   let code = $state('');
   let refused = $state('');

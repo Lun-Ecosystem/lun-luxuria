@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Segmented, SettingsCard, SettingsRow, TextInput } from '../lib/ui/index.ts';
+  import { Button, Segmented, SettingsCard, SettingsRow, TextInput } from '../lib/ui/index.ts';
+  import { reloadBody } from './corps.svelte.ts';
   import type { Session } from '../session.svelte.ts';
   import type { Settings } from '../settings.ts';
   import { sceneScreen, type Screen } from './place.ts';
@@ -36,6 +37,21 @@
   {:else}
     <SettingsRow label="Écran de la scène" hint="Un seul écran branché : la scène le prend." />
   {/if}
+  <SettingsRow
+    label="Dossier du corps"
+    hint={session.bodySaid || 'Son corps.json décide du niveau et des images.'}
+  >
+    <TextInput
+      value={s.body.folder}
+      size="petit"
+      aria-label="Dossier du corps"
+      onchange={(e) => {
+        const v = (e.currentTarget as HTMLInputElement).value.trim();
+        set((d) => (d.body.folder = v));
+      }}
+    />
+    <Button variant="secondaire" size="petit" onclick={() => void reloadBody(session)}>Relire</Button>
+  </SettingsRow>
   <SettingsRow
     label="Raccourci scène, petit mode"
     hint="Depuis n’importe quelle fenêtre, sans couper sa voix. Exemple : Control+Shift+L."
