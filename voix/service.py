@@ -27,6 +27,7 @@ import soundfile as sf
 
 SR_STT = 16000
 MAX_BODY = 64 * 1024 * 1024
+DRAIN_MAX = 1024 * 1024  # what a refused page may make the service read, at most
 ORIGINS = ("http://127.0.0.1:5180", "http://localhost:5180", "tauri://localhost", "http://tauri.localhost")
 
 
@@ -187,6 +188,8 @@ def serve(stt, tts, rvc, names, port, origins=ORIGINS):
     tts_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = 5  # a client that announces a body and sends nothing holds no thread for long
+
         def _json(self, code, data):
             body = json.dumps(data).encode()
             self.send_response(code)
@@ -204,6 +207,13 @@ def serve(stt, tts, rvc, names, port, origins=ORIGINS):
         def _refused(self):
             if allowed(self.headers, origins):
                 return False
+            # Windows resets a socket closed with unread bytes, often before the 403 is read: drain a small body.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                if 0 < n <= DRAIN_MAX:
+                    self.rfile.read(n)
+            except (ValueError, OSError):  # unreadable length, or a body announced and never sent
+                pass
             self._json(403, {"error": "origine refusée"})
             return True
 

@@ -132,6 +132,15 @@ def check_microphone():
             sys.modules["winreg"] = saved
 
 
+def raw(request):
+    """A request urllib would not send; True when the answer is a 403."""
+    import socket
+
+    with socket.create_connection(("127.0.0.1", PORT), timeout=10) as s:
+        s.sendall(request)
+        return s.recv(64).startswith(b"HTTP/1.0 403")
+
+
 def call(path, headers=None, data=None):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", data=data, headers=headers or {})
     try:
@@ -164,6 +173,11 @@ def main():
     assert call("/micro", other)[0] == 403, "who holds the microphone stays private"
 
     assert call("/stt", other, sound)[0] == 403
+    for _ in range(30):  # an unread body used to reset the socket about once in eight
+        assert call("/stt", other, sound)[0] == 403, "a refusal arrives as a refusal"
+    assert call("/stt", other, bytes(500_000))[0] == 403
+    for length in (b"abc", b"-1", b"10"):  # 10 and nothing sent: the 403 comes after the 5 s timeout
+        assert raw(b"POST /stt HTTP/1.0\r\nOrigin: https://exemple.org\r\nContent-Length: " + length + b"\r\n\r\n")
     assert heard == [], "a refused page never reaches the transcription"
     assert call("/tts", other, json.dumps({"text": "x"}).encode())[0] == 403
 
