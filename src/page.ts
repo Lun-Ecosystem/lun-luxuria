@@ -20,6 +20,29 @@ export function watchPage(leave: () => void, back: () => void, shown: () => void
   };
 }
 
+/**
+ * The starts and beats of a presence. A refused beat announces again, unless an announce began after
+ * that beat left: a return from the history cache sends both, and the refusal may land last.
+ */
+export function presenceKeeper(
+  start: () => Promise<void>,
+  beat: () => Promise<unknown>,
+): { announce: () => Promise<void>; beat: () => Promise<void> } {
+  let starts = 0;
+  const announce = single(() => {
+    starts++;
+    return start();
+  });
+  return {
+    announce,
+    async beat() {
+      const before = starts;
+      const answer = await beat().catch(() => undefined);
+      if (answer === 'gone' && starts === before) await announce();
+    },
+  };
+}
+
 /** One run at a time: a call while one is under way gets that run, not a second one. */
 export function single<T>(run: () => Promise<T>): () => Promise<T> {
   let current: Promise<T> | null = null;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { single, watchPage } from './page.ts';
+import { presenceKeeper, single, watchPage } from './page.ts';
 
 const fire = (type: string, persisted: boolean) =>
   dispatchEvent(Object.assign(new Event(type), { persisted }));
@@ -42,6 +42,69 @@ describe('the page coming and going', () => {
     visibility('visible');
     expect(seen).toEqual(['shown', 'shown']);
     stop();
+  });
+});
+
+describe('presenceKeeper', () => {
+  const later = <T>() => {
+    let settle: (v: T) => void = () => {};
+    const promise = new Promise<T>((r) => (settle = r));
+    return { promise, settle };
+  };
+
+  it('two close returns with a live presence beat twice and never start', async () => {
+    let starts = 0;
+    const p = presenceKeeper(
+      async () => void starts++,
+      async () => 'taken',
+    );
+    await Promise.all([p.beat(), p.beat()]);
+    expect(starts).toBe(0);
+  });
+
+  it('a refusal during an announce gives one start', async () => {
+    let starts = 0;
+    const started = later<void>();
+    const p = presenceKeeper(
+      () => (starts++, started.promise),
+      async () => 'gone',
+    );
+    const first = p.announce();
+    const refused = p.beat();
+    await Promise.resolve();
+    started.settle();
+    await Promise.all([first, refused]);
+    expect(starts).toBe(1);
+  });
+
+  it('a refusal landing after an announce that began behind it starts nothing more', async () => {
+    let starts = 0;
+    const answer = later<'gone'>();
+    const p = presenceKeeper(
+      async () => void starts++,
+      () => answer.promise,
+    );
+    const refused = p.beat(); // the beat leaves first, from the history cache
+    await p.announce(); // pageshow's start, done before the 410 comes back
+    answer.settle('gone');
+    await refused;
+    expect(starts).toBe(1);
+  });
+
+  it('a refused beat with no announce since starts again, and an unreachable beat does not', async () => {
+    let starts = 0;
+    const answers: ('gone' | Error)[] = ['gone', new Error('injoignable')];
+    const p = presenceKeeper(
+      async () => void starts++,
+      async () => {
+        const a = answers.shift()!;
+        if (a instanceof Error) throw a;
+        return a;
+      },
+    );
+    await p.beat();
+    await p.beat();
+    expect(starts).toBe(1);
   });
 });
 

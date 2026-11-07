@@ -5,7 +5,7 @@ import type { Brain, LiveEvent, Message } from './brain.ts';
 import { CoreClient } from './core.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
-import { single, watchPage } from './page.ts';
+import { presenceKeeper, watchPage } from './page.ts';
 import { readSettings, type Layout, type Settings } from './settings.ts';
 import { Speaker, type SpeakerEvent } from './speech/speaker.ts';
 import { appsOnMicrophone, busyWith, synthesize, transcribe } from './voice.ts';
@@ -193,19 +193,19 @@ export class Session {
   }
 
   // A refused beat, the page shown again and the stream coming back may fall together: one start.
-  #announce = single(async (): Promise<void> => {
-    try {
-      await this.brain.presence('started', { ritual: this.settings.speak.ritual });
-      this.linked = true;
-    } catch {
-      this.linked = false;
-    }
-  });
-
-  async #beat(): Promise<void> {
-    const answer = await this.brain.presence('beat', { busy: this.busy }).catch(() => undefined);
-    if (answer === 'gone') await this.#announce();
-  }
+  #presence = presenceKeeper(
+    async () => {
+      try {
+        await this.brain.presence('started', { ritual: this.settings.speak.ritual });
+        this.linked = true;
+      } catch {
+        this.linked = false;
+      }
+    },
+    () => this.brain.presence('beat', { busy: this.busy }),
+  );
+  #announce = this.#presence.announce;
+  #beat = this.#presence.beat;
 
   #onLive(e: LiveEvent): void {
     this.#convo?.onLive(e);

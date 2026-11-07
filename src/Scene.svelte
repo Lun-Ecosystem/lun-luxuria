@@ -5,8 +5,8 @@
   import MicOff from '@lucide/svelte/icons/mic-off';
   import Minimize2 from '@lucide/svelte/icons/minimize-2';
   import Settings2 from '@lucide/svelte/icons/settings-2';
-  import { SvelteSet } from 'svelte/reactivity';
   import VolumeX from '@lucide/svelte/icons/volume-x';
+  import { SvelteSet } from 'svelte/reactivity';
   import { Mouth, STATE_LABELS } from './body/body.ts';
   import Fil from './Fil.svelte';
   import { IconButton } from './lib/ui/index.ts';
@@ -30,7 +30,8 @@
   <!-- Layers: body, subtitles, controls, thread. They stay apart for the stream to come. -->
   <div class="corps" aria-hidden="true">
     {#if images}
-      <img {src} alt="" onerror={() => broken.add(src)} />
+      <!-- The address that failed, not the one shown now: the mouth may have moved meanwhile. -->
+      <img {src} alt="" onerror={(e) => broken.add(e.currentTarget.getAttribute('src') ?? src)} />
     {:else}
       <div class="souffle" style:transform="scale({scale})"></div>
     {/if}
