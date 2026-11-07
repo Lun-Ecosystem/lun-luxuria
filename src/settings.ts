@@ -34,7 +34,13 @@ export interface Settings {
   };
   /** Said aloud or not; the thread keeps them either way. */
   speak: { ritual: boolean; p0: boolean; spontaneous: boolean };
-  voice: { volume: number; echoCancellation: boolean; noiseSuppression: boolean };
+  /** `service`: in the window, the voice service started with it (`args`, one per line as typed). */
+  voice: {
+    volume: number;
+    echoCancellation: boolean;
+    noiseSuppression: boolean;
+    service: { launch: boolean; folder: string; args: string[] };
+  };
   /** `folder`: in the window, the body's folder, whose `corps.json` decides; the addresses serve the browser. */
   body: { level: 'breath' | 'images'; rest: string; talking: string; folder: string };
   /**
@@ -62,7 +68,12 @@ export const DEFAULTS: Settings = {
   bargeIn: { on: true, mode: 'now', holdMs: 400 },
   endOfSpeech: { silenceMs: 500, speculate: true, pauseMs: 160, floorDb: -50, minSpeechMs: 250 },
   speak: { ritual: true, p0: true, spontaneous: true },
-  voice: { volume: 1, echoCancellation: true, noiseSuppression: true },
+  voice: {
+    volume: 1,
+    echoCancellation: true,
+    noiseSuppression: true,
+    service: { launch: false, folder: '', args: [] },
+  },
   body: { level: 'breath', rest: '', talking: '', folder: '' },
   display: { screen: '', shortcut: 'Control+Shift+L' },
 };

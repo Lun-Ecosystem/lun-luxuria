@@ -3,6 +3,7 @@
   import { inWindow } from './desktop/net.ts';
   import { bodyFollows } from './desktop/corps.svelte.ts';
   import { keysFollow } from './desktop/keys.svelte.ts';
+  import { pingVoice, startVoice } from './desktop/voix.ts';
   import { windowFollows } from './desktop/window.svelte.ts';
   import Reglages from './Reglages.svelte';
   import Scene from './Scene.svelte';
@@ -13,6 +14,7 @@
     windowFollows(session);
     keysFollow(session);
     bodyFollows(session);
+    void startVoice(session, pingVoice(session.voiceFetch));
   }
   let code = $state('');
   let refused = $state('');

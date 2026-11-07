@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Button, Segmented, SettingsCard, SettingsRow, TextInput } from '../lib/ui/index.ts';
+  import { Button, Segmented, SettingsCard, SettingsRow, TextArea, TextInput } from '../lib/ui/index.ts';
+  import Switch from '../lib/ui/Switch.svelte';
+  import { argsOf, pingVoice, startVoice } from './voix.ts';
   import { reloadBody } from './corps.svelte.ts';
   import type { Session } from '../session.svelte.ts';
   import type { Settings } from '../settings.ts';
@@ -52,6 +54,49 @@
     />
     <Button variant="secondaire" size="petit" onclick={() => void reloadBody(session)}>Relire</Button>
   </SettingsRow>
+  <SettingsRow
+    label="Lancer le service voix avec l’appli"
+    hint={session.voiceSaid || 'Seulement s’il ne répond pas déjà.'}
+  >
+    {#snippet children({ labelId })}
+      <Switch
+        checked={s.voice.service.launch}
+        aria-labelledby={labelId}
+        onchange={(v) => set((d) => (d.voice.service.launch = v))}
+      />
+    {/snippet}
+  </SettingsRow>
+  {#if s.voice.service.launch}
+    <SettingsRow label="Dossier du service" hint="Celui qui contient service.py.">
+      <TextInput
+        value={s.voice.service.folder}
+        size="petit"
+        aria-label="Dossier du service"
+        onchange={(e) => {
+          const v = (e.currentTarget as HTMLInputElement).value.trim();
+          set((d) => (d.voice.service.folder = v));
+        }}
+      />
+    </SettingsRow>
+    <SettingsRow label="Arguments du service" hint="Un par ligne, tels quels. Au prochain lancement.">
+      <TextArea
+        value={s.voice.service.args.join('\n')}
+        rows={4}
+        aria-label="Arguments du service"
+        onchange={(e) => {
+          const v = argsOf((e.currentTarget as HTMLTextAreaElement).value);
+          set((d) => (d.voice.service.args = v));
+        }}
+      />
+    </SettingsRow>
+    <SettingsRow label="Maintenant">
+      <Button
+        variant="secondaire"
+        size="petit"
+        onclick={() => void startVoice(session, pingVoice(session.voiceFetch))}>Lancer ou vérifier</Button
+      >
+    </SettingsRow>
+  {/if}
   <SettingsRow
     label="Raccourci scène, petit mode"
     hint="Depuis n’importe quelle fenêtre, sans couper sa voix. Exemple : Control+Shift+L."

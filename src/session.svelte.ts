@@ -66,6 +66,8 @@ export class Session {
   /** In the window: the body read from its folder, and what that reading says. */
   bodyView = $state<BodyView | null>(null);
   bodySaid = $state('');
+  /** In the window: whether the voice service answers, was started, or why not. */
+  voiceSaid = $state('');
   token = $state<string | null>(stored(TOKEN_KEY));
 
   /** In the window, the page's paths go where the browser's proxy sent them. */
@@ -123,6 +125,11 @@ export class Session {
   switchBrain(next: Settings['brain']): void {
     this.saveSettings({ ...($state.snapshot(this.settings) as Settings), brain: next });
     if (this.entered) location.reload();
+  }
+
+  /** The voice service's fetch: the window reaches it directly, a browser tab through its proxy. */
+  get voiceFetch(): typeof fetch {
+    return this.#net.voice;
   }
 
   /** A token never goes to another address: a new server means pairing again. */
