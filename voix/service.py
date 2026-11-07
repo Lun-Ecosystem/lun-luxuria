@@ -6,10 +6,10 @@
 
 Nothing it hears or says leaves the PC, except to a voice converter on this machine. Listens on 127.0.0.1 only.
 
-  uv run voix/service.py --stt faster:small --tts piper:<voix.onnx> [--rvc http://127.0.0.1:18888]
+  uv run voix/service.py --stt faster:small --tts piper:<voix.onnx> [--rvc http://127.0.0.1:18888 [--rvc-gain 2.0]]
 
   POST /stt   raw float32 LE at 16 kHz    -> {"text", "confidence", "ms"}
-  POST /tts   {"text"}                    -> raw float32 LE, X-Sample-Rate, X-Ms
+  POST /tts   {"text"}                    -> raw float32 LE, X-Sample-Rate, X-Ms, the whole sentence
   GET  /micro                             -> {"apps": ["..."]}, the apps holding the microphone
   GET  /ping                              -> {"ok": true, "stt", "tts", "rvc"}
 """
@@ -56,9 +56,14 @@ def make_stt(spec, lang):
             buf = io.BytesIO()
             sf.write(buf, audio, SR_STT, format="WAV")
             r = httpx.post(f"{arg}/inference", files={"file": ("a.wav", buf.getvalue())},
-                           data={"language": lang, "response_format": "json"}, timeout=60)
+                           data={"language": lang, "response_format": "verbose_json", "token_timestamps": "false"},
+                           timeout=60)
             r.raise_for_status()
-            return r.json()["text"].strip(), 0.9  # shortcut: this server gives no confidence, fixed above the gesture bar
+            body = r.json()
+            # Text tokens only, unlike faster-whisper's avg_logprob; whisper.cpp's own avg_logprob counts special tokens.
+            p = [w["probability"] for s in body.get("segments", []) for w in s.get("words", [])]
+            conf = float(np.exp(np.mean(np.log(np.maximum(p, 1e-6))))) if p else 0.0
+            return body["text"].strip(), conf
 
         return run
     raise SystemExit(f"stt inconnu : {spec}")
@@ -85,18 +90,30 @@ def make_tts(spec):
     raise SystemExit(f"tts inconnu : {spec}")
 
 
-def make_rvc(url):
-    """w-okada REST: raw float32 LE at 48 kHz, one call at a time."""
+RVC_BLOCK = 24000  # 0.5 s at 48 kHz, the size kept by ear on the desktop (ADR 0011)
+RVC_LEAD = 2400  # 50 ms of silence in front, so the first word is not eaten
+
+
+def make_rvc(url, gain=2.0):
+    """w-okada REST: raw float32 LE at 48 kHz, converted in 0.5 s blocks, one call at a time. The whole sentence back."""
     if not url:
         return None
     lock = threading.Lock()
 
     def run(audio, sr):
         x = np.interp(np.arange(0, len(audio), sr / 48000), np.arange(len(audio)), audio).astype("<f4")
+        x = np.concatenate([np.zeros(RVC_LEAD, "<f4"), x])
+        useful = len(x)
+        x = np.pad(x, (0, -len(x) % RVC_BLOCK))
+        out = []
         with lock:
-            r = httpx.post(f"{url}/api/voice-changer/convert_chunk", files={"waveform": x.tobytes()}, timeout=30)
-        r.raise_for_status()
-        return np.frombuffer(r.content, "<f4"), 48000
+            for i in range(0, len(x), RVC_BLOCK):
+                r = httpx.post(f"{url}/api/voice-changer/convert_chunk",
+                               files={"waveform": x[i:i + RVC_BLOCK].tobytes()}, timeout=30)
+                r.raise_for_status()
+                y = np.frombuffer(r.content, "<f4")[:RVC_BLOCK]
+                out.append(np.pad(y, (0, RVC_BLOCK - len(y))))
+        return np.clip(np.concatenate(out)[:useful] * gain, -1, 1).astype("<f4"), 48000
 
     return run
 
@@ -220,12 +237,13 @@ def main():
     ap.add_argument("--stt", default="faster:small")
     ap.add_argument("--tts", required=True)
     ap.add_argument("--rvc", default="")
+    ap.add_argument("--rvc-gain", type=float, default=2.0, help="gain de sortie de RVC, sortie bornée à [-1, 1]")
     ap.add_argument("--port", type=int, default=8793)
     ap.add_argument("--lang", default="fr", help="langue transcrite")
     ap.add_argument("--origin", action="append", help="page autorisée, en plus de celles de l'appli")
     a = ap.parse_args()
     names = {"stt": a.stt, "tts": a.tts.split(":")[0], "rvc": bool(a.rvc)}
-    serve(make_stt(a.stt, a.lang), make_tts(a.tts), make_rvc(a.rvc), names, a.port, (*ORIGINS, *(a.origin or [])))
+    serve(make_stt(a.stt, a.lang), make_tts(a.tts), make_rvc(a.rvc, a.rvc_gain), names, a.port, (*ORIGINS, *(a.origin or [])))
 
 
 if __name__ == "__main__":
