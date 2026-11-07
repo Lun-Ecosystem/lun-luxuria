@@ -24,9 +24,14 @@ export function keysFollow(session: Session, shortcuts: Shortcuts = plugin): voi
   let taken: string[] = [];
   let queue = Promise.resolve();
 
+  // Saving any setting replaces the whole object: only these three values may take the keys again.
+  const toggle$ = $derived(session.settings.display.shortcut);
+  const on$ = $derived(session.settings.key.on);
+  const code$ = $derived(session.settings.key.code);
   $effect(() => {
-    const toggle = session.settings.display.shortcut;
-    const { on, code } = session.settings.key;
+    const toggle = toggle$;
+    const on = on$;
+    const code = code$;
     queue = queue.then(async () => {
       if (taken.length) await shortcuts.unregister(taken).catch(() => {});
       taken = [];

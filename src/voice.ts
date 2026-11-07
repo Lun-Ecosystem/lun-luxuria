@@ -27,7 +27,7 @@ export async function appsOnMicrophone(f: typeof fetch = fetch): Promise<string[
 /** Whether another app holds the microphone, ignoring those that do not mean a conversation. */
 export function busyWith(apps: string[], ignored: string[]): boolean {
   const skip = ignored.map((a) => a.toLowerCase());
-  // The page's own holder (a browser, or the window's WebView2) is skipped. shortcut: a call in a browser tab goes unseen,
-  // even from the window; drop the browsers from this list in the window once its holder name is read on the real PC.
+  // The page's own holder (a browser, or msedgewebview2 for the window) is skipped. shortcut: a call in a browser tab or
+  // in another WebView2 app (the new Teams) goes unseen; tell holders apart by process id if it bites.
   return apps.some((a) => !/chrome|msedge|firefox|luxuria/i.test(a) && !skip.includes(a.toLowerCase()));
 }

@@ -102,18 +102,25 @@ export async function loadBody(
 }
 
 /** Reads the folder again, and lets the previous images go. */
-export async function reloadBody(session: Session): Promise<void> {
-  const before = session.bodyView;
-  const { view, said } = await loadBody(session.settings.body.folder);
-  session.bodyView = view;
-  session.bodySaid = said;
-  for (const url of [before?.rest, before?.talking]) if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+export async function reloadBody(session: Session, load = loadBody): Promise<void> {
+  const mine = ++readings;
+  const { view, said } = await load(session.settings.body.folder);
+  // Two readings crossed (a double click on « Relire »): only the last one shows, the other lets its images go.
+  const old = mine === readings ? session.bodyView : view;
+  if (mine === readings) {
+    session.bodyView = view;
+    session.bodySaid = said;
+  }
+  for (const url of [old?.rest, old?.talking]) if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
 }
+let readings = 0;
 
 /** In the window, the folder decides the body: read when the window opens and when the folder changes. */
 export function bodyFollows(session: Session): void {
+  // Saving any setting replaces the whole object: the derived value stops what did not change.
+  const folder = $derived(session.settings.body.folder);
   $effect(() => {
-    void session.settings.body.folder;
+    void folder;
     // Only the folder counts: the reading itself touches the body it replaces, which must not loop back here.
     untrack(() => void reloadBody(session));
   });

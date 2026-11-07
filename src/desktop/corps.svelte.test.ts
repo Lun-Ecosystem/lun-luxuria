@@ -11,7 +11,7 @@ vi.mock('@tauri-apps/api/core', async (real) => ({
   },
 }));
 
-const { bodyFollows } = await import('./corps.svelte.ts');
+const { bodyFollows, reloadBody } = await import('./corps.svelte.ts');
 const { Session } = await import('../session.svelte.ts');
 
 beforeEach(() => {
@@ -37,6 +37,32 @@ describe('bodyFollows', () => {
     await new Promise((r) => setTimeout(r, 50));
     flushSync();
     expect(calls.n).toBe(4);
+
+    // Any other setting saved replaces the whole settings object: the folder is the same, nothing is read.
+    session.saveSettings({
+      ...session.settings,
+      display: { ...session.settings.display, shortcut: 'Alt+L' },
+    });
+    flushSync();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls.n).toBe(4);
     stop();
+  });
+});
+
+describe('reloadBody', () => {
+  it('two readings crossed: the last one shows, the late one lets its images go', async () => {
+    const revoked = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const session = new Session();
+    const view = (n: string) => ({ level: 'images' as const, rest: `blob:${n}`, talking: '', crop: null });
+    let first!: (v: { view: ReturnType<typeof view>; said: string }) => void;
+    const slow = reloadBody(session, () => new Promise((r) => (first = r)));
+    await reloadBody(session, async () => ({ view: view('neuf'), said: '' }));
+    first({ view: view('vieux'), said: '' });
+    await slow;
+    expect(session.bodyView?.rest).toBe('blob:neuf');
+    expect(revoked).toHaveBeenCalledWith('blob:vieux');
+    expect(revoked).not.toHaveBeenCalledWith('blob:neuf');
+    revoked.mockRestore();
   });
 });

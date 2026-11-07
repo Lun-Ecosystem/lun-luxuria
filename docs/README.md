@@ -91,9 +91,14 @@ L'essai chronométré du 07/11 sur le poste réel : [`essai-2026-11-07.md`](essa
 - La voix est lue au niveau sonore, pas par Silero : à remplacer si l'essai montre de faux départs.
 - Dans le navigateur, la touche ne marche que fenêtre active et le petit mode reste dans l'onglet : c'est la fenêtre qui
   les rend globaux.
-- La détection d'une autre appli ne voit pas un autre onglet du navigateur.
+- La détection d'une autre appli ne voit pas un autre onglet du navigateur. Dans la fenêtre, le micro est tenu par
+  `msedgewebview2.exe`, ignoré comme un navigateur : une autre appli WebView2 (le nouveau Teams) échappe aussi.
 - Sous WebView2, la liste des micros peut rendre des noms vides tant que l'accès n'a pas été donné une fois.
 - La vignette au premier plan ne passe pas devant un jeu en plein écran exclusif.
 - Les réglages de `tauri dev` et ceux de l'exe ne sont pas les mêmes (origines différentes) : à refaire une fois.
 - Sans bord, la fenêtre se ferme par Alt+F4 ; la présence part alors comme à la fermeture d'un onglet.
 - La clé du modèle reste dans le stockage de la page : le trousseau du système viendra plus tard.
+- La page désigne elle-même le dossier du corps et celui du service voix, et le réseau de la fenêtre va à toute
+  adresse (le serveur et le modèle sont libres). Une page compromise lirait donc les images d'un dossier qui a un
+  `corps.json` et joindrait le réseau local sans CORS. Le durcissement serait un choix de dossier par dialogue natif,
+  gardé côté Rust.

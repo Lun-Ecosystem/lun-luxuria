@@ -24,6 +24,13 @@ describe('the window sends the page’s paths where the browser’s proxy did', 
     expect(native.calls).toEqual([]);
   });
 
+  it('a server in clear on the network gets nothing: no code, no token leaves', async () => {
+    const http = seen();
+    const net = routes(() => 'http://machine.exemple:8788', http.f, seen().f);
+    await expect(net.server('/api/pair', { method: 'POST' })).rejects.toThrow(/en clair/);
+    expect(http.calls).toEqual([]);
+  });
+
   it('follows a changed address at the next call', async () => {
     const http = seen();
     let address = 'http://127.0.0.1:8788';

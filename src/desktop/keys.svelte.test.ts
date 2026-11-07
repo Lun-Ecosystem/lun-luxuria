@@ -88,4 +88,20 @@ describe('keysFollow', () => {
     expect(session.keysSaid).toMatch(/F9 déjà prise/);
     stop();
   });
+
+  it('another setting saved leaves the keys alone', async () => {
+    const session = new Session();
+    const { shortcuts } = fake();
+    const register = vi.spyOn(shortcuts, 'register');
+    const stop = $effect.root(() => keysFollow(session, shortcuts));
+    await settle();
+    expect(register).toHaveBeenCalledTimes(2);
+    session.saveSettings({
+      ...session.settings,
+      body: { ...session.settings.body, folder: 'D:\\corps' },
+    } as Settings);
+    await settle();
+    expect(register).toHaveBeenCalledTimes(2);
+    stop();
+  });
 });

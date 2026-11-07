@@ -81,10 +81,12 @@ export function windowFollows(session: Session): void {
   let queue = Promise.resolve();
   let placing = false;
 
+  // Saving any setting replaces the whole object: without this, every saved setting would replace the scene.
+  const screen = $derived(session.settings.display.screen);
   $effect(() => {
     const layout = session.layout;
     const open = session.threadOpen;
-    const wanted = session.settings.display.screen;
+    const wanted = screen;
     queue = queue
       .then(async () => {
         placing = true;

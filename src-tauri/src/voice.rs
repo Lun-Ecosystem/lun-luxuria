@@ -102,8 +102,9 @@ pub fn stop(launched: &Launched) {
         return;
     };
     if let Some(mut child) = held.take() {
+        // A service already gone: its id may belong to another process by now.
         #[cfg(windows)]
-        {
+        if matches!(child.try_wait(), Ok(None)) {
             use std::os::windows::process::CommandExt;
             let _ = Command::new("taskkill")
                 .args(["/T", "/F", "/PID", &child.id().to_string()])
