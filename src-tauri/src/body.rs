@@ -170,6 +170,8 @@ mod tests {
                     .unwrap_err()
                     .contains("hors du dossier")
             ),
+            // The CI runs with the privilege: there, a skip would hide the only proof.
+            Err(e) if std::env::var_os("CI").is_some() => panic!("lien non créé en CI : {e}"),
             Err(e) => eprintln!("lien non créé ({e}) : vérification sautée"),
         }
     }
