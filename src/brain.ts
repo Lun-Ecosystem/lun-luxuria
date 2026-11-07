@@ -28,6 +28,7 @@ export type SendOptions = { surface: 'voice' | 'desktop'; confidence?: number };
  * on `live`: alone on a model (`local.ts`) or linked to a server (`core.ts`).
  */
 export interface Brain {
+  /** A beat resolves to `gone` when the server did not take it: the body, still there, announces itself again. */
   presence(
     state: 'started' | 'beat' | 'stopped',
     opts?: { busy?: boolean; ritual?: boolean },

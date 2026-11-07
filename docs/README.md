@@ -43,7 +43,7 @@ Sortant :
 
 | Quand | Appel |
 |---|---|
-| Arrivée, présence, départ | `POST /api/presence { state, busy?, ritual?, tab }` ; `tab` est tiré par la page à son chargement, pour qu'un onglet fermé ne coupe pas la présence d'un autre ; le départ part à `pagehide` avec `keepalive`, et une page rendue par l'historique du navigateur se ré-annonce |
+| Arrivée, présence, départ | `POST /api/presence { state, busy?, ritual?, tab }` ; `tab` est tiré par la page à son chargement, pour qu'un onglet fermé ne coupe pas la présence d'un autre ; le départ part à `pagehide` avec `keepalive`, une page rendue par l'historique du navigateur se ré-annonce, et un `beat` refusé (410 : la présence a fini pendant que la page dormait) aussi. Au retour au premier plan, un `beat`, jamais un `started` |
 | Une phrase | `POST /api/threads/main/messages { text, surface, confidence?, speak: true }` : flux `user`, `reply`, `delta`, `done` |
 | Phrase continuée | `POST /api/threads/main/messages/:id/withdraw`, sur le message de la personne |
 | Réponse coupée | `POST /api/threads/main/messages/:id/cut { said }`, sur la réponse ; vide si rien n'a été entendu |

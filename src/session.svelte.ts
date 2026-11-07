@@ -5,7 +5,7 @@ import type { Brain, LiveEvent, Message } from './brain.ts';
 import { CoreClient } from './core.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
-import { watchPage } from './page.ts';
+import { single, watchPage } from './page.ts';
 import { readSettings, type Layout, type Settings } from './settings.ts';
 import { Speaker, type SpeakerEvent } from './speech/speaker.ts';
 import { appsOnMicrophone, busyWith, synthesize, transcribe } from './voice.ts';
@@ -163,10 +163,7 @@ export class Session {
     await this.#announce();
     void this.#refreshThread();
 
-    const beat = setInterval(
-      () => void this.brain.presence('beat', { busy: this.busy }).catch(() => {}),
-      BEAT_MS,
-    );
+    const beat = setInterval(() => void this.#beat(), BEAT_MS);
     const poll = setInterval(() => void this.#pollBusy(), BUSY_POLL_MS);
     const down = (e: KeyboardEvent) => this.#key(e, true);
     const up = (e: KeyboardEvent) => this.#key(e, false);
@@ -175,6 +172,8 @@ export class Session {
     const unwatch = watchPage(
       () => void this.brain.presence('stopped').catch(() => {}),
       () => void this.#announce(),
+      // A beat, never a start: a start while present would say the short welcome at each tab switch.
+      () => void this.#beat(),
     );
     signal.addEventListener('abort', () => {
       clearInterval(beat);
@@ -193,13 +192,19 @@ export class Session {
     await this.#applyMic();
   }
 
-  async #announce(): Promise<void> {
+  // A refused beat, the page shown again and the stream coming back may fall together: one start.
+  #announce = single(async (): Promise<void> => {
     try {
       await this.brain.presence('started', { ritual: this.settings.speak.ritual });
       this.linked = true;
     } catch {
       this.linked = false;
     }
+  });
+
+  async #beat(): Promise<void> {
+    const answer = await this.brain.presence('beat', { busy: this.busy }).catch(() => undefined);
+    if (answer === 'gone') await this.#announce();
   }
 
   #onLive(e: LiveEvent): void {
@@ -247,7 +252,7 @@ export class Session {
     const changed = next !== this.busy;
     this.busy = this.#busySince !== 0 && next;
     if (changed) {
-      void this.brain.presence('beat', { busy: this.busy }).catch(() => {});
+      void this.#beat();
       await this.#applyMic();
     }
   }

@@ -62,13 +62,23 @@ export class CoreClient implements Brain {
     this.#token = ((await res.json()) as { token: string }).token;
   }
 
-  presence(state: 'started' | 'beat' | 'stopped', opts: { busy?: boolean; ritual?: boolean } = {}) {
-    return this.#call('/presence', {
-      method: 'POST',
-      body: JSON.stringify({ state, ...opts, tab: TAB }),
-      // Sent as the page closes: the browser finishes it instead of cutting it with the page.
-      ...(state === 'stopped' ? { keepalive: true } : {}),
-    });
+  async presence(
+    state: 'started' | 'beat' | 'stopped',
+    opts: { busy?: boolean; ritual?: boolean } = {},
+  ): Promise<'taken' | 'gone' | undefined> {
+    try {
+      await this.#call('/presence', {
+        method: 'POST',
+        body: JSON.stringify({ state, ...opts, tab: TAB }),
+        // Sent as the page closes: the browser finishes it instead of cutting it with the page.
+        ...(state === 'stopped' ? { keepalive: true } : {}),
+      });
+    } catch (err) {
+      // 410: no presence open for this tab any more, it ended while the page slept.
+      if (state === 'beat' && err instanceof CoreError && err.status === 410) return 'gone';
+      throw err;
+    }
+    return state === 'beat' ? 'taken' : undefined;
   }
 
   async send(text: string, opts: SendOptions, on: (e: SendEvent) => void): Promise<void> {
