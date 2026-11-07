@@ -34,3 +34,28 @@ jobs:
         run: |
           printf '%s\n' "$TITLE" | grep -Eq '^(feat|fix|docs|chore|ci|test|refactor)(\([a-z0-9-]+\))?!?: .+' \
             || { echo "PR title must follow Conventional Commits: $TITLE"; exit 1; }
+
+  # The window: Rust side on the system it ships for. The page is built first, the app embeds it.
+  window:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: rustup toolchain install stable --profile minimal -c rustfmt,clippy && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run build
+      - run: cargo fmt --check
+        working-directory: src-tauri
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri

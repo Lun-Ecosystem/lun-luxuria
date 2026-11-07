@@ -16,7 +16,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
-    "voix": "uv run voix/service.py"
+    "voix": "uv run voix/service.py",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@fontsource/cormorant-garamond": "^5.3.0",

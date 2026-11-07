@@ -26,8 +26,12 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
 
 - Dépôt public : aucun nom d'instance ici, ni dans le code ni dans la doc. Le nom, le ton et le contexte sont des réglages,
   et l'écran ne parle ni de core ni de ce à quoi il peut être relié (`src/noCore.test.ts`).
-- Pour l'instant, une page Vite dans le navigateur. Tauri 2 viendra sur le desktop (Rust), sans toucher à `src/` sauf
-  `audio.ts`, le raccourci global et la fenêtre.
+- Une page Vite, servie au navigateur ou dans la fenêtre Tauri 2 (`src-tauri/`, Windows). Ce qui n'existe que dans la
+  fenêtre vit dans `src/desktop/` et ne s'active que si `inWindow` ; la page dans le navigateur reste entière.
+- Côté Rust, le moins possible : lire le dossier du corps (borné à ce dossier), lancer le service voix (programme fixe,
+  jamais de shell). Chaque permission de `src-tauri/capabilities/` est nommée ; aucune `:default` de plus sans raison.
+- Le réseau dans la fenêtre : serveur et modèle par plugin-http, service voix par la page (CORS de `voix/service.py`).
+  La CSP de `tauri.conf.json` suit tout nouvel appel.
 - L'audio ne quitte jamais le PC : seuls du texte et des signaux en sortent.
 - Le corps ne parle qu'à `Brain` (`src/brain.ts`) : ce qui marche seul marche relié, et l'inverse.
 - Tout mécanisme de perception a son interrupteur dans `settings.ts` et sur l'écran Réglages, et ne dépend d'aucun autre.

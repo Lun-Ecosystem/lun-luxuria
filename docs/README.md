@@ -20,6 +20,31 @@
 
 Le micro reste coupé tant que le bouton ne l'a pas ouvert. Coupé, aucune capture ne tourne, et il ne se rallume jamais seul.
 
+## La fenêtre (Windows)
+
+Prérequis en plus : Rust stable (cible MSVC) et les Build Tools de Visual Studio (C++). WebView2 est déjà sur Windows 11.
+
+- **Essai** : `npm run tauri dev` ouvre la fenêtre sur la page de `npm run dev`, rechargée à chaque modification.
+- **Exe** : `npm run tauri build -- --no-bundle` donne `src-tauri/target/release/lun-luxuria.exe`, sans console et en
+  un seul exemplaire : un second lancement ramène la fenêtre ouverte. Aucun installateur pour l'instant.
+
+Une seule fenêtre, deux formes : la **scène** prend tout l'écran choisi, le **petit mode** est une vignette sans bord,
+toujours au premier plan, que l'on déplace en la tirant et qui revient là où on l'a laissée. Le raccourci global
+(`Control+Shift+L` par défaut) passe de l'une à l'autre depuis n'importe quelle appli, et la touche tenue marche aussi
+fenêtre inactive. Une touche qui écrit (lettre, chiffre, espace, entrée) est refusée en global.
+
+Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des Réglages) :
+
+- **Le réseau** : le serveur et le modèle sont joints par le côté Rust, sans CORS. L'adresse du serveur se règle à
+  l'écran ; la changer oublie le jeton, il faut appairer de nouveau. Le service voix reste joint par la page : ses
+  origines comptent `http://tauri.localhost`.
+- **Le corps** : un dossier avec `corps.json` (`{"niveau":"images","repos":"repos.png","parole":"parole.png",
+  "vignette":{"zoom":2,"x":50,"y":30}}`). Seuls ses fichiers images directs sont lus (png, jpg, webp, gif, 10 Mo au plus).
+  Une image manquante rend le souffle, et l'écran dit pourquoi ; « Relire » recharge le dossier.
+- **Le service voix** : s'il ne répond pas, l'appli peut le lancer elle-même (`uv run service.py` dans le dossier
+  choisi, un argument par ligne), sans console. Sa sortie va dans `voix.log`, au dossier des journaux de l'appli
+  (`%LOCALAPPDATA%\io.github.lun-ecosystem.luxuria\logs`). Il s'arrête avec l'appli, et seulement celui qu'elle a lancé.
+
 ## Un tour de parole
 
 `Endpointer` lit le micro par trames de 32 ms. À la courte pause, si « Répondre dès une courte pause » est actif, la
@@ -64,7 +89,11 @@ L'essai chronométré du 07/11 sur le poste réel : [`essai-2026-11-07.md`](essa
 ## Limites connues
 
 - La voix est lue au niveau sonore, pas par Silero : à remplacer si l'essai montre de faux départs.
-- La touche ne marche que fenêtre active, et la détection d'une autre appli ne voit pas un autre onglet du navigateur :
-  le raccourci global et le vrai nom de l'appli viennent avec Tauri.
-- Le petit mode n'est pas encore une fenêtre au premier plan.
-- La clé du modèle reste dans le stockage du navigateur : le trousseau du système viendra avec Tauri.
+- Dans le navigateur, la touche ne marche que fenêtre active et le petit mode reste dans l'onglet : c'est la fenêtre qui
+  les rend globaux.
+- La détection d'une autre appli ne voit pas un autre onglet du navigateur.
+- Sous WebView2, la liste des micros peut rendre des noms vides tant que l'accès n'a pas été donné une fois.
+- La vignette au premier plan ne passe pas devant un jeu en plein écran exclusif.
+- Les réglages de `tauri dev` et ceux de l'exe ne sont pas les mêmes (origines différentes) : à refaire une fois.
+- Sans bord, la fenêtre se ferme par Alt+F4 ; la présence part alors comme à la fermeture d'un onglet.
+- La clé du modèle reste dans le stockage de la page : le trousseau du système viendra plus tard.
