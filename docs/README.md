@@ -52,6 +52,10 @@ Sortant :
 Il n'écoute que sur 127.0.0.1, et n'accepte que les pages de l'application : une autre origine ou un autre `Host` reçoit
 un 403, car n'importe quel site ouvert dans le navigateur peut joindre 127.0.0.1. `--origin <url>` en ajoute une.
 
+`GET /micro` lit dans le registre de Windows les applis qui tiennent le micro : une entrée ouverte compte si elle date
+de moins de 12 h. Une entrée laissée ouverte par un plantage compte donc encore jusqu'à 12 h, et un appel de plus de
+12 h ne compte plus. Les applis ignorées des Réglages restent le recours.
+
 ## Mesures
 
 L'essai chronométré du 07/11 sur le poste réel : [`essai-2026-11-07.md`](essai-2026-11-07.md).

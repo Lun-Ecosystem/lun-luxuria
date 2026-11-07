@@ -102,6 +102,36 @@ def check_rvc_blocks():
         server.shutdown()
 
 
+def check_microphone():
+    # 2026-11-07 12:00 UTC, as Windows writes it: 100 ns steps since 1601.
+    noon = 134385264000000000
+    now = 1794052800.0
+    assert service.unix_time(noon) == now
+    hour = 3600 * 10**7
+    entries = [
+        ("Discord.exe", noon - 2 * hour),  # a call under way
+        ("Discord.exe", noon - 13 * hour),  # the same, left open by an old crash: one name, held once
+        ("old.exe", noon - 13 * hour),  # stale
+        ("MSTeams_8wekyb3d8bbwe", noon - 5 * 60 * 10**7),  # packaged, held
+        ("C#weird.exe", noon - hour),  # the name the client sees, kept as read
+    ]
+    assert service.held(entries, now) == ["C#weird.exe", "Discord.exe", "MSTeams_8wekyb3d8bbwe"]
+    assert service.held([("stale.exe", noon - 30 * 24 * hour)], now) == [], "February is not now"
+    assert service.held([("late.exe", noon + hour)], now) == ["late.exe"], "a clock set back keeps it held"
+    assert service.app_name(r"C:#Users#me#Ap#p#Discord.exe") == "Discord.exe", "the last piece, case kept"
+
+    import sys
+    saved = sys.modules.get("winreg")
+    sys.modules["winreg"] = None  # as on a system without it
+    try:
+        assert service.apps_on_microphone() == []
+    finally:
+        if saved is None:
+            sys.modules.pop("winreg", None)
+        else:
+            sys.modules["winreg"] = saved
+
+
 def call(path, headers=None, data=None):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", data=data, headers=headers or {})
     try:
@@ -144,6 +174,7 @@ def main():
 
     check_whisper_confidence()
     check_rvc_blocks()
+    check_microphone()
     print("ok")
 
 

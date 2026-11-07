@@ -118,6 +118,28 @@ def make_rvc(url, gain=2.0):
     return run
 
 
+HELD_MAX_S = 12 * 3600
+
+
+def unix_time(filetime):
+    """A registry FILETIME: 100 ns steps since 1601-01-01, in UTC, like time.time()."""
+    return filetime / 1e7 - 11644473600
+
+
+def app_name(key):
+    """A NonPackaged key is the program's path with # for \\: the client sees its last piece, case kept."""
+    return key.split("#")[-1]
+
+
+def held(entries, now):
+    """The open entries, (name, start), that still mean a microphone held.
+
+    shortcut: an entry left open by a crash counts up to 12 h, and a call longer than 12 h no longer counts; the apps
+    ignored in the settings stay the way out. Check the program's own start time if the desktop shows a recent crash.
+    """
+    return sorted({name for name, start in entries if now - unix_time(start) < HELD_MAX_S})
+
+
 def apps_on_microphone():
     """Windows' own record of who holds the microphone: LastUsedTimeStop is 0 while an app does."""
     try:
@@ -135,28 +157,29 @@ def apps_on_microphone():
                 return
             i += 1
 
-    def in_use(key, sub):
+    def opened(key, sub):
+        """The start of an entry still open, None otherwise."""
         try:
             with winreg.OpenKey(key, sub) as k:
                 start = winreg.QueryValueEx(k, "LastUsedTimeStart")[0]
                 stop = winreg.QueryValueEx(k, "LastUsedTimeStop")[0]
-                return start != 0 and stop == 0
+                return start if start != 0 and stop == 0 else None
         except OSError:
-            return False
+            return None
 
-    apps = set()
+    entries = []
     for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
         try:
             with winreg.OpenKey(hive, root_path) as root:
                 for sub in subkeys(root):
                     if sub == "NonPackaged":
                         with winreg.OpenKey(root, sub) as np_key:
-                            apps |= {s.split("#")[-1] for s in subkeys(np_key) if in_use(np_key, s)}
-                    elif in_use(root, sub):
-                        apps.add(sub)
+                            entries += [(app_name(s), t) for s in subkeys(np_key) if (t := opened(np_key, s))]
+                    elif t := opened(root, sub):
+                        entries.append((sub, t))
         except OSError:
             pass
-    return sorted(apps)
+    return held(entries, time.time())
 
 
 def serve(stt, tts, rvc, names, port, origins=ORIGINS):
