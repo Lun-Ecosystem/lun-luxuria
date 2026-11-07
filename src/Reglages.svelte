@@ -180,7 +180,9 @@
       {@render toggle('Touche à maintenir', undefined, s.key.on, (v) => set((d) => (d.key.on = v)))}
       {@render field(
         'Code de la touche',
-        'Pour l’instant dans cette fenêtre seulement, le raccourci global viendra avec l’appli de bureau.',
+        inWindow
+          ? session.keysSaid || 'Depuis n’importe quelle fenêtre.'
+          : 'Dans cette fenêtre seulement : l’appli de bureau la prend depuis toutes.',
         s.key.code,
         undefined,
         (v) => set((d) => (d.key.code = v.trim() || DEFAULTS.key.code)),

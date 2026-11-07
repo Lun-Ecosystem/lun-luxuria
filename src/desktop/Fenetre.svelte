@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Segmented, SettingsCard, SettingsRow } from '../lib/ui/index.ts';
+  import { Segmented, SettingsCard, SettingsRow, TextInput } from '../lib/ui/index.ts';
   import type { Session } from '../session.svelte.ts';
   import type { Settings } from '../settings.ts';
   import { sceneScreen, type Screen } from './place.ts';
@@ -36,4 +36,18 @@
   {:else}
     <SettingsRow label="Écran de la scène" hint="Un seul écran branché : la scène le prend." />
   {/if}
+  <SettingsRow
+    label="Raccourci scène, petit mode"
+    hint="Depuis n’importe quelle fenêtre, sans couper sa voix. Exemple : Control+Shift+L."
+  >
+    <TextInput
+      value={s.display.shortcut}
+      size="petit"
+      aria-label="Raccourci scène, petit mode"
+      onchange={(e) => {
+        const v = (e.currentTarget as HTMLInputElement).value.trim();
+        if (v) set((d) => (d.display.shortcut = v));
+      }}
+    />
+  </SettingsRow>
 </SettingsCard>

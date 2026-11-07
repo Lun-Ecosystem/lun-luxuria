@@ -36,8 +36,11 @@ export interface Settings {
   speak: { ritual: boolean; p0: boolean; spontaneous: boolean };
   voice: { volume: number; echoCancellation: boolean; noiseSuppression: boolean };
   body: { level: 'breath' | 'images'; rest: string; talking: string };
-  /** In the window: the scene's screen, by name; empty, the first that is not the main one. */
-  display: { screen: string };
+  /**
+   * In the window: the scene's screen, by name (empty, the first that is not the main one), and the global
+   * shortcut between scene and small mode.
+   */
+  display: { screen: string; shortcut: string };
 }
 
 export const DEFAULTS: Settings = {
@@ -60,7 +63,7 @@ export const DEFAULTS: Settings = {
   speak: { ritual: true, p0: true, spontaneous: true },
   voice: { volume: 1, echoCancellation: true, noiseSuppression: true },
   body: { level: 'breath', rest: '', talking: '' },
-  display: { screen: '' },
+  display: { screen: '', shortcut: 'Control+Shift+L' },
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
