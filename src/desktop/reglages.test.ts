@@ -8,6 +8,21 @@ vi.mock('./net.ts', async (real) => ({
     return where.inWindow;
   },
 }));
+// The window's own card asks the system for its screens: one here, as on a laptop.
+vi.mock('./window.svelte.ts', () => ({
+  screens: async () => [
+    {
+      name: 'DISPLAY1',
+      primary: true,
+      x: 0,
+      y: 0,
+      width: 1920,
+      height: 1080,
+      scale: 1,
+      work: { x: 0, y: 0, width: 1920, height: 1040 },
+    },
+  ],
+}));
 
 const { default: Reglages } = await import('../Reglages.svelte');
 const { Session } = await import('../session.svelte.ts');

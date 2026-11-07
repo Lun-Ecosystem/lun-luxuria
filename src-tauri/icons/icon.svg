@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Source of every app icon: `npx tauri icon src-tauri/icons/icon.svg`. Scene ground, a crescent in the world's accent. -->
+  <defs>
+    <mask id="crescent">
+      <rect width="512" height="512" fill="#fff"/>
+      <circle cx="300" cy="214" r="140" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#100409"/>
+  <rect x="10" y="10" width="492" height="492" rx="104" fill="none" stroke="#8A1E5A" stroke-width="8" opacity=".55"/>
+  <circle cx="236" cy="268" r="156" fill="#E7A9CB" mask="url(#crescent)"/>
+</svg>
