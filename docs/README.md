@@ -5,6 +5,12 @@
 1. La voix : `uv run voix/service.py --stt faster:small --tts piper:<voix.onnx> [--rvc <url>]`. Autres briques :
    `--stt whisper-server:<url>` (whisper.cpp par Vulkan), `--tts kokoro:<modèle.onnx>:<voix.bin>`. `--lang` règle la
    langue transcrite (`fr` par défaut).
+   - **Confiance** : avec faster-whisper, l'exponentielle de la moyenne d'`avg_logprob`, qui compte aussi horodatages
+     et fin de texte. Avec whisper-server, la moyenne géométrique des probabilités des seuls jetons de texte
+     (`verbose_json`), car son `avg_logprob` divise par un compte qui inclut les jetons spéciaux. Les deux ne se
+     comparent pas : la barre de geste se juge sur la brique en service. Sans aucun mot, la confiance vaut 0.
+   - **RVC** : 50 ms de silence devant, puis des blocs de 0,5 s à 48 kHz, un appel à la fois. Le service rend la phrase
+     entière, à sa longueur utile. `--rvc-gain` règle le gain de sortie (2,0 par défaut), borné à [-1, 1].
 2. L'app : `npm run dev`, puis http://127.0.0.1:5180, et « Entrer » : un navigateur ne joue aucun son sans un clic.
 3. Son cerveau, au choix :
    - **Seul** : dans les Réglages, l'adresse d'un service compatible OpenAI et le nom du modèle. Le service doit accepter
