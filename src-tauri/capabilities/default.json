@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the page may ask of the window, one permission at a time",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "http://*:*/*" },
+        { "url": "https://*:*/*" },
+        { "url": "http://*/*" },
+        { "url": "https://*/*" }
+      ]
+    },
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered"
+  ]
+}

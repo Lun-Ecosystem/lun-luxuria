@@ -1,0 +1,37 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Lun'Luxuria",
+  "version": "0.1.0",
+  "identifier": "io.github.lun-ecosystem.luxuria",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:5180",
+    "beforeDevCommand": "npm run dev -- --strictPort",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Lun'Luxuria",
+        "width": 1280,
+        "height": 760,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
