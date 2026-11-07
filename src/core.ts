@@ -55,7 +55,12 @@ export class CoreClient implements Brain {
   }
 
   presence(state: 'started' | 'beat' | 'stopped', opts: { busy?: boolean; ritual?: boolean } = {}) {
-    return this.#call('/presence', { method: 'POST', body: JSON.stringify({ state, ...opts }) });
+    return this.#call('/presence', {
+      method: 'POST',
+      body: JSON.stringify({ state, ...opts }),
+      // Sent as the page closes: the browser finishes it instead of cutting it with the page.
+      ...(state === 'stopped' ? { keepalive: true } : {}),
+    });
   }
 
   async send(text: string, opts: SendOptions, on: (e: SendEvent) => void): Promise<void> {

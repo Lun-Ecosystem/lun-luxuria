@@ -42,7 +42,7 @@ Sortant :
 
 | Quand | Appel |
 |---|---|
-| Arrivée, présence, départ | `POST /api/presence { state, busy?, ritual? }` |
+| Arrivée, présence, départ | `POST /api/presence { state, busy?, ritual? }` ; le départ part à `pagehide` avec `keepalive`, et une page rendue par l'historique du navigateur se ré-annonce |
 | Une phrase | `POST /api/threads/main/messages { text, surface, confidence?, speak: true }` : flux `user`, `reply`, `delta`, `done` |
 | Phrase continuée | `POST /api/threads/main/messages/:id/withdraw`, sur le message de la personne |
 | Réponse coupée | `POST /api/threads/main/messages/:id/cut { said }`, sur la réponse ; vide si rien n'a été entendu |
