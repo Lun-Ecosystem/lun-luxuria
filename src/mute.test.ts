@@ -117,6 +117,40 @@ describe('the desk mute', () => {
     await s.write('Bonjour');
     expect(s.core.send).not.toHaveBeenCalled();
   });
+  it('a key held when the mute comes is let go, and muted the key does not count', async () => {
+    const { s } = linked();
+    await s.enter();
+    s.holdKey(true);
+    s.toggleMute();
+    s.holdKey(false);
+    s.toggleMute();
+    expect(s.keyHeld).toBe(false);
+    s.toggleMute();
+    s.holdKey(true);
+    expect(s.keyHeld).toBe(false);
+  });
+
+  it('muting while she thinks: the label does not stay on thinking after', async () => {
+    const { s } = linked();
+    await s.enter();
+    s.thinking = true;
+    s.toggleMute();
+    s.toggleMute();
+    expect(s.thinking).toBe(false);
+  });
+
+  it('the beat, not only the start, carries no mute field when not muted, and busy stays itself', async () => {
+    const { s, sent } = linked({ settings: { speak: { ...DEFAULTS.speak, p0: false } } });
+    await s.enter();
+    s.busy = true;
+    s.saveSettings({ ...s.settings, speak: { ...s.settings.speak, p0: true } });
+    await flush();
+    const beat = sent.at(-1)!;
+    expect(beat.state).toBe('beat');
+    expect(beat.opts).toMatchObject({ busy: true });
+    expect(beat.opts).not.toHaveProperty('muted');
+  });
+
   it('P0 aloud turned off: a silent announce on the start, and at once when the setting changes', async () => {
     const { s, sent } = linked({ settings: { speak: { ...DEFAULTS.speak, p0: false } } });
     await s.enter();

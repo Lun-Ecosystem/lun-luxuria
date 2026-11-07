@@ -247,6 +247,28 @@ describe('what is said aloud', () => {
     expect(off.sounds).toHaveLength(0);
   });
 
+  it('muted while a sentence is transcribed: it never leaves, and a held fragment is withdrawn', async () => {
+    let muted = false;
+    const t = setup(
+      { endOfSpeech: { ...DEFAULTS.endOfSpeech, speculate: false } },
+      'Bonjour toi',
+      () => muted,
+    );
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });
+    muted = true;
+    await tick();
+    expect(t.sends).toHaveLength(0);
+
+    muted = false;
+    const s = setup({}, 'Bonjour toi', () => muted);
+    s.convo.onEndpoint({ type: 'pause', audio: AUDIO });
+    await tick();
+    muted = true;
+    s.convo.mute();
+    await tick();
+    expect(s.calls).toEqual(['withdraw 10']);
+  });
+
   it('a failed turn is said, not swallowed', async () => {
     const t = setup({ endOfSpeech: { ...DEFAULTS.endOfSpeech, speculate: false } });
     t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });

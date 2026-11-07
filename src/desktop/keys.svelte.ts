@@ -1,5 +1,6 @@
 import * as plugin from '@tauri-apps/plugin-global-shortcut';
 import type { ShortcutEvent } from '@tauri-apps/plugin-global-shortcut';
+import { normalizeCombo } from '../lib/ui/shortcuts.ts';
 import type { Session } from '../session.svelte.ts';
 
 /** A key that types something: taken globally, no other app would see it again. */
@@ -11,6 +12,18 @@ export function refusedGlobally(code: string): string | undefined {
   if (PRINTABLE.test(code))
     return 'Cette touche écrit quelque chose : prise pour tout le poste, plus aucune appli ne la verrait. Elle ne marche que fenêtre active.';
   return undefined;
+}
+
+/** One form for a combo, whatever the order and case of its modifiers (`Control` is the system's `Ctrl`). */
+function sameCombo(a: string, b: string): boolean {
+  const form = (c: string) => {
+    try {
+      return normalizeCombo(c.replace(/\bcontrol\b/gi, 'Ctrl'));
+    } catch {
+      return c.toLowerCase();
+    }
+  };
+  return form(a) === form(b);
 }
 
 export type Shortcuts = Pick<typeof plugin, 'register' | 'unregister'>;
@@ -46,8 +59,7 @@ export function keysFollow(session: Session, shortcuts: Shortcuts = plugin): voi
       } catch {
         said.push(`Raccourci ${toggle} déjà pris par une autre appli.`);
       }
-      const same = (a: string) => a.toLowerCase() === mute.toLowerCase();
-      if (same(toggle) || (on && same(code)))
+      if (sameCombo(mute, toggle) || (on && sameCombo(mute, code)))
         said.push(`Raccourci de la sourdine ${mute} : il double une autre touche, choisis-en un autre.`);
       else {
         try {

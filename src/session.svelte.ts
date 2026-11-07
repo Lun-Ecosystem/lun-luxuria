@@ -288,8 +288,13 @@ export class Session {
 
   /** The held key, from this window or, in the desktop window, from any other. */
   holdKey(held: boolean): void {
-    if (!this.settings.key.on || this.silenced) return;
+    // A release always counts: a key held when the mute came must not stay down after.
+    if (!this.settings.key.on || (held && this.silenced)) return;
     this.#keyHeld = held;
+  }
+
+  get keyHeld(): boolean {
+    return this.#keyHeld;
   }
 
   async #pollBusy(): Promise<void> {
@@ -362,6 +367,11 @@ export class Session {
   toggleMute(): void {
     if (this.speaking) this.silence();
     this.silenced = !this.silenced;
+    if (this.silenced) {
+      this.#convo?.mute();
+      // Her reply will not be said, so nothing will end the thinking.
+      this.thinking = false;
+    }
     store(MUTE_KEY, this.silenced ? 'on' : null);
     void this.#applyMic();
     if (this.entered) void this.#beat();

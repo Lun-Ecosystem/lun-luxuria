@@ -131,7 +131,7 @@ describe('keysFollow', () => {
     await settle();
     session.saveSettings({
       ...session.settings,
-      display: { ...session.settings.display, muteShortcut: 'control+shift+l' },
+      display: { ...session.settings.display, muteShortcut: 'Shift+Ctrl+L' },
     });
     await settle();
     expect([...held.keys()]).toEqual(['Control+Shift+L', 'F9']);
