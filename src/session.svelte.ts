@@ -5,6 +5,7 @@ import type { Brain, LiveEvent, Message } from './brain.ts';
 import { CoreClient } from './core.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
+import { watchPage } from './page.ts';
 import { readSettings, type Layout, type Settings } from './settings.ts';
 import { Speaker, type SpeakerEvent } from './speech/speaker.ts';
 import { appsOnMicrophone, busyWith, synthesize, transcribe } from './voice.ts';
@@ -169,16 +170,18 @@ export class Session {
     const poll = setInterval(() => void this.#pollBusy(), BUSY_POLL_MS);
     const down = (e: KeyboardEvent) => this.#key(e, true);
     const up = (e: KeyboardEvent) => this.#key(e, false);
-    const leave = () => void this.brain.presence('stopped').catch(() => {});
     addEventListener('keydown', down);
     addEventListener('keyup', up);
-    addEventListener('pagehide', leave);
+    const unwatch = watchPage(
+      () => void this.brain.presence('stopped').catch(() => {}),
+      () => void this.#announce(),
+    );
     signal.addEventListener('abort', () => {
       clearInterval(beat);
       clearInterval(poll);
       removeEventListener('keydown', down);
       removeEventListener('keyup', up);
-      removeEventListener('pagehide', leave);
+      unwatch();
     });
 
     const frame = () => {

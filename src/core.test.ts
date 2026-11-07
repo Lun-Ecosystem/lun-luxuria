@@ -81,3 +81,22 @@ describe('the client of the core', () => {
     expect(links[0]).toBe(true);
   });
 });
+
+describe('the presence', () => {
+  it('asks the browser to finish the stop even if the page closes, and only the stop', async () => {
+    const asked: [string, RequestInit][] = [];
+    const client = new CoreClient('t', (async (url: string, init: RequestInit) => {
+      asked.push([url, init]);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch);
+    await client.presence('started', { ritual: true });
+    await client.presence('beat', { busy: false });
+    await client.presence('stopped');
+    expect(asked.map(([, init]) => init.keepalive)).toEqual([undefined, undefined, true]);
+    const [url, init] = asked[2]!;
+    expect(url).toBe('/api/presence');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe('{"state":"stopped"}');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer t' });
+  });
+});
