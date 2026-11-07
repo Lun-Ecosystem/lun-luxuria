@@ -47,7 +47,7 @@ export interface Settings {
    * In the window: the scene's screen, by name (empty, the first that is not the main one), and the global
    * shortcuts between scene and small mode, and for the mute.
    */
-  display: { screen: string; shortcut: string; muteShortcut: string };
+  display: { screen: string; shortcut: string; muteShortcut: string; startWithWindows: boolean };
 }
 
 export const DEFAULTS: Settings = {
@@ -75,7 +75,12 @@ export const DEFAULTS: Settings = {
     service: { launch: false, folder: '', args: [] },
   },
   body: { level: 'breath', rest: '', talking: '', folder: '' },
-  display: { screen: '', shortcut: 'Control+Shift+L', muteShortcut: 'Control+Shift+M' },
+  display: {
+    screen: '',
+    shortcut: 'Control+Shift+L',
+    muteShortcut: 'Control+Shift+M',
+    startWithWindows: false,
+  },
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>

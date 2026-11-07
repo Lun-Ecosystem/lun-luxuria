@@ -2,6 +2,7 @@
 //! what a browser tab cannot: a window of its own, global keys, requests without CORS.
 
 mod body;
+mod tray;
 mod voice;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -17,11 +18,15 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // Starting with Windows is the person's switch on the settings screen; nothing is set here.
+        .plugin(tauri_plugin_autostart::Builder::new().build())
+        .setup(|app| Ok(tray::setup(app.handle())?))
         .manage(voice::Launched::default())
         .invoke_handler(tauri::generate_handler![
             body::body_config,
             body::body_image,
-            voice::voice_start
+            voice::voice_start,
+            tray::tray_state
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lun'Luxuria")

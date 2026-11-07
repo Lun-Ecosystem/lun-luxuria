@@ -3,6 +3,7 @@
   import { inWindow } from './desktop/net.ts';
   import { bodyFollows } from './desktop/corps.svelte.ts';
   import { keysFollow } from './desktop/keys.svelte.ts';
+  import { autostartFollows, trayFollows } from './desktop/tray.svelte.ts';
   import { pingVoice, startVoice } from './desktop/voix.ts';
   import { windowFollows } from './desktop/window.svelte.ts';
   import Reglages from './Reglages.svelte';
@@ -14,6 +15,8 @@
     windowFollows(session);
     keysFollow(session);
     bodyFollows(session);
+    trayFollows(session);
+    autostartFollows(session);
     void startVoice(session, pingVoice(session.voiceFetch));
   }
   let code = $state('');

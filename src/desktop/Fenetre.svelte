@@ -40,6 +40,18 @@
     <SettingsRow label="Écran de la scène" hint="Un seul écran branché : la scène le prend." />
   {/if}
   <SettingsRow
+    label="Démarrer avec Windows"
+    hint={session.startSaid || 'À l’ouverture de la session, avec son icône près de l’horloge.'}
+  >
+    {#snippet children({ labelId })}
+      <Switch
+        checked={s.display.startWithWindows}
+        aria-labelledby={labelId}
+        onchange={(v) => set((d) => (d.display.startWithWindows = v))}
+      />
+    {/snippet}
+  </SettingsRow>
+  <SettingsRow
     label="Dossier du corps"
     hint={session.bodySaid || 'Son corps.json décide du niveau et des images.'}
   >
