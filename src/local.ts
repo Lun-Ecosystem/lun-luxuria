@@ -27,12 +27,14 @@ const SENTENCE_END = /(?<!\b(?:M|Mme|Dr))(?<!(?:^|\n)[ \t]*\d+)[.!?…]+["»)*_`
 
 /** What the model writes in markdown, said without its marks: the thread keeps them. */
 const SPOKEN: [RegExp, string][] = [
-  [/\[([^\]\n]*)\]\([^)\s]*\)/g, '$1'], // a link says its text
+  [/!?\[([^\]\n]*)\]\([^)\n]*\)/g, '$1'], // a link or an image says its text
   [/^[ \t]*([-*_])[ \t]*(?:\1[ \t]*){2,}$/gm, ''], // a rule
-  [/^[ \t]*(?:#{1,6}|>|[-*•]|\d+[.)])[ \t]+/gm, ''], // title, quote, bullet, number
-  [/(\*{1,3})(?=\S)([^*\n]*?\S)\1/g, '$2'],
+  [/^[ \t]*(?:(?:#{1,6}|>[ \t>]*|[-*+•]|\d+[.)])[ \t]+)(?:\[[ xX]\][ \t]+)?/gm, ''], // title, quote, bullet, number, box
+  [/(?<![\p{L}\p{N}])(\*{1,3})(?=\S)([^*\n]*?\S)\1(?![\p{L}\p{N}])/gu, '$2'], // not 2*3*4
   [/(^|[^\p{L}\p{N}_])(_{1,2})(?=\S)([^_\n]*?\S)\2(?![\p{L}\p{N}_])/gu, '$1$3'],
-  [/\*{2,}|`/g, ''],
+  [/(?<=\S)\*{2,}|\*{2,}(?=\S)|`|~~/g, ''],
+  // An emphasis across two sentences: its half stays on each one.
+  [/^[*_]{1,3}(?=\S)|(?<=\S)[*_]{1,3}(?=[,.;:!?…»")]*$)/g, ''],
   [/[ \t]{2,}/g, ' '],
 ];
 export const spoken = (text: string): string =>

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LiveEvent, SendEvent } from './brain.ts';
-import { LocalBrain, sentences, unsafeAddress } from './local.ts';
+import { LocalBrain, sentences, spoken, unsafeAddress } from './local.ts';
 import { DEFAULTS, type Settings } from './settings.ts';
 
 const settings = (model: Partial<Settings['model']> = {}): Settings => ({
@@ -63,6 +63,36 @@ describe('sentences', () => {
       done: ['Salut.', 'Ça coûte 3.5 € ?', 'Oui !'],
       rest: 'M. Durand arr',
     });
+  });
+
+  it('says the marks a model writes, and leaves the text it means', () => {
+    expect(
+      [
+        '*Il pleut.',
+        'Prends.*',
+        '_Il pleut.',
+        'Prends._',
+        '![une carte](u.png)',
+        '- [ ] acheter',
+        '+ plus',
+        '> > dit-il',
+        '~~barré~~',
+        '2*3*4 font 24',
+        'ma_variable_longue',
+      ].map(spoken),
+    ).toEqual([
+      'Il pleut.',
+      'Prends.',
+      'Il pleut.',
+      'Prends.',
+      'une carte',
+      'acheter',
+      'plus',
+      'dit-il',
+      'barré',
+      '2*3*4 font 24',
+      'ma_variable_longue',
+    ]);
   });
 
   it('keeps a list number and a closing emphasis with their sentence', () => {

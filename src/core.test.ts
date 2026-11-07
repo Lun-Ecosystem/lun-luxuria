@@ -109,7 +109,7 @@ describe('the presence', () => {
     await client.presence('beat', { busy: false });
     await client.presence('stopped');
     expect(bodies.map((b) => b.state)).toEqual(['started', 'beat', 'stopped']);
-    expect(bodies[0]!.tab).toMatch(/^[0-9a-f-]{36}$/);
+    expect(bodies[0]!.tab).toMatch(/^[0-9a-f]{32}$/);
     expect(new Set(bodies.map((b) => b.tab)).size).toBe(1);
   });
 });

@@ -11,8 +11,11 @@ export const MAIN = 'main';
 /**
  * This page, drawn when the module loads: two tabs on one device are two presences to the server. A
  * duplicated tab loads the module again and draws its own; a page restored from history keeps it.
+ * getRandomValues, not randomUUID: it also works on a page served without https.
  */
-const TAB = crypto.randomUUID();
+const TAB = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+  b.toString(16).padStart(2, '0'),
+).join('');
 
 export class CoreError extends Error {
   status: number;
