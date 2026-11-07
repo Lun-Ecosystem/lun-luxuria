@@ -96,7 +96,20 @@ describe('the presence', () => {
     const [url, init] = asked[2]!;
     expect(url).toBe('/api/presence');
     expect(init.method).toBe('POST');
-    expect(init.body).toBe('{"state":"stopped"}');
     expect(init.headers).toMatchObject({ authorization: 'Bearer t' });
+  });
+
+  it('names its tab, the same on every call, so closing another tab does not end this one', async () => {
+    const bodies: { state: string; tab: string }[] = [];
+    const client = new CoreClient('t', (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string) as { state: string; tab: string });
+      return new Response(null, { status: 204 });
+    }) as typeof fetch);
+    await client.presence('started', { ritual: true });
+    await client.presence('beat', { busy: false });
+    await client.presence('stopped');
+    expect(bodies.map((b) => b.state)).toEqual(['started', 'beat', 'stopped']);
+    expect(bodies[0]!.tab).toMatch(/^[0-9a-f-]{36}$/);
+    expect(new Set(bodies.map((b) => b.tab)).size).toBe(1);
   });
 });
