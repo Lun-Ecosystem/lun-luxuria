@@ -54,6 +54,18 @@ et ce qui a été entendu remonte (`cut`).
 
 Le filtre ne regarde qu'une phrase transcrite localement : refusée, elle ne part jamais.
 
+## La sourdine
+
+Le bouton lune de la scène, ou le raccourci global (`Control+Shift+M` par défaut, carte « La fenêtre »), la met ou
+l'enlève. En sourdine, rien n'écoute : le micro est fermé, le champ du fil et la touche tenue ne font rien, et
+l'étiquette dit « En sourdine ». Rien n'est dit, sauf une urgence quand « Les urgences » est activé dans « Ce qui est dit
+à voix haute ». Elle dure jusqu'à ce qu'on l'enlève, même après un relancement ; l'enlever rend le micro dans son état
+d'avant, et fermé pendant un appel. Un raccourci qui double celui de la scène ou la touche tenue est refusé.
+
+Relié, la présence porte `muted: true` (pas de parole d'elle-même, pas d'accueil) et, « Les urgences » coupé,
+`silentAnnounce: true` : une urgence non dite part en notification au lieu de se perdre. Les deux ne partent que vrais,
+et un battement part tout de suite quand l'un change. Seul, la sourdine coupe le micro et le champ, c'est tout.
+
 ## Les deux cerveaux
 
 `Brain` (`src/brain.ts`) est tout ce que le corps demande : `presence`, `send`, `cut`, `withdraw`, `thread`, `live`.
@@ -68,7 +80,7 @@ Sortant :
 
 | Quand | Appel |
 |---|---|
-| Arrivée, présence, départ | `POST /api/presence { state, busy?, ritual?, tab }` ; `tab` est tiré par la page à son chargement, pour qu'un onglet fermé ne coupe pas la présence d'un autre ; le départ part à `pagehide` avec `keepalive`, une page rendue par l'historique du navigateur se ré-annonce, et un `beat` refusé (410 : la présence a fini pendant que la page dormait) aussi. Au retour au premier plan, un `beat`, jamais un `started` |
+| Arrivée, présence, départ | `POST /api/presence { state, busy?, ritual?, muted?, silentAnnounce?, tab }` ; `tab` est tiré par la page à son chargement, pour qu'un onglet fermé ne coupe pas la présence d'un autre ; le départ part à `pagehide` avec `keepalive`, une page rendue par l'historique du navigateur se ré-annonce, et un `beat` refusé (410 : la présence a fini pendant que la page dormait) aussi. Au retour au premier plan, un `beat`, jamais un `started` |
 | Une phrase | `POST /api/threads/main/messages { text, surface, confidence?, speak: true }` : flux `user`, `reply`, `delta`, `done` |
 | Phrase continuée | `POST /api/threads/main/messages/:id/withdraw`, sur le message de la personne |
 | Réponse coupée | `POST /api/threads/main/messages/:id/cut { said }`, sur la réponse ; vide si rien n'a été entendu |
