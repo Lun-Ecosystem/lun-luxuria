@@ -46,6 +46,10 @@ Sortant :
 Il n'écoute que sur 127.0.0.1, et n'accepte que les pages de l'application : une autre origine ou un autre `Host` reçoit
 un 403, car n'importe quel site ouvert dans le navigateur peut joindre 127.0.0.1. `--origin <url>` en ajoute une.
 
+## Mesures
+
+L'essai chronométré du 07/11 sur le poste réel : [`essai-2026-11-07.md`](essai-2026-11-07.md).
+
 ## Limites connues
 
 - La voix est lue au niveau sonore, pas par Silero : à remplacer si l'essai montre de faux départs.
