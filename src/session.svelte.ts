@@ -3,6 +3,8 @@ import { stateOf, type BodyState } from './body/body.ts';
 import { Conversation } from './conversation.ts';
 import type { Brain, LiveEvent, Message } from './brain.ts';
 import { CoreClient } from './core.ts';
+import type { BodyView } from './desktop/corps.svelte.ts';
+import { pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
 import { presenceKeeper, watchPage } from './page.ts';
@@ -57,9 +59,20 @@ export class Session {
   latencies = $state<{ ms: number; speculated: boolean }[]>([]);
   thread = $state<Message[]>([]);
   entered = $state(false);
+  /** The thread over the scene; in the window's small mode, it turns the thumbnail into a panel. */
+  threadOpen = $state(false);
+  /** In the window: what the global keys could not take, said on the settings screen. */
+  keysSaid = $state('');
+  /** In the window: the body read from its folder, and what that reading says. */
+  bodyView = $state<BodyView | null>(null);
+  bodySaid = $state('');
+  /** In the window: whether the voice service answers, was started, or why not. */
+  voiceSaid = $state('');
   token = $state<string | null>(stored(TOKEN_KEY));
 
-  core = new CoreClient(this.token);
+  /** In the window, the page's paths go where the browser's proxy sent them. */
+  #net = pageNet(() => this.settings.server);
+  core = new CoreClient(this.token, this.#net.server);
   /** Chosen when entering: a change of brain goes through a reload. */
   brain: Brain = this.core;
   #keyHeld = false;
@@ -114,19 +127,34 @@ export class Session {
     if (this.entered) location.reload();
   }
 
+  /** The voice service's fetch: the window reaches it directly, a browser tab through its proxy. */
+  get voiceFetch(): typeof fetch {
+    return this.#net.voice;
+  }
+
+  /** A token never goes to another address: a new server means pairing again. */
+  setServer(url: string): void {
+    if (url === this.settings.server) return;
+    this.saveSettings({ ...($state.snapshot(this.settings) as Settings), server: url });
+    this.token = null;
+    store(TOKEN_KEY, null);
+    this.core = new CoreClient(null, this.#net.server);
+    if (this.entered) location.reload();
+  }
+
   /** A click starts it: a browser plays no sound without one. */
   async enter(): Promise<void> {
     this.entered = true;
     this.brain =
       this.settings.brain === 'linked'
         ? this.core
-        : new LocalBrain(() => this.settings, { get: stored, set: store });
+        : new LocalBrain(() => this.settings, { get: stored, set: store }, this.#net.server);
     const out = webOutput(() => this.settings.voice.volume);
     const convo: Conversation = new Conversation({
       brain: this.brain,
-      stt: transcribe,
+      stt: (audio) => transcribe(audio, this.#net.voice),
       speaker: (this.#speaker = new Speaker(
-        (text) => synthesize(text),
+        (text) => synthesize(text, this.#net.voice),
         out,
         (e: SpeakerEvent) => this.#onSpeaker(e, convo),
       )),
@@ -235,8 +263,12 @@ export class Session {
   }
 
   #key(e: KeyboardEvent, held: boolean): void {
-    if (e.code !== this.settings.key.code || !this.settings.key.on) return;
-    if (held === this.#keyHeld) return;
+    if (e.code === this.settings.key.code) this.holdKey(held);
+  }
+
+  /** The held key, from this window or, in the desktop window, from any other. */
+  holdKey(held: boolean): void {
+    if (!this.settings.key.on) return;
     this.#keyHeld = held;
   }
 
@@ -245,7 +277,10 @@ export class Session {
       this.busy = false;
       return this.#applyMic();
     }
-    const taken = busyWith(await appsOnMicrophone().catch(() => []), this.settings.busy.ignored);
+    const taken = busyWith(
+      await appsOnMicrophone(this.#net.voice).catch(() => []),
+      this.settings.busy.ignored,
+    );
     const now = Date.now();
     if (taken) this.#busySince = now;
     const next = taken || now - this.#busySince < this.settings.busy.returnSeconds * 1000;

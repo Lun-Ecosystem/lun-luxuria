@@ -132,6 +132,40 @@ def check_microphone():
             sys.modules["winreg"] = saved
 
 
+def answer_headers(path, headers, method="GET", data=None):
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, r.headers
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers
+
+
+def check_cors(ours, other):
+    """The window's page reaches the service across origins: CORS for our pages only, the preflight too."""
+    tauri = {"Origin": "http://tauri.localhost"}
+    status, h = answer_headers("/ping", tauri)
+    assert status == 200 and h["Access-Control-Allow-Origin"] == "http://tauri.localhost"
+    assert "Origin" in h["Vary"]
+    status, h = answer_headers("/tts", ours, "POST", json.dumps({"text": "x"}).encode())
+    assert h["Access-Control-Allow-Origin"] == ours["Origin"]
+    assert "X-Sample-Rate" in h["Access-Control-Expose-Headers"], "the page reads the rate of the sound"
+    status, h = answer_headers("/ping", other)
+    assert status == 403 and h["Access-Control-Allow-Origin"] is None, "another site reads nothing"
+    status, h = answer_headers("/ping", {})
+    assert h["Access-Control-Allow-Origin"] is None, "no origin, no CORS"
+
+    pre = {**tauri, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"}
+    status, h = answer_headers("/tts", pre, "OPTIONS")
+    assert status == 204 and h["Access-Control-Allow-Origin"] == "http://tauri.localhost"
+    assert "POST" in h["Access-Control-Allow-Methods"] and "content-type" in h["Access-Control-Allow-Headers"].lower()
+    assert h["Access-Control-Allow-Private-Network"] is None, "only when asked"
+    status, h = answer_headers("/tts", {**pre, "Access-Control-Request-Private-Network": "true"}, "OPTIONS")
+    assert h["Access-Control-Allow-Private-Network"] == "true"
+    status, h = answer_headers("/tts", {**pre, "Origin": "https://exemple.org"}, "OPTIONS")
+    assert status == 403 and h["Access-Control-Allow-Origin"] is None, "another site gets no preflight"
+
+
 def raw(request):
     """A request urllib would not send; True when the answer is a 403."""
     import socket
@@ -186,6 +220,7 @@ def main():
     assert heard == [4]
     assert call("/tts", ours, json.dumps({"text": "x"}).encode())[0] == 200
 
+    check_cors(ours, other)
     check_whisper_confidence()
     check_rvc_blocks()
     check_microphone()

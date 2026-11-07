@@ -2,6 +2,8 @@
   import X from '@lucide/svelte/icons/x';
   import { IconButton, Segmented, SettingsCard, SettingsRow, TextArea, TextInput } from './lib/ui/index.ts';
   import Switch from './lib/ui/Switch.svelte';
+  import Fenetre from './desktop/Fenetre.svelte';
+  import { inWindow, serverWarning } from './desktop/net.ts';
   import { DEFAULTS, type Settings, type TalkMode } from './settings.ts';
   import type { Session } from './session.svelte.ts';
 
@@ -109,6 +111,15 @@
           onchange={(v) => session.switchBrain(v as 'alone' | 'linked')}
         />
       </SettingsRow>
+      {#if inWindow && s.brain === 'linked'}
+        {@render field(
+          'Adresse du serveur',
+          serverWarning(s.server) ?? 'Changer efface l’appairage : un nouveau code sera demandé.',
+          s.server,
+          undefined,
+          (v) => v.trim() && session.setServer(v.trim()),
+        )}
+      {/if}
       {#if s.brain === 'alone'}
         {@render field(
           'Adresse du modèle',
@@ -143,6 +154,10 @@
       {/if}
     </SettingsCard>
 
+    {#if inWindow}
+      <Fenetre {session} {set} />
+    {/if}
+
     <SettingsCard title="Lui parler" description="Tout agit tout de suite. Rien ne reste figé dans le code.">
       <SettingsRow label="Dans la scène">
         <Segmented
@@ -165,7 +180,9 @@
       {@render toggle('Touche à maintenir', undefined, s.key.on, (v) => set((d) => (d.key.on = v)))}
       {@render field(
         'Code de la touche',
-        'Pour l’instant dans cette fenêtre seulement, le raccourci global viendra avec l’appli de bureau.',
+        inWindow
+          ? session.keysSaid || 'Depuis n’importe quelle fenêtre.'
+          : 'Dans cette fenêtre seulement : l’appli de bureau la prend depuis toutes.',
         s.key.code,
         undefined,
         (v) => set((d) => (d.key.code = v.trim() || DEFAULTS.key.code)),
@@ -303,25 +320,28 @@
         s.voice.noiseSuppression,
         (v) => set((d) => (d.voice.noiseSuppression = v)),
       )}
-      <SettingsRow label="Corps">
-        <Segmented
-          options={BODY}
-          value={s.body.level}
-          label="Corps"
-          size="petit"
-          onchange={(v) => set((d) => (d.body.level = v as 'breath' | 'images'))}
-        />
-      </SettingsRow>
-      {@render field(
-        'Image au repos',
-        'Adresse de l’image. Sans elle, le souffle.',
-        s.body.rest,
-        undefined,
-        (v) => set((d) => (d.body.rest = v.trim())),
-      )}
-      {@render field('Image pendant la parole', undefined, s.body.talking, undefined, (v) =>
-        set((d) => (d.body.talking = v.trim())),
-      )}
+      <!-- In the window, the body comes from its folder (the window card). -->
+      {#if !inWindow}
+        <SettingsRow label="Corps">
+          <Segmented
+            options={BODY}
+            value={s.body.level}
+            label="Corps"
+            size="petit"
+            onchange={(v) => set((d) => (d.body.level = v as 'breath' | 'images'))}
+          />
+        </SettingsRow>
+        {@render field(
+          'Image au repos',
+          'Adresse de l’image. Sans elle, le souffle.',
+          s.body.rest,
+          undefined,
+          (v) => set((d) => (d.body.rest = v.trim())),
+        )}
+        {@render field('Image pendant la parole', undefined, s.body.talking, undefined, (v) =>
+          set((d) => (d.body.talking = v.trim())),
+        )}
+      {/if}
     </SettingsCard>
 
     <SettingsCard title="Mesures de cette session">

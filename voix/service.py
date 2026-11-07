@@ -190,6 +190,27 @@ def serve(stt, tts, rvc, names, port, origins=ORIGINS):
     class Handler(BaseHTTPRequestHandler):
         timeout = 5  # a client that announces a body and sends nothing holds no thread for long
 
+        def end_headers(self):
+            # The window's page lives on another origin than the service: our pages, and only they, may read.
+            origin = self.headers.get("Origin")
+            if origin and allowed(self.headers, origins):
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+                self.send_header("Access-Control-Expose-Headers", "X-Sample-Rate, X-Ms")
+            super().end_headers()
+
+        def do_OPTIONS(self):
+            if self._refused():
+                return
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            if self.headers.get("Access-Control-Request-Private-Network") == "true":
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def _json(self, code, data):
             body = json.dumps(data).encode()
             self.send_response(code)

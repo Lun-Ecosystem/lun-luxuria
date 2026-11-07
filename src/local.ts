@@ -52,7 +52,7 @@ export function sentences(text: string): { done: string[]; rest: string } {
   return { done, rest: text.slice(from) };
 }
 
-const isLocalHost = (host: string) => host === '127.0.0.1' || host === 'localhost' || host === '[::1]';
+export const isLocalHost = (host: string) => host === '127.0.0.1' || host === 'localhost' || host === '[::1]';
 
 /** A key never travels in clear beyond this machine; undefined when the address is fine. */
 export function unsafeAddress(url: string, key: string): string | undefined {

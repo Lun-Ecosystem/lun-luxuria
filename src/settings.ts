@@ -5,6 +5,8 @@ export type Layout = 'scene' | 'small';
 export interface Settings {
   /** Alone on a model, or linked to a server that thinks for it. */
   brain: 'alone' | 'linked';
+  /** Linked, in the window: where the server answers. In a browser tab, the page's proxy decides. */
+  server: string;
   /** Its name is also the word that calls it. */
   agent: { name: string; context: string };
   /**
@@ -32,12 +34,25 @@ export interface Settings {
   };
   /** Said aloud or not; the thread keeps them either way. */
   speak: { ritual: boolean; p0: boolean; spontaneous: boolean };
-  voice: { volume: number; echoCancellation: boolean; noiseSuppression: boolean };
-  body: { level: 'breath' | 'images'; rest: string; talking: string };
+  /** `service`: in the window, the voice service started with it (`args`, one per line as typed). */
+  voice: {
+    volume: number;
+    echoCancellation: boolean;
+    noiseSuppression: boolean;
+    service: { launch: boolean; folder: string; args: string[] };
+  };
+  /** `folder`: in the window, the body's folder, whose `corps.json` decides; the addresses serve the browser. */
+  body: { level: 'breath' | 'images'; rest: string; talking: string; folder: string };
+  /**
+   * In the window: the scene's screen, by name (empty, the first that is not the main one), and the global
+   * shortcut between scene and small mode.
+   */
+  display: { screen: string; shortcut: string };
 }
 
 export const DEFAULTS: Settings = {
   brain: 'alone',
+  server: 'http://127.0.0.1:8788',
   agent: {
     name: 'Agent',
     context: 'Tu parles à voix haute : des phrases courtes, sans liste ni mise en forme.',
@@ -53,8 +68,14 @@ export const DEFAULTS: Settings = {
   bargeIn: { on: true, mode: 'now', holdMs: 400 },
   endOfSpeech: { silenceMs: 500, speculate: true, pauseMs: 160, floorDb: -50, minSpeechMs: 250 },
   speak: { ritual: true, p0: true, spontaneous: true },
-  voice: { volume: 1, echoCancellation: true, noiseSuppression: true },
-  body: { level: 'breath', rest: '', talking: '' },
+  voice: {
+    volume: 1,
+    echoCancellation: true,
+    noiseSuppression: true,
+    service: { launch: false, folder: '', args: [] },
+  },
+  body: { level: 'breath', rest: '', talking: '', folder: '' },
+  display: { screen: '', shortcut: 'Control+Shift+L' },
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
