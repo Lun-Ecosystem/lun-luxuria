@@ -12,6 +12,7 @@ Nothing it hears or says leaves the PC, except to a voice converter on this mach
   POST /tts   {"text"}                    -> raw float32 LE, X-Sample-Rate, X-Ms, the whole sentence
   GET  /micro                             -> {"apps": ["..."]}, the apps holding the microphone
   GET  /ping                              -> {"ok": true, "stt", "tts", "rvc"}
+  GET  /etat                              -> {"stt": {"kind", "up"}, "rvc": {"up"} | null}, the programs it calls
 """
 import argparse
 import io
@@ -119,6 +120,24 @@ def make_rvc(url, gain=2.0):
     return run
 
 
+def reach(url):
+    """Any answer counts: the program is there. Short, the screen asks often."""
+    try:
+        httpx.get(url, timeout=0.5)
+        return True
+    except httpx.HTTPError:
+        return False
+
+
+def bricks(stt_spec, rvc_url):
+    """whisper-server and RVC run on their own: the screen says whether they answer at their address."""
+    kind, _, arg = stt_spec.partition(":")
+    return {
+        "stt": {"kind": kind, "up": reach(arg) if kind == "whisper-server" else True},
+        "rvc": {"up": reach(rvc_url)} if rvc_url else None,
+    }
+
+
 HELD_MAX_S = 12 * 3600
 
 
@@ -183,7 +202,7 @@ def apps_on_microphone():
     return held(entries, time.time())
 
 
-def serve(stt, tts, rvc, names, port, origins=ORIGINS):
+def serve(stt, tts, rvc, names, port, origins=ORIGINS, state=lambda: {}):
     stt_lock = threading.Lock()
     tts_lock = threading.Lock()
 
@@ -243,6 +262,8 @@ def serve(stt, tts, rvc, names, port, origins=ORIGINS):
                 return
             if self.path == "/ping":
                 self._json(200, {"ok": True, **names})
+            elif self.path == "/etat":
+                self._json(200, state())
             elif self.path == "/micro":
                 self._json(200, {"apps": apps_on_microphone()})
             else:
@@ -297,7 +318,8 @@ def main():
     ap.add_argument("--origin", action="append", help="page autorisée, en plus de celles de l'appli")
     a = ap.parse_args()
     names = {"stt": a.stt, "tts": a.tts.split(":")[0], "rvc": bool(a.rvc)}
-    serve(make_stt(a.stt, a.lang), make_tts(a.tts), make_rvc(a.rvc, a.rvc_gain), names, a.port, (*ORIGINS, *(a.origin or [])))
+    serve(make_stt(a.stt, a.lang), make_tts(a.tts), make_rvc(a.rvc, a.rvc_gain), names, a.port,
+          (*ORIGINS, *(a.origin or [])), lambda: bricks(a.stt, a.rvc))
 
 
 if __name__ == "__main__":
