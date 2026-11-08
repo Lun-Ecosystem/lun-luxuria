@@ -119,7 +119,11 @@ function merged<T>(base: T, saved: unknown): T {
 
 /** Before 11/2026, the service took argument lines: the known ones become fields, the rest stays as typed. */
 function fromArgs(saved: Record<string, unknown>): Record<string, unknown> {
-  const args = (saved.args as unknown[]).map(String);
+  // A flag and its value on one line, with a space or an equals sign, read as two.
+  const args = (saved.args as unknown[]).map(String).flatMap((a) => {
+    const m = /^(--[\w-]+)[= ](.+)$/.exec(a.trim());
+    return m ? [m[1]!, m[2]!.trim()] : [a];
+  });
   const service = structuredClone(DEFAULTS.voice.service);
   const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -128,8 +132,8 @@ function fromArgs(saved: Record<string, unknown>): Record<string, unknown> {
     else if (flag === '--stt' && value.startsWith('whisper-server:'))
       service.stt = { ...service.stt, kind: 'whisper-server', url: value.slice(15) };
     else if (flag === '--tts' && value.startsWith('piper:')) service.piper = value.slice(6);
-    else if (flag === '--rvc')
-      service.rvc = { ...service.rvc, on: value !== '', url: value || service.rvc.url };
+    else if (flag === '--rvc' && value !== '' && !value.startsWith('--'))
+      service.rvc = { ...service.rvc, on: true, url: value };
     else if (flag === '--rvc-gain' && Number.isFinite(Number(value))) service.rvc.gain = Number(value);
     else {
       rest.push(flag);
@@ -146,7 +150,11 @@ export function readSettings(raw: string | null): Settings {
     const service = isObject(saved) && isObject(saved.voice) ? saved.voice.service : undefined;
     if (isObject(service) && Array.isArray(service.args) && !('stt' in service))
       (saved as { voice: Record<string, unknown> }).voice.service = fromArgs(service);
-    return merged(DEFAULTS, saved);
+    const settings = merged(DEFAULTS, saved);
+    // Only the type is checked by the merge: an unknown transcription comes back to the local one.
+    const stt = settings.voice.service.stt;
+    if (stt.kind !== 'faster' && stt.kind !== 'whisper-server') stt.kind = 'faster';
+    return settings;
   } catch {
     return structuredClone(DEFAULTS);
   }

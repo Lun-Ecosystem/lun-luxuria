@@ -125,7 +125,7 @@ def reach(url):
     try:
         httpx.get(url, timeout=0.5)
         return True
-    except httpx.HTTPError:
+    except Exception:  # refused, too slow, or an address that is not one: not answering
         return False
 
 

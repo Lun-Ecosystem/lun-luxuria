@@ -139,6 +139,24 @@ describe('the voice theme', () => {
     expect(session.settings.voice.service.folder).toBe('D:\\voix');
   });
 
+  it('a program the service could not check is not shown as answering', () => {
+    service({
+      folder: 'D:/voix',
+      piper: 'D:/v.onnx',
+      stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' },
+    });
+    const session = new Session();
+    session.voiceStatus = 'up';
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    expect(screen.getByText('Pas vérifié')).toBeInTheDocument();
+  });
+
+  it('a browser tab checks again on demand', () => {
+    where.inWindow = false;
+    render(Reglages, { session: new Session(), close: () => {}, start: 'voix' });
+    expect(screen.getByRole('button', { name: 'Vérifier' })).toBeEnabled();
+  });
+
   it('each brick says its state, and what to do when it does not answer', () => {
     service({
       folder: 'D:\\voix',

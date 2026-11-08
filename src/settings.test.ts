@@ -62,6 +62,25 @@ describe('the voice service', () => {
     expect(s.voice.service.args).toEqual([]);
   });
 
+  it('a flag written with = or on one line is read too; an address is never another flag', () => {
+    const s = readSettings(
+      JSON.stringify({
+        voice: {
+          service: { args: ['--stt=faster:medium', '--tts piper:D:/v.onnx', '--rvc', '--lang', 'en'] },
+        },
+      }),
+    );
+    expect(s.voice.service.stt.model).toBe('medium');
+    expect(s.voice.service.piper).toBe('D:/v.onnx');
+    expect(s.voice.service.rvc.on).toBe(false);
+    expect(s.voice.service.args).toEqual(['--rvc', '--lang', 'en']);
+  });
+
+  it('an unknown transcription comes back to the local one', () => {
+    const service = { ...DEFAULTS.voice.service, stt: { ...DEFAULTS.voice.service.stt, kind: 'autre' } };
+    expect(readSettings(JSON.stringify({ voice: { service } })).voice.service.stt.kind).toBe('faster');
+  });
+
   it('fields already named are read as they are', () => {
     const service = { ...DEFAULTS.voice.service, piper: 'D:\v.onnx', args: ['--lang', 'en'] };
     expect(readSettings(JSON.stringify({ voice: { service } })).voice.service).toEqual(service);

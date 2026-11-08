@@ -79,7 +79,7 @@
   </div>
 
   <div class="controles">
-    {#if session.speaking}
+    {#if session.speaking || session.reading}
       <IconButton icon={VolumeX} label="Faire taire" onclick={() => session.silence()} />
     {/if}
     <IconButton

@@ -202,7 +202,10 @@
   </nav>
   <div class="contenu">
     <div class="colonne">
-      <Button variant="fantome" size="petit" icon={ArrowLeft} class="retour" onclick={back}>Réglages</Button>
+      <div class="haut">
+        <Button variant="fantome" size="petit" icon={ArrowLeft} onclick={back}>Réglages</Button>
+        <IconButton icon={X} label="Fermer les réglages" onclick={close} />
+      </div>
       <header class="tete">
         <small>{page.group}</small>
         <h2 tabindex="-1" bind:this={heading}>{page.label}</h2>
@@ -547,7 +550,8 @@
     max-width: 780px;
     margin: 0 auto;
   }
-  .colonne :global(.retour) {
+  /* Narrow only: the column of themes, and its close button, are not there. */
+  .haut {
     display: none;
   }
   .tete small {
@@ -599,9 +603,10 @@
     .colonne {
       gap: 14px;
     }
-    .colonne :global(.retour) {
-      display: inline-flex;
-      align-self: flex-start;
+    .haut {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
     h2 {
       font-size: 26px;

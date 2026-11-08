@@ -4,7 +4,7 @@
   import { bodyFollows } from './desktop/corps.svelte.ts';
   import { keysFollow } from './desktop/keys.svelte.ts';
   import { autostartFollows, trayFollows } from './desktop/tray.svelte.ts';
-  import { pingVoice, readBricks, startVoice } from './desktop/voix.ts';
+  import { checkVoice, pingVoice, startVoice } from './desktop/voix.ts';
   import { windowFollows } from './desktop/window.svelte.ts';
   import Reglages from './Reglages.svelte';
   import Scene from './Scene.svelte';
@@ -22,10 +22,7 @@
     // A browser tab never launches it: once entered, it only says whether it answers. Nothing runs before.
     $effect(() => {
       if (!session.entered || session.voiceStatus !== 'unknown') return;
-      void pingVoice(session.voiceFetch)().then(async (up) => {
-        session.voiceStatus = up ? 'up' : 'down';
-        if (up) session.bricks = await readBricks(session.voiceFetch)();
-      });
+      void checkVoice(session);
     });
   }
   let code = $state('');

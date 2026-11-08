@@ -94,6 +94,17 @@ export async function startVoice(
   down(`Le service voix ne répond toujours pas. Journal : ${log}`);
 }
 
+/** Asks only, never launches: a browser tab, once entered and when asked. */
+export async function checkVoice(
+  session: Session,
+  ping: () => Promise<boolean> = pingVoice(session.voiceFetch),
+  bricks: () => Promise<Bricks | null> = readBricks(session.voiceFetch),
+): Promise<void> {
+  const up = await ping();
+  session.voiceStatus = up ? 'up' : 'down';
+  session.bricks = up ? await bricks() : null;
+}
+
 /** At the window's start, then again when he asks from the settings. */
 export function pingVoice(f: typeof fetch): () => Promise<boolean> {
   return async () => {

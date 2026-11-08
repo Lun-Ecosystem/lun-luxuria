@@ -294,6 +294,17 @@ describe('what is said aloud', () => {
     await expect(t.convo.write('Salut')).rejects.toThrow('Plafond atteint');
   });
 
+  it('a failed transcription on the pause leaves nothing thinking once the sentence ends', async () => {
+    const t = setup({}, new Error('le service voix ne répond pas'));
+    t.convo.onEndpoint({ type: 'pause', audio: AUDIO });
+    await tick();
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });
+    await tick();
+    const thinking = t.events.filter((e) => e.type === 'thinking');
+    expect(thinking.at(-1) ?? { type: 'thinking', on: false }).toEqual({ type: 'thinking', on: false });
+    expect(t.events.filter((e) => e.type === 'failed')).toHaveLength(1);
+  });
+
   it('a failed transcription says so, and nothing is sent', async () => {
     const t = setup(
       { endOfSpeech: { ...DEFAULTS.endOfSpeech, speculate: false } },

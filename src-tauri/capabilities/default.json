@@ -34,6 +34,7 @@
     "core:window:allow-available-monitors",
     "core:window:allow-primary-monitor",
     "core:window:allow-inner-size",
+    "core:window:allow-is-fullscreen",
     "core:window:allow-close",
     "core:window:allow-show",
     "core:window:allow-unminimize",

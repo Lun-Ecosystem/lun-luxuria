@@ -13,7 +13,7 @@
   import type { Session } from '../session.svelte.ts';
   import type { Settings } from '../settings.ts';
   import { inWindow } from './net.ts';
-  import { argsOf, missing, pingVoice, startVoice } from './voix.ts';
+  import { argsOf, checkVoice, missing, pingVoice, startVoice } from './voix.ts';
 
   /*
    * The voice service and the programs it calls, each with its state and what to do when it does not answer.
@@ -23,6 +23,8 @@
   let { session, set }: { session: Session; set: (change: (draft: Settings) => void) => void } = $props();
   const v = $derived(session.settings.voice.service);
   const lack = $derived(v.launch ? missing(v) : null);
+  // Already answering, it can always be checked again.
+  const blocked = $derived(lack !== null && session.voiceStatus !== 'up');
   const STT = [
     { value: 'faster', label: 'Locale' },
     { value: 'whisper-server', label: 'whisper-server' },
@@ -36,14 +38,22 @@
     unknown: { tone: 'neutre', text: 'Pas encore vérifié' },
   };
   const service = $derived(SERVICE[session.voiceStatus]);
-  /** A brick inside the service answers with it (`own` undefined); one at its own address, as the service saw it. */
-  function brick(own: boolean | undefined): State {
+  /**
+   * A brick inside the service answers with it (`own` undefined); one at its own address, as the service saw it
+   * (`null`: the service could not say).
+   */
+  function brick(own: boolean | null | undefined): State {
     if (session.voiceStatus === 'starting') return service;
     if (session.voiceStatus !== 'up') return { tone: 'neutre', text: 'Service absent' };
+    if (own === null) return { tone: 'neutre', text: 'Pas vérifié' };
     return own === false ? { tone: 'danger', text: 'Absente' } : { tone: 'ok', text: 'Répond' };
   }
-  const stt = $derived(brick(v.stt.kind === 'whisper-server' ? session.bricks?.stt.up : undefined));
-  const rvc = $derived(brick(session.bricks?.rvc?.up));
+  // What the running service uses wins over the fields, which count at its next launch.
+  const sttKind = $derived(session.bricks?.stt.kind ?? v.stt.kind);
+  const stt = $derived(
+    brick(sttKind === 'whisper-server' ? (session.bricks ? session.bricks.stt.up : null) : undefined),
+  );
+  const rvc = $derived(brick(session.bricks ? (session.bricks.rvc?.up ?? null) : null));
   const AFTER = 'Lance-le, puis « Lancer ou vérifier ».';
 
   /** Saved as typed, so a click on the button right after counts; a number or a fallback waits for the field to be left. */
@@ -82,15 +92,15 @@
       </SettingsRow>
     {/if}
     <SettingsRow label="Maintenant" hint="Le lance s’il le faut, sinon vérifie qu’il répond." error={lack}>
-      <Button variant="secondaire" size="petit" disabled={lack !== null} onclick={check}
-        >Lancer ou vérifier</Button
-      >
+      <Button variant="secondaire" size="petit" disabled={blocked} onclick={check}>Lancer ou vérifier</Button>
     </SettingsRow>
   {:else}
     <SettingsRow
       label="Dans le navigateur"
       hint="Il se lance à la main, dans un terminal : uv run voix/service.py, avec sa transcription et sa voix."
-    />
+    >
+      <Button variant="secondaire" size="petit" onclick={() => void checkVoice(session)}>Vérifier</Button>
+    </SettingsRow>
   {/if}
 </SettingsCard>
 

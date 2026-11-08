@@ -92,8 +92,9 @@ export class Conversation {
         this.#clockFrom = null;
       }
     } else if (e.type === 'subtitle' && e.mute) {
-      // Its reply came, without a voice: no first sound will end the thinking.
+      // Its reply came, without a voice: no first sound will end the thinking, nor stop the clock.
       this.#d.on({ type: 'thinking', on: false });
+      this.#clockFrom = null;
     } else if (e.type === 'silent') {
       this.#lastSpokeAt = this.#d.now();
       this.#d.on({ type: 'said' });
@@ -147,7 +148,11 @@ export class Conversation {
     try {
       heard = await d.stt(audio);
     } catch (err) {
-      if (!attempt.dropped) this.#fail('Ta phrase n’a pas pu être transcrite', err);
+      if (attempt.dropped) return;
+      // Nothing will come of it: the end of the sentence must not wait for a reply.
+      attempt.dropped = true;
+      if (attempt.committed) d.on({ type: 'thinking', on: false });
+      this.#fail('Ta phrase n’a pas pu être transcrite', err);
       return;
     }
     try {

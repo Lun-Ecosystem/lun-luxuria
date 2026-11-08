@@ -99,7 +99,9 @@ export function windowFollows(session: Session): void {
     const wanted = screen;
     queue = queue
       .then(async () => {
-        const from = last;
+        let from = last;
+        // Windows may have left fullscreen on its own (Win+Down): then the window is applied whole.
+        if (from?.fullscreen && !(await win.isFullscreen())) from = undefined;
         placing = true;
         const next = place(layout, open, await screens(), wanted, corner);
         last = undefined;

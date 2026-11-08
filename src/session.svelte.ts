@@ -55,6 +55,8 @@ export class Session {
   hearing = $state(false);
   thinking = $state(false);
   speaking = $state(false);
+  /** Her words on screen without a voice: not speaking, but cut, muted and silenced the same way. */
+  reading = $state(false);
   capped = $state(false);
   subtitle = $state('');
   trace = $state('');
@@ -273,12 +275,14 @@ export class Session {
       clearTimeout(this.#subtitleTimer);
       this.subtitle = e.text;
       // Without a voice it is not speaking, and the failure that says why stays.
+      this.reading = e.mute === true;
       if (e.mute) return;
       this.speaking = true;
       this.failure = '';
       this.capped = false;
     } else if (e.type === 'silent') {
       this.speaking = false;
+      this.reading = false;
       // Cut, its words leave with its voice: nothing on screen keeps talking.
       if (e.cut) this.subtitle = '';
       else this.#subtitleTimer = setTimeout(() => (this.subtitle = ''), SUBTITLE_STAYS_MS);
@@ -374,7 +378,7 @@ export class Session {
 
   /** Muting while she speaks cuts her, as the button would. */
   toggleMute(): void {
-    if (this.speaking) this.silence();
+    if (this.speaking || this.reading) this.silence();
     this.silenced = !this.silenced;
     if (this.silenced) {
       this.#convo?.mute();

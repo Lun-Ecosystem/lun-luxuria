@@ -112,7 +112,10 @@ def check_bricks():
                                                                "rvc": {"up": True}}
         assert service.bricks(f"whisper-server:{down}", down) == {"stt": {"kind": "whisper-server", "up": False},
                                                                    "rvc": {"up": False}}
-        assert service.bricks("faster:small", "") == {"stt": {"kind": "faster", "up": True}, "rvc": None},             "a model loaded in the service answers with it; no RVC, nothing to check"
+        assert service.bricks("faster:small", "") == {"stt": {"kind": "faster", "up": True}, "rvc": None}, \
+            "a model loaded in the service answers with it; no RVC, nothing to check"
+        assert service.bricks("faster:small", "::")["rvc"] == {"up": False}, \
+            "an address that is not one is a brick that does not answer, not a crash"
     finally:
         server.shutdown()
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Session } from '../session.svelte.ts';
 import { DEFAULTS, type Settings, type VoiceService } from '../settings.ts';
-import { argsOf, missing, readBricks, serviceArgs, startVoice } from './voix.ts';
+import { argsOf, checkVoice, missing, readBricks, serviceArgs, startVoice } from './voix.ts';
 
 beforeEach(() => {
   localStorage.clear();
@@ -154,5 +154,26 @@ describe('startVoice', () => {
       noSleep,
     );
     expect(silent.voiceSaid).toMatch(/Journal : C:\\logs\\voix\.log/);
+  });
+});
+
+describe('checkVoice', () => {
+  it('only asks: up with what it says of its programs, or down; nothing is launched', async () => {
+    const session = withService(true);
+    const bricks = { stt: { kind: 'faster' as const, up: true }, rvc: null };
+    await checkVoice(
+      session,
+      async () => true,
+      async () => bricks,
+    );
+    expect(session.voiceStatus).toBe('up');
+    expect(session.bricks).toEqual(bricks);
+    await checkVoice(
+      session,
+      async () => false,
+      async () => bricks,
+    );
+    expect(session.voiceStatus).toBe('down');
+    expect(session.bricks).toBeNull();
   });
 });

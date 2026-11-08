@@ -94,6 +94,28 @@ describe('one sentence after the other', () => {
 });
 
 describe('cutting it off', () => {
+  it('words shown without a voice count as speaking, and a cut ends them at once', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup(async (x) => {
+        if (x === 'Un.') throw new Error('boom');
+        return CLIP;
+      });
+      t.speaker.add(1, 'Un.');
+      t.speaker.end(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.speaker.speaking).toBe(true);
+      expect(t.speaker.stop()).toEqual({ id: 1, said: '' });
+      expect(t.events.at(-1)).toEqual({ type: 'silent', cut: true });
+      expect(t.speaker.speaking).toBe(false);
+      t.speaker.add(2, 'Deux.');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.sounds).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('stops the sound now and tells what was heard', async () => {
     const t = setup();
     t.speaker.add(7, 'Une phrase entière.');

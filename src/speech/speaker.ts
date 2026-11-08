@@ -55,6 +55,8 @@ export class Speaker {
   #gone = new Set<number>();
   #playing: { turn: Turn; piece: Piece; sound: Playing } | null = null;
   #waiting = false;
+  /** Words shown without a voice, for the time to read them. */
+  #reading: ReturnType<typeof setTimeout> | null = null;
   #chain: Promise<unknown> = Promise.resolve();
   #synth: (text: string) => Promise<Clip>;
   #out: Output;
@@ -67,7 +69,7 @@ export class Speaker {
   }
 
   get speaking(): boolean {
-    return this.#playing !== null;
+    return this.#playing !== null || this.#reading !== null;
   }
 
   #turn(id: number): Turn {
@@ -116,7 +118,10 @@ export class Speaker {
         }),
       ]);
     } catch (err) {
-      this.#on({ type: 'failed', text: `Sa voix n’a pas pu dire une phrase : ${String(err)}` });
+      this.#on({
+        type: 'failed',
+        text: `Sa voix n’a pas pu dire une phrase : ${err instanceof Error ? err.message : String(err)}`,
+      });
       return null;
     } finally {
       clearTimeout(timer);
@@ -124,7 +129,7 @@ export class Speaker {
   }
 
   #pump(): void {
-    if (this.#playing || this.#waiting) return;
+    if (this.#playing || this.#waiting || this.#reading) return;
     const turn = this.#turns[0];
     if (!turn) return;
     if (turn.held) return;
@@ -145,9 +150,8 @@ export class Speaker {
       if (!clip) {
         // Its voice failed, its words are still paid for: said on screen, and nobody heard them.
         this.#on({ type: 'subtitle', id: turn.id, text: piece.text, mute: true });
-        this.#waiting = true;
-        setTimeout(() => {
-          this.#waiting = false;
+        this.#reading = setTimeout(() => {
+          this.#reading = null;
           this.#pump();
         }, readingMs(piece.text));
         return;
@@ -173,6 +177,10 @@ export class Speaker {
     const i = this.#turns.findIndex((t) => t.id === id);
     if (i < 0) return;
     this.#turns.splice(i, 1);
+    if (i === 0 && this.#reading !== null) {
+      clearTimeout(this.#reading);
+      this.#reading = null;
+    }
     this.#pump();
   }
 
@@ -183,10 +191,13 @@ export class Speaker {
   stop(): { id: number; said: string } | undefined {
     const turn = this.#turns[0];
     const now = this.#playing;
+    const reading = this.#reading !== null;
     this.#playing = null;
+    clearTimeout(this.#reading ?? undefined);
+    this.#reading = null;
     for (const t of this.#turns) this.#gone.add(t.id);
     this.#turns = [];
-    this.#on({ type: 'silent', cut: now !== null });
+    this.#on({ type: 'silent', cut: now !== null || reading });
     if (!turn) return undefined;
     const said = [...turn.said];
     if (now) {
