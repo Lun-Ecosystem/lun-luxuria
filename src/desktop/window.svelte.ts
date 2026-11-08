@@ -53,12 +53,20 @@ export interface Win {
   setPosition(position: PhysicalPosition): Promise<void>;
 }
 
+const samePlace = (a: Place, b: Place) =>
+  a.fullscreen === b.fullscreen && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+
 /**
  * Out of fullscreen before any resize, or the size is lost; into fullscreen from the right screen. Never a focus:
- * the shortcut is pressed from another window, which keeps it.
+ * the shortcut is pressed from another window, which keeps it. From the place it already has, only what differs:
+ * leaving fullscreen for nothing makes the scene flicker.
  */
-export async function apply(win: Win, p: Place): Promise<void> {
-  if (p.fullscreen) {
+export async function apply(win: Win, p: Place, from?: Place): Promise<void> {
+  if (from && samePlace(from, p)) return;
+  if (from && !from.fullscreen && !p.fullscreen) {
+    await win.setSize(new PhysicalSize(p.width, p.height));
+    await win.setPosition(new PhysicalPosition(p.x, p.y));
+  } else if (p.fullscreen) {
     await win.setAlwaysOnTop(false);
     await win.setFullscreen(false);
     await win.setPosition(new PhysicalPosition(p.x, p.y));
@@ -80,6 +88,8 @@ export function windowFollows(session: Session): void {
   let corner = readCorner();
   let queue = Promise.resolve();
   let placing = false;
+  // Where the window was last put; unknown after a failure, so the next one is applied whole.
+  let last: Place | undefined;
 
   // Saving any setting replaces the whole object: without this, every saved setting would replace the scene.
   const screen = $derived(session.settings.display.screen);
@@ -89,8 +99,12 @@ export function windowFollows(session: Session): void {
     const wanted = screen;
     queue = queue
       .then(async () => {
+        const from = last;
         placing = true;
-        await apply(win, place(layout, open, await screens(), wanted, corner));
+        const next = place(layout, open, await screens(), wanted, corner);
+        last = undefined;
+        await apply(win, next, from);
+        last = next;
       })
       .catch((err: unknown) => console.error('fenêtre', err))
       .finally(() => setTimeout(() => (placing = false), 300));
