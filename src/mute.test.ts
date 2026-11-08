@@ -172,3 +172,18 @@ describe('the desk mute', () => {
     expect(starts[1]!.opts).toMatchObject({ ritual: false, muted: true });
   });
 });
+
+describe('the failure banner', () => {
+  it('a message that goes through clears an older failure; one that fails replaces it', async () => {
+    const { s } = linked();
+    await s.enter();
+    s.failure = 'Ta phrase n’a pas pu être transcrite : le service voix ne répond pas';
+    await s.write('Tu es là ?');
+    expect(s.failure).toBe('');
+    s.core.send = vi.fn(async () => {
+      throw new Error('hors ligne');
+    });
+    await s.write('Et maintenant ?');
+    expect(s.failure).toContain('hors ligne');
+  });
+});

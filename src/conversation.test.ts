@@ -18,7 +18,12 @@ const message = (id: number): Message => ({
   at: '',
 });
 
-function setup(over: Partial<Settings> = {}, heard = 'Bonjour toi', silenced = () => false) {
+function setup(
+  over: Partial<Settings> = {},
+  heard: string | Error = 'Bonjour toi',
+  silenced = () => false,
+  refuse?: string,
+) {
   let clock = 1000;
   const calls: string[] = [];
   const events: ConversationEvent[] = [];
@@ -39,11 +44,15 @@ function setup(over: Partial<Settings> = {}, heard = 'Bonjour toi', silenced = (
         const id = ids++;
         on({ type: 'user', message: message(id) });
         on({ type: 'reply', id: id + 100 });
+        if (refuse) on({ type: 'done', message: { ...message(id), status: 'error', error: refuse } });
       },
       cut: async (id, said) => void calls.push(`cut ${id} "${said}"`),
       withdraw: async (id) => void calls.push(`withdraw ${id}`),
     },
-    stt: async () => ({ text: heard, confidence: 0.9 }),
+    stt: async () => {
+      if (heard instanceof Error) throw heard;
+      return { text: heard, confidence: 0.9 };
+    },
     speaker: new Speaker(
       async () => CLIP,
       out,
@@ -278,5 +287,24 @@ describe('what is said aloud', () => {
       message: { ...message(1), status: 'error', error: 'Plafond atteint' },
     });
     expect(t.events).toContainEqual({ type: 'failed', text: 'Plafond atteint' });
+  });
+
+  it('a written message the server refuses is not swallowed', async () => {
+    const t = setup({}, 'Bonjour toi', () => false, 'Plafond atteint');
+    await expect(t.convo.write('Salut')).rejects.toThrow('Plafond atteint');
+  });
+
+  it('a failed transcription says so, and nothing is sent', async () => {
+    const t = setup(
+      { endOfSpeech: { ...DEFAULTS.endOfSpeech, speculate: false } },
+      new Error('le service voix ne répond pas'),
+    );
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });
+    await tick();
+    expect(t.sends).toHaveLength(0);
+    expect(t.events).toContainEqual({
+      type: 'failed',
+      text: 'Ta phrase n’a pas pu être transcrite : le service voix ne répond pas',
+    });
   });
 });

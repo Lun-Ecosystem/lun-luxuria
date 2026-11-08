@@ -398,8 +398,10 @@ export class Session {
     if (this.silenced) return;
     try {
       await this.#convo?.write(text);
+      // It went through: an older failure no longer holds.
+      this.failure = '';
     } catch (err) {
-      this.failure = String(err);
+      this.failure = err instanceof Error ? err.message : String(err);
     }
     await this.#refreshThread();
   }
