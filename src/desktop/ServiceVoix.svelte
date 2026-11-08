@@ -18,11 +18,15 @@
     argsOf,
     changes,
     checkVoice,
-    followBricks,
+    followPrograms,
+    forgetProgram,
     launchProgram,
     missing,
+    pickProgram,
     pingVoice,
+    PROGRAMS,
     restartVoice,
+    runningWith,
     startVoice,
     type ProgramName,
   } from './voix.ts';
@@ -35,12 +39,14 @@
   let { session, set }: { session: Session; set: (change: (draft: Settings) => void) => void } = $props();
   const v = $derived(session.settings.voice.service);
   const lack = $derived(v.launch ? missing(v) : null);
+  const busy = $derived(session.voiceBusy);
   // Already answering, it can always be checked again.
   const blocked = $derived(lack !== null && session.voiceStatus !== 'up');
   const STT = [
     { value: 'faster', label: 'Locale' },
     { value: 'whisper-server', label: 'whisper-server' },
   ];
+  const STT_NAME = { faster: 'Locale', 'whisper-server': 'whisper-server' } as const;
 
   type State = { tone: Tone; text: string };
   const SERVICE: Record<Session['voiceStatus'], State> = {
@@ -50,43 +56,55 @@
     unknown: { tone: 'neutre', text: 'Pas encore vérifié' },
   };
   const service = $derived(SERVICE[session.voiceStatus]);
+  const STARTING: State = { tone: 'attention', text: 'En démarrage' };
   /**
    * A brick inside the service answers with it (`own` undefined); one at its own address, as the service saw it
-   * (`null`: the service could not say).
+   * (`null`: the service could not say). A program the window is launching is starting, not missing.
    */
-  function brick(own: boolean | null | undefined): State {
+  function brick(own: boolean | null | undefined, name?: ProgramName): State {
+    if (name && session.programs[name]?.starting) return STARTING;
     if (session.voiceStatus === 'starting') return service;
     if (session.voiceStatus !== 'up') return { tone: 'neutre', text: 'Service absent' };
     if (own === null) return { tone: 'neutre', text: 'Pas vérifié' };
     return own === false ? { tone: 'danger', text: 'Absente' } : { tone: 'ok', text: 'Répond' };
   }
-  // What the running service uses wins over the fields, which count at its next launch.
-  const sttKind = $derived(session.bricks?.stt.kind ?? v.stt.kind);
-  const stt = $derived(
-    brick(sttKind === 'whisper-server' ? (session.bricks ? session.bricks.stt.up : null) : undefined),
+  // What the running service uses wins over the fields, which wait for its next launch, and the screen says so.
+  const run = $derived(runningWith(session));
+  const sttWaits = $derived(run.stt !== undefined && run.stt !== v.stt.kind);
+  const stt = $derived.by((): State => {
+    if (run.stt !== undefined && sttWaits)
+      return { tone: 'neutre', text: `En marche : ${STT_NAME[run.stt]}` };
+    if (v.stt.kind !== 'whisper-server') return brick(undefined);
+    return brick(session.bricks ? session.bricks.stt.up : null, 'whisper-server');
+  });
+  const rvcWaits = $derived(run.rvc === false && v.rvc.on);
+  const rvc = $derived(
+    rvcWaits
+      ? { tone: 'neutre' as const, text: 'En marche : sans RVC' }
+      : brick(session.bricks ? (session.bricks.rvc?.up ?? null) : null, 'rvc'),
   );
-  const rvc = $derived(brick(session.bricks ? (session.bricks.rvc?.up ?? null) : null));
-  const AFTER = 'Lance-le, puis « Lancer ou vérifier ».';
+  const piperWaits = $derived(run.piper !== undefined && run.piper !== v.piper);
+  const WAITS = 'attend la relance du service.';
+  /** What to do when a program does not answer: launch it from here when it is picked, else by hand. */
+  const absent = (name: ProgramName, url: string) =>
+    `${PROGRAMS[name]} ne répond pas à ${url}. ` +
+    (session.programPaths[name]
+      ? `Lance-le avec « Lancer ${PROGRAMS[name]} ».`
+      : 'Lance-le, puis « Lancer ou vérifier ».');
 
   /** Saved as typed, so a click on the button right after counts; a number or a fallback waits for the field to be left. */
   const typed = (on: (d: Settings, value: string) => void) => (e: Event) => {
     const value = (e.currentTarget as HTMLInputElement).value.trim();
     set((d) => on(d, value));
   };
-  // One action at a time; the button that runs says so, and its result comes as a toast.
-  let busy = $state<'check' | 'restart' | null>(null);
-  async function run(kind: 'check' | 'restart', job: () => Promise<void>) {
-    if (busy) return;
-    busy = kind;
-    try {
-      await job();
-    } finally {
-      busy = null;
-    }
-    toast(session.voiceSaid, session.voiceStatus === 'down' ? { tone: 'danger' } : {});
+  /** The button that runs says so, and its result comes as a toast; a refusal in the danger tone. */
+  async function act(job: () => Promise<boolean>) {
+    if (session.voiceBusy) return;
+    const done = await job();
+    toast(session.voiceSaid, done && session.voiceStatus === 'up' ? {} : { tone: 'danger' });
   }
-  const check = () => run('check', () => startVoice(session, pingVoice(session.voiceFetch)));
-  const restart = () => run('restart', () => restartVoice(session, pingVoice(session.voiceFetch)));
+  const check = () => act(() => startVoice(session, pingVoice(session.voiceFetch)));
+  const restart = () => act(() => restartVoice(session, pingVoice(session.voiceFetch)));
   const waiting = $derived(changes(session));
 
   let launching = $state<ProgramName | null>(null);
@@ -94,53 +112,71 @@
     if (launching) return;
     launching = name;
     try {
-      if (await launchProgram(session, name)) void followBricks(session);
+      if (await launchProgram(session, name)) void followPrograms(session);
     } finally {
       launching = null;
     }
+    const s = session.programs[name];
+    if (s) toast(s.said, s.ok ? {} : { tone: 'danger' });
   }
 </script>
 
 {#snippet state(s: State)}<Badge tone={s.tone} dot>{s.text}</Badge>{/snippet}
 
-{#snippet program(name: ProgramName, label: string, p: Program, edit: (d: Settings) => Program)}
-  <SettingsRow label="Programme" hint="Le chemin complet du .exe. Vide : tu le lances toi-même.">
-    <TextInput
-      value={p.path}
-      size="petit"
-      aria-label="Programme {label}"
-      oninput={typed((d, x) => (edit(d).path = x))}
-    />
+{#snippet program(name: ProgramName, p: Program, edit: (d: Settings) => Program)}
+  {@const label = PROGRAMS[name]}
+  {@const path = session.programPaths[name]}
+  <SettingsRow
+    label="Son programme"
+    hint={path ?? 'Aucun : tu le lances toi-même. Choisis son .exe pour que l’appli le lance.'}
+  >
+    <span class="gestes">
+      {#if path}
+        <Button variant="fantome" size="petit" onclick={() => void forgetProgram(session, name)}
+          >Oublier</Button
+        >
+      {/if}
+      <Button
+        variant="secondaire"
+        size="petit"
+        aria-label="Choisir le programme de {label}"
+        onclick={() => void pickProgram(session, name)}>Choisir…</Button
+      >
+    </span>
   </SettingsRow>
-  <SettingsRow label="Ses arguments" hint="Un par ligne, tels quels.">
-    <TextArea
-      value={p.args.join('\n')}
-      rows={2}
-      aria-label="Arguments de {label}"
-      oninput={(e) => {
-        const lines = argsOf((e.currentTarget as HTMLTextAreaElement).value);
-        set((d) => (edit(d).args = lines));
-      }}
-    />
-  </SettingsRow>
-  <SettingsRow label="Lancer {label} avec l’appli" hint="Seulement si rien ne répond déjà à son adresse.">
-    {#snippet children({ labelId })}
-      <Switch
-        checked={p.launch}
-        aria-labelledby={labelId}
-        onchange={(on) => set((d) => (edit(d).launch = on))}
+  {#if path}
+    <SettingsRow label="Ses arguments" hint="Un par ligne, tels quels : son modèle, son port.">
+      <TextArea
+        value={p.args.join('\n')}
+        rows={2}
+        aria-label="Arguments de {label}"
+        oninput={(e) => {
+          const lines = argsOf((e.currentTarget as HTMLTextAreaElement).value);
+          set((d) => (edit(d).args = lines));
+        }}
       />
-    {/snippet}
-  </SettingsRow>
-  <SettingsRow label="Maintenant" hint={session.programs[name]}>
-    <Button
-      variant="secondaire"
-      size="petit"
-      disabled={!p.path.trim() || (launching !== null && launching !== name)}
-      loading={launching === name}
-      onclick={() => void launch(name)}>Lancer {label}</Button
-    >
-  </SettingsRow>
+    </SettingsRow>
+    <SettingsRow label="Lancer {label} avec l’appli" hint="Seulement si rien ne répond déjà à son adresse.">
+      {#snippet children({ labelId })}
+        <Switch
+          checked={p.launch}
+          aria-labelledby={labelId}
+          onchange={(on) => set((d) => (edit(d).launch = on))}
+        />
+      {/snippet}
+    </SettingsRow>
+    <SettingsRow label="Maintenant" hint={session.programs[name]?.said}>
+      <Button
+        variant="secondaire"
+        size="petit"
+        disabled={launching !== null && launching !== name}
+        loading={launching === name}
+        onclick={() => void launch(name)}>Lancer {label}</Button
+      >
+    </SettingsRow>
+  {:else if session.programs[name]}
+    <SettingsRow label="Maintenant" hint={session.programs[name]?.said} />
+  {/if}
 {/snippet}
 
 <SettingsCard
@@ -234,7 +270,7 @@
     {:else}
       <SettingsRow
         label="Adresse de whisper-server"
-        hint="Un programme à part : l’appli le lance si tu lui donnes son chemin, et vérifie qu’il répond."
+        hint="Un programme à part : l’appli le lance si tu choisis son programme, et vérifie qu’il répond."
       >
         <TextInput
           value={v.stt.url}
@@ -246,12 +282,13 @@
     {/if}
     <SettingsRow
       label="État"
-      error={stt.tone === 'danger' ? `whisper-server ne répond pas à ${v.stt.url}. ${AFTER}` : null}
+      hint={sttWaits ? `${STT_NAME[v.stt.kind]} ${WAITS}` : undefined}
+      error={stt.tone === 'danger' ? absent('whisper-server', v.stt.url) : null}
     >
       {@render state(stt)}
     </SettingsRow>
     {#if v.stt.kind === 'whisper-server'}
-      {@render program('whisper-server', 'whisper-server', v.stt.program, (d) => d.voice.service.stt.program)}
+      {@render program('whisper-server', v.stt.program, (d) => d.voice.service.stt.program)}
     {/if}
   </SettingsCard>
 
@@ -267,7 +304,9 @@
         oninput={typed((d, x) => (d.voice.service.piper = x))}
       />
     </SettingsRow>
-    <SettingsRow label="État">{@render state(brick(undefined))}</SettingsRow>
+    <SettingsRow label="État" hint={piperWaits ? `Ce fichier ${WAITS}` : undefined}>
+      {@render state(brick(undefined))}
+    </SettingsRow>
   </SettingsCard>
 
   <SettingsCard
@@ -305,11 +344,12 @@
       </SettingsRow>
       <SettingsRow
         label="État"
-        error={rvc.tone === 'danger' ? `RVC ne répond pas à ${v.rvc.url}. ${AFTER}` : null}
+        hint={rvcWaits ? `RVC ${WAITS}` : undefined}
+        error={rvc.tone === 'danger' ? absent('rvc', v.rvc.url) : null}
       >
         {@render state(rvc)}
       </SettingsRow>
-      {@render program('rvc', 'RVC', v.rvc.program, (d) => d.voice.service.rvc.program)}
+      {@render program('rvc', v.rvc.program, (d) => d.voice.service.rvc.program)}
     {/if}
   </SettingsCard>
 
@@ -330,3 +370,10 @@
     </SettingsRow>
   </SettingsCard>
 {/if}
+
+<style>
+  .gestes {
+    display: inline-flex;
+    gap: 8px;
+  }
+</style>

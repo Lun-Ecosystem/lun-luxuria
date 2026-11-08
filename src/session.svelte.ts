@@ -4,7 +4,7 @@ import { Conversation } from './conversation.ts';
 import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
 import { CoreClient } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
-import type { Bricks, ProgramName } from './desktop/voix.ts';
+import type { Bricks, ProgramName, ProgramState } from './desktop/voix.ts';
 import { pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
@@ -80,8 +80,14 @@ export class Session {
   bricks = $state<Bricks | null>(null);
   /** The arguments of the voice service the window started; null: not started here, or not known. */
   voiceArgs = $state<string[] | null>(null);
-  /** What happened to whisper-server and RVC when the window last launched them, in words. */
-  programs = $state<Partial<Record<ProgramName, string>>>({});
+  /** whisper-server and RVC as the window last launched or followed them. */
+  programs = $state<Partial<Record<ProgramName, ProgramState>>>({});
+  /** The `.exe` the person picked for each, as the window keeps it: shown, never sent back. */
+  programPaths = $state<Partial<Record<ProgramName, string>>>({});
+  /** The action on the voice service under way, whatever screen started it: one at a time. */
+  voiceBusy = $state<'check' | 'restart' | null>(null);
+  /** One follow of the programs being launched, at most. */
+  following = false;
   /** In the window: why starting with Windows could not be read or changed. */
   startSaid = $state('');
   token = $state<string | null>(stored(TOKEN_KEY));

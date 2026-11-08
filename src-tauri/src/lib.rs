@@ -2,6 +2,7 @@
 //! what a browser tab cannot: a window of its own, global keys, requests without CORS.
 
 mod body;
+mod job;
 mod programs;
 mod tray;
 mod voice;
@@ -18,6 +19,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_http::init())
+        // Used from Rust only: the person picks the programs the app may launch (programs.rs).
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // Starting with Windows is the person's switch on the settings screen; nothing is set here.
         .plugin(tauri_plugin_autostart::Builder::new().build())
@@ -30,7 +33,11 @@ pub fn run() {
             voice::voice_start,
             voice::voice_restart,
             voice::voice_running,
+            programs::program_paths,
+            programs::program_pick,
+            programs::program_forget,
             programs::program_start,
+            programs::program_state,
             tray::tray_state
         ])
         .build(tauri::generate_context!())

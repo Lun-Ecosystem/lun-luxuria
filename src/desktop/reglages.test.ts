@@ -241,35 +241,67 @@ describe('the voice theme, after a change', () => {
     expect(screen.queryByRole('button', { name: 'Relancer le service' })).toBeNull();
   });
 
-  it('whisper-server and RVC: a path, arguments, a switch, and a launch by hand', async () => {
+  it('the running service wins over the fields, and each card says what waits for its restart', () => {
     service({
       stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' },
       rvc: { on: true, url: 'http://127.0.0.1:18888', gain: 2 },
     });
     const session = new Session();
+    session.voiceStatus = 'up';
+    session.voiceArgs = ['--stt', 'faster:small', '--tts', 'piper:D:/v.onnx'];
     render(Reglages, { session, close: () => {}, start: 'voix' });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Programme whisper-server' }), {
-      target: { value: 'D:/whisper/whisper-server.exe' },
+    expect(screen.getByText('En marche : Locale')).toBeInTheDocument();
+    expect(screen.getByText('whisper-server attend la relance du service.')).toBeInTheDocument();
+    expect(screen.getByText('En marche : sans RVC')).toBeInTheDocument();
+    expect(screen.getByText('RVC attend la relance du service.')).toBeInTheDocument();
+  });
+
+  it('whisper-server and RVC: picked in the system’s dialog, then arguments, a switch, and a launch by hand', async () => {
+    service({
+      stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' },
+      rvc: { on: true, url: 'http://127.0.0.1:18888', gain: 2 },
     });
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'program_pick'
+        ? 'D:/whisper/whisper-server.exe'
+        : cmd === 'program_start'
+          ? { outcome: 'answering', log: '' }
+          : null,
+    );
+    const session = new Session();
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    // Not picked: no path field to type, nothing to launch from here.
+    expect(screen.queryByRole('textbox', { name: /Programme/ })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Arguments de whisper-server' })).toBeNull();
+    expect(screen.getAllByText(/Choisis son \.exe pour que l’appli le lance/)).toHaveLength(2);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Choisir le programme de whisper-server' }));
+    expect(invoke).toHaveBeenCalledWith('program_pick', { name: 'whisper-server' });
+    await vi.waitFor(() => expect(screen.getByText('D:/whisper/whisper-server.exe')).toBeInTheDocument());
     await fireEvent.input(screen.getByRole('textbox', { name: 'Arguments de whisper-server' }), {
       target: { value: '-m\nmodels/small.bin' },
     });
     expect(session.settings.voice.service.stt.program).toEqual({
-      path: 'D:/whisper/whisper-server.exe',
       args: ['-m', 'models/small.bin'],
       launch: false,
     });
-    expect(screen.getByRole('switch', { name: 'Lancer RVC avec l’appli' })).toBeInTheDocument();
-    invoke.mockImplementation(async () => 'answering');
+    expect(screen.getByRole('switch', { name: 'Lancer whisper-server avec l’appli' })).toBeInTheDocument();
+
     await fireEvent.click(screen.getByRole('button', { name: 'Lancer whisper-server' }));
-    await vi.waitFor(() => expect(screen.getByText(/Il répond déjà à son adresse/)).toBeInTheDocument());
+    await vi.waitFor(() =>
+      expect(screen.getByText('Il répond déjà à son adresse : rien n’a été lancé.')).toBeInTheDocument(),
+    );
     expect(invoke).toHaveBeenCalledWith('program_start', {
       name: 'whisper-server',
-      path: 'D:/whisper/whisper-server.exe',
       args: ['-m', 'models/small.bin'],
       addr: '127.0.0.1:8080',
     });
-    // Without a path, nothing to launch.
-    expect(screen.getByRole('button', { name: 'Lancer RVC' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Lancer RVC' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Oublier' }));
+    expect(invoke).toHaveBeenCalledWith('program_forget', { name: 'whisper-server' });
+    await vi.waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Arguments de whisper-server' })).toBeNull(),
+    );
   });
 });
