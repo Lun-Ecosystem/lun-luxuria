@@ -4,7 +4,7 @@
   import { bodyFollows } from './desktop/corps.svelte.ts';
   import { keysFollow } from './desktop/keys.svelte.ts';
   import { autostartFollows, trayFollows } from './desktop/tray.svelte.ts';
-  import { pingVoice, startVoice } from './desktop/voix.ts';
+  import { checkVoice, pingVoice, startVoice } from './desktop/voix.ts';
   import { windowFollows } from './desktop/window.svelte.ts';
   import Reglages from './Reglages.svelte';
   import Scene from './Scene.svelte';
@@ -18,10 +18,16 @@
     trayFollows(session);
     autostartFollows(session);
     void startVoice(session, pingVoice(session.voiceFetch));
+  } else {
+    // A browser tab never launches it: once entered, it only says whether it answers. Nothing runs before.
+    $effect(() => {
+      if (!session.entered || session.voiceStatus !== 'unknown') return;
+      void checkVoice(session);
+    });
   }
   let code = $state('');
   let refused = $state('');
-  let settingsOpen = $state(false);
+  let settingsOpen = $state<'agent' | 'voix' | null>(null);
   const BRAINS = [
     { value: 'alone', label: 'Seul' },
     { value: 'linked', label: 'Relié à un serveur' },
@@ -58,9 +64,9 @@
       {/if}
     </main>
   {:else}
-    <Scene {session} openSettings={() => (settingsOpen = true)} />
+    <Scene {session} openSettings={(theme) => (settingsOpen = theme ?? 'agent')} />
     {#if settingsOpen}
-      <Reglages {session} close={() => (settingsOpen = false)} />
+      <Reglages {session} start={settingsOpen} close={() => (settingsOpen = null)} />
     {/if}
   {/if}
   <Toaster />

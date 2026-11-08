@@ -25,6 +25,20 @@ describe('apply', () => {
     await apply(win, { fullscreen: true, onTop: false, x: 1920, y: 0, width: 1920, height: 1080 });
     expect(calls).toEqual(['onTop false', 'fullscreen false', 'position 1920,0', 'fullscreen true']);
   });
+
+  it('the same place again: the window is not touched, so the thread opens without leaving fullscreen', async () => {
+    const { calls, win } = recorder();
+    const scene = { fullscreen: true, onTop: false, x: 1920, y: 0, width: 1920, height: 1080 };
+    await apply(win, { ...scene }, scene);
+    expect(calls).toEqual([]);
+  });
+
+  it('the thumbnail grows into a panel: only its size and place change', async () => {
+    const { calls, win } = recorder();
+    const thumb = { fullscreen: false, onTop: true, x: 10, y: 20, width: 320, height: 240 };
+    await apply(win, { ...thumb, x: 0, y: 0, width: 420, height: 640 }, thumb);
+    expect(calls).toEqual(['size 420x640', 'position 0,0']);
+  });
 });
 
 describe('toScreen', () => {

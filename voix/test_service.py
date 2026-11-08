@@ -102,6 +102,24 @@ def check_rvc_blocks():
         server.shutdown()
 
 
+def check_bricks():
+    """What the screen shows of each brick: a program at its address answers, or not."""
+    server = fake_server(FAKE_PORT, lambda path, body: (200, "text/plain", b""))
+    try:
+        up = f"http://127.0.0.1:{FAKE_PORT}"
+        down = "http://127.0.0.1:1"
+        assert service.bricks(f"whisper-server:{up}", up) == {"stt": {"kind": "whisper-server", "up": True},
+                                                               "rvc": {"up": True}}
+        assert service.bricks(f"whisper-server:{down}", down) == {"stt": {"kind": "whisper-server", "up": False},
+                                                                   "rvc": {"up": False}}
+        assert service.bricks("faster:small", "") == {"stt": {"kind": "faster", "up": True}, "rvc": None}, \
+            "a model loaded in the service answers with it; no RVC, nothing to check"
+        assert service.bricks("faster:small", "::")["rvc"] == {"up": False}, \
+            "an address that is not one is a brick that does not answer, not a crash"
+    finally:
+        server.shutdown()
+
+
 def check_microphone():
     # 2026-11-07 12:00 UTC, as Windows writes it: 100 ns steps since 1601.
     noon = 134385264000000000
@@ -192,7 +210,7 @@ def main():
         return "salut", 0.9
 
     tts = lambda text: (np.zeros(10, dtype="<f4"), 22050)
-    threading.Thread(target=service.serve, args=(stt, tts, None, {"stt": "x"}, PORT), daemon=True).start()
+    threading.Thread(target=service.serve, args=(stt, tts, None, {"stt": "x"}, PORT, service.ORIGINS, lambda: service.bricks("faster:small", "")), daemon=True).start()
     time.sleep(0.3)
 
     ours = {"Origin": "http://127.0.0.1:5180"}
@@ -205,6 +223,9 @@ def main():
     assert call("/ping", other)[0] == 403, "another site"
     assert call("/ping", rebound)[0] == 403, "another host"
     assert call("/micro", other)[0] == 403, "who holds the microphone stays private"
+    assert call("/etat", other)[0] == 403
+    status, body = call("/etat", ours)
+    assert status == 200 and json.loads(body) == {"stt": {"kind": "faster", "up": True}, "rvc": None}
 
     assert call("/stt", other, sound)[0] == 403
     for _ in range(30):  # an unread body used to reset the socket about once in eight
@@ -223,6 +244,7 @@ def main():
     check_cors(ours, other)
     check_whisper_confidence()
     check_rvc_blocks()
+    check_bricks()
     check_microphone()
     print("ok")
 

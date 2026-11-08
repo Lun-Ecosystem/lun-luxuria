@@ -4,6 +4,7 @@ import { Conversation } from './conversation.ts';
 import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
 import { CoreClient } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
+import type { Bricks } from './desktop/voix.ts';
 import { pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
@@ -54,6 +55,8 @@ export class Session {
   hearing = $state(false);
   thinking = $state(false);
   speaking = $state(false);
+  /** Her words on screen without a voice: not speaking, but cut, muted and silenced the same way. */
+  reading = $state(false);
   capped = $state(false);
   subtitle = $state('');
   trace = $state('');
@@ -71,6 +74,10 @@ export class Session {
   bodySaid = $state('');
   /** In the window: whether the voice service answers, was started, or why not. */
   voiceSaid = $state('');
+  /** The voice service: unknown until tested, then up, starting (launched by the window), or down. */
+  voiceStatus = $state<'unknown' | 'up' | 'starting' | 'down'>('unknown');
+  /** What the service says of whisper-server and RVC, once it answers. */
+  bricks = $state<Bricks | null>(null);
   /** In the window: why starting with Windows could not be read or changed. */
   startSaid = $state('');
   token = $state<string | null>(stored(TOKEN_KEY));
@@ -267,11 +274,15 @@ export class Session {
     if (e.type === 'subtitle') {
       clearTimeout(this.#subtitleTimer);
       this.subtitle = e.text;
+      // Without a voice it is not speaking, and the failure that says why stays.
+      this.reading = e.mute === true;
+      if (e.mute) return;
       this.speaking = true;
       this.failure = '';
       this.capped = false;
     } else if (e.type === 'silent') {
       this.speaking = false;
+      this.reading = false;
       // Cut, its words leave with its voice: nothing on screen keeps talking.
       if (e.cut) this.subtitle = '';
       else this.#subtitleTimer = setTimeout(() => (this.subtitle = ''), SUBTITLE_STAYS_MS);
@@ -367,7 +378,7 @@ export class Session {
 
   /** Muting while she speaks cuts her, as the button would. */
   toggleMute(): void {
-    if (this.speaking) this.silence();
+    if (this.speaking || this.reading) this.silence();
     this.silenced = !this.silenced;
     if (this.silenced) {
       this.#convo?.mute();
@@ -398,8 +409,10 @@ export class Session {
     if (this.silenced) return;
     try {
       await this.#convo?.write(text);
+      // It went through: an older failure no longer holds.
+      this.failure = '';
     } catch (err) {
-      this.failure = String(err);
+      this.failure = err instanceof Error ? err.message : String(err);
     }
     await this.#refreshThread();
   }

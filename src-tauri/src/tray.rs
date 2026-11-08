@@ -1,4 +1,4 @@
-//! The tray icon: three states drawn from the app icon, and a menu whose clicks go to the page as `tray` events.
+//! The tray icon: one drawing per state, and a menu whose clicks go to the page as `tray` events.
 //! Nothing is decided here: the page says the state, and acts on the menu.
 
 use tauri::image::Image;
@@ -6,24 +6,17 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
-const ICON: &[u8] = include_bytes!("../icons/32x32.png");
-
 /// The mute entry, checked by the state the page gives.
 pub struct MuteItem(CheckMenuItem<Wry>);
 
-/// Grey for silenced; grey and faded for unreachable; the plain icon otherwise. RGBA, in place.
-pub fn shade(rgba: &mut [u8], state: &str) {
-    if state == "present" {
-        return;
-    }
-    for px in rgba.as_chunks_mut::<4>().0 {
-        let grey = ((px[0] as u32 * 30 + px[1] as u32 * 59 + px[2] as u32 * 11) / 100) as u8;
-        px[0] = grey;
-        px[1] = grey;
-        px[2] = grey;
-        if state == "unreachable" {
-            px[3] /= 3;
-        }
+/// One drawing per state, readable on a light or a dark bar: full in the accent, full in grey, hollow.
+/// Sources: `icons/tray/*.svg`, rendered at 32 px.
+pub fn icon_for(state: &str) -> Option<&'static [u8]> {
+    match state {
+        "present" => Some(include_bytes!("../icons/tray/present.png")),
+        "silenced" => Some(include_bytes!("../icons/tray/silenced.png")),
+        "unreachable" => Some(include_bytes!("../icons/tray/unreachable.png")),
+        _ => None,
     }
 }
 
@@ -39,7 +32,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         ],
     )?;
     TrayIconBuilder::with_id("main")
-        .icon(Image::from_bytes(ICON)?)
+        .icon(Image::from_bytes(icon_for("present").unwrap_or_default())?)
         .tooltip("Lun'Luxuria")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -69,14 +62,9 @@ pub fn tray_state(
     tooltip: String,
     silenced: bool,
 ) -> Result<(), String> {
-    if !matches!(state.as_str(), "present" | "silenced" | "unreachable") {
-        return Err(format!("état inconnu : {state}"));
-    }
+    let icon = icon_for(&state).ok_or_else(|| format!("état inconnu : {state}"))?;
     let tray = app.tray_by_id("main").ok_or("pas d'icône")?;
-    let base = Image::from_bytes(ICON).map_err(|e| e.to_string())?;
-    let mut rgba = base.rgba().to_vec();
-    shade(&mut rgba, &state);
-    tray.set_icon(Some(Image::new_owned(rgba, base.width(), base.height())))
+    tray.set_icon(Some(Image::from_bytes(icon).map_err(|e| e.to_string())?))
         .map_err(|e| e.to_string())?;
     tray.set_tooltip(Some(tooltip)).map_err(|e| e.to_string())?;
     app.state::<MuteItem>()
@@ -87,26 +75,20 @@ pub fn tray_state(
 
 #[cfg(test)]
 mod tests {
-    use super::shade;
+    use super::icon_for;
 
     #[test]
-    fn present_keeps_the_icon() {
-        let mut px = [200, 100, 50, 255];
-        shade(&mut px, "present");
-        assert_eq!(px, [200, 100, 50, 255]);
+    fn each_state_has_its_own_drawing() {
+        let present = icon_for("present").unwrap();
+        let silenced = icon_for("silenced").unwrap();
+        let unreachable = icon_for("unreachable").unwrap();
+        assert_ne!(present, silenced);
+        assert_ne!(silenced, unreachable);
+        assert_ne!(present, unreachable);
     }
 
     #[test]
-    fn silenced_is_grey_and_opaque() {
-        let mut px = [200, 100, 50, 255];
-        shade(&mut px, "silenced");
-        assert_eq!(px, [124, 124, 124, 255]);
-    }
-
-    #[test]
-    fn unreachable_is_grey_and_faded() {
-        let mut px = [200, 100, 50, 255, 0, 0, 0, 0];
-        shade(&mut px, "unreachable");
-        assert_eq!(px, [124, 124, 124, 85, 0, 0, 0, 0]);
+    fn an_unknown_state_is_refused() {
+        assert!(icon_for("away").is_none());
     }
 }

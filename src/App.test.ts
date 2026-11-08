@@ -44,16 +44,16 @@ describe('the door', () => {
 describe('the settings', () => {
   it('a switch saves at once and comes back on the next launch', async () => {
     const session = new Session();
-    render(Reglages, { session, close: () => {} });
+    render(Reglages, { session, close: () => {}, start: 'ecoute' });
     expect(session.settings.filter.small).toBe(true);
     await userEvent.click(screen.getByRole('switch', { name: 'Filtre en petit mode' }));
     await waitFor(() => expect(session.settings.filter.small).toBe(false));
     expect(readSettings(localStorage.getItem('luxuria.settings')).filter.small).toBe(false);
   });
 
-  it('every mechanic of the perception has its switch', () => {
+  it('every mechanic of the perception has its switch', async () => {
     localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
-    render(Reglages, { session: new Session(), close: () => {} });
+    render(Reglages, { session: new Session(), close: () => {}, start: 'ecoute' });
     for (const name of [
       'Touche à maintenir',
       'Mention du nom',
@@ -62,15 +62,17 @@ describe('the settings', () => {
       'Détection',
       'Répondre dès une courte pause',
       'Couper à la voix',
-      'Les urgences',
     ])
       expect(screen.getByRole('switch', { name })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('link', { name: 'Voix' }));
+    expect(screen.getByRole('switch', { name: 'Les urgences' })).toBeInTheDocument();
   });
 
   it('alone, sets its name and model; what only a server can say is not offered', async () => {
     const session = new Session();
-    render(Reglages, { session, close: () => {} });
+    render(Reglages, { session, close: () => {}, start: 'voix' });
     expect(screen.queryByRole('switch', { name: 'Les urgences' })).toBeNull();
+    await userEvent.click(screen.getByRole('link', { name: 'L’agent' }));
     const name = screen.getByRole('textbox', { name: 'Nom' });
     await userEvent.clear(name);
     await userEvent.type(name, 'Mira');
@@ -81,7 +83,7 @@ describe('the settings', () => {
 
   it('a value out of range is brought back in range, garbage leaves it unchanged', async () => {
     const session = new Session();
-    render(Reglages, { session, close: () => {} });
+    render(Reglages, { session, close: () => {}, start: 'ecoute' });
     const box = screen.getByRole('textbox', { name: 'Durée de la fenêtre' });
     await userEvent.clear(box);
     await userEvent.type(box, '9999');

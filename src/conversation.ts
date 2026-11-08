@@ -64,7 +64,7 @@ export class Conversation {
   }
 
   #fail(what: string, err: unknown): void {
-    this.#d.on({ type: 'failed', text: `${what} : ${String(err)}` });
+    this.#d.on({ type: 'failed', text: `${what} : ${err instanceof Error ? err.message : String(err)}` });
   }
 
   /** A turn the brain marked as spoken. */
@@ -91,6 +91,10 @@ export class Conversation {
         });
         this.#clockFrom = null;
       }
+    } else if (e.type === 'subtitle' && e.mute) {
+      // Its reply came, without a voice: no first sound will end the thinking, nor stop the clock.
+      this.#d.on({ type: 'thinking', on: false });
+      this.#clockFrom = null;
     } else if (e.type === 'silent') {
       this.#lastSpokeAt = this.#d.now();
       this.#d.on({ type: 'said' });
@@ -140,8 +144,18 @@ export class Conversation {
 
   async #transcribeAndSend(audio: Float32Array, attempt: Attempt): Promise<void> {
     const d = this.#d;
+    let heard: Heard;
     try {
-      const heard = await d.stt(audio);
+      heard = await d.stt(audio);
+    } catch (err) {
+      if (attempt.dropped) return;
+      // Nothing will come of it: the end of the sentence must not wait for a reply.
+      attempt.dropped = true;
+      if (attempt.committed) d.on({ type: 'thinking', on: false });
+      this.#fail('Ta phrase n’a pas pu être transcrite', err);
+      return;
+    }
+    try {
       // Muted while it was transcribed: nothing leaves, nothing is paid.
       if (d.silenced?.()) attempt.dropped = true;
       if (attempt.dropped) return;
@@ -209,8 +223,13 @@ export class Conversation {
   }
 
   /** Written in the thread; it answers aloud too. */
-  write(text: string): Promise<void> {
-    return this.#d.brain.send(text, { surface: 'desktop' }, () => {});
+  async write(text: string): Promise<void> {
+    let refused: string | undefined;
+    await this.#d.brain.send(text, { surface: 'desktop' }, (e) => {
+      if (e.type === 'done' && e.message.status === 'error')
+        refused = e.message.error ?? 'Sa réponse a échoué.';
+    });
+    if (refused !== undefined) throw new Error(refused);
   }
 
   /** The mute comes: a fragment held for the end of the sentence is withdrawn. */
