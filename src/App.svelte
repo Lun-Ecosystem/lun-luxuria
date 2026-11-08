@@ -4,7 +4,7 @@
   import { bodyFollows } from './desktop/corps.svelte.ts';
   import { keysFollow } from './desktop/keys.svelte.ts';
   import { autostartFollows, trayFollows } from './desktop/tray.svelte.ts';
-  import { checkVoice, pingVoice, startVoice } from './desktop/voix.ts';
+  import { checkVoice, startAll } from './desktop/voix.ts';
   import { windowFollows } from './desktop/window.svelte.ts';
   import Reglages from './Reglages.svelte';
   import Scene from './Scene.svelte';
@@ -17,7 +17,7 @@
     bodyFollows(session);
     trayFollows(session);
     autostartFollows(session);
-    void startVoice(session, pingVoice(session.voiceFetch));
+    void startAll(session);
   } else {
     // A browser tab never launches it: once entered, it only says whether it answers. Nothing runs before.
     $effect(() => {

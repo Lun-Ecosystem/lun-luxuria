@@ -7,13 +7,25 @@
     SettingsRow,
     TextArea,
     TextInput,
+    toast,
   } from '../lib/ui/index.ts';
   import Switch from '../lib/ui/Switch.svelte';
   import type { Tone } from '../lib/ui/types.ts';
   import type { Session } from '../session.svelte.ts';
-  import type { Settings } from '../settings.ts';
+  import type { Program, Settings } from '../settings.ts';
   import { inWindow } from './net.ts';
-  import { argsOf, checkVoice, missing, pingVoice, startVoice } from './voix.ts';
+  import {
+    argsOf,
+    changes,
+    checkVoice,
+    followBricks,
+    launchProgram,
+    missing,
+    pingVoice,
+    restartVoice,
+    startVoice,
+    type ProgramName,
+  } from './voix.ts';
 
   /*
    * The voice service and the programs it calls, each with its state and what to do when it does not answer.
@@ -61,10 +73,75 @@
     const value = (e.currentTarget as HTMLInputElement).value.trim();
     set((d) => on(d, value));
   };
-  const check = () => void startVoice(session, pingVoice(session.voiceFetch));
+  // One action at a time; the button that runs says so, and its result comes as a toast.
+  let busy = $state<'check' | 'restart' | null>(null);
+  async function run(kind: 'check' | 'restart', job: () => Promise<void>) {
+    if (busy) return;
+    busy = kind;
+    try {
+      await job();
+    } finally {
+      busy = null;
+    }
+    toast(session.voiceSaid, session.voiceStatus === 'down' ? { tone: 'danger' } : {});
+  }
+  const check = () => run('check', () => startVoice(session, pingVoice(session.voiceFetch)));
+  const restart = () => run('restart', () => restartVoice(session, pingVoice(session.voiceFetch)));
+  const waiting = $derived(changes(session));
+
+  let launching = $state<ProgramName | null>(null);
+  async function launch(name: ProgramName) {
+    if (launching) return;
+    launching = name;
+    try {
+      if (await launchProgram(session, name)) void followBricks(session);
+    } finally {
+      launching = null;
+    }
+  }
 </script>
 
 {#snippet state(s: State)}<Badge tone={s.tone} dot>{s.text}</Badge>{/snippet}
+
+{#snippet program(name: ProgramName, label: string, p: Program, edit: (d: Settings) => Program)}
+  <SettingsRow label="Programme" hint="Le chemin complet du .exe. Vide : tu le lances toi-même.">
+    <TextInput
+      value={p.path}
+      size="petit"
+      aria-label="Programme {label}"
+      oninput={typed((d, x) => (edit(d).path = x))}
+    />
+  </SettingsRow>
+  <SettingsRow label="Ses arguments" hint="Un par ligne, tels quels.">
+    <TextArea
+      value={p.args.join('\n')}
+      rows={2}
+      aria-label="Arguments de {label}"
+      oninput={(e) => {
+        const lines = argsOf((e.currentTarget as HTMLTextAreaElement).value);
+        set((d) => (edit(d).args = lines));
+      }}
+    />
+  </SettingsRow>
+  <SettingsRow label="Lancer {label} avec l’appli" hint="Seulement si rien ne répond déjà à son adresse.">
+    {#snippet children({ labelId })}
+      <Switch
+        checked={p.launch}
+        aria-labelledby={labelId}
+        onchange={(on) => set((d) => (edit(d).launch = on))}
+      />
+    {/snippet}
+  </SettingsRow>
+  <SettingsRow label="Maintenant" hint={session.programs[name]}>
+    <Button
+      variant="secondaire"
+      size="petit"
+      disabled={!p.path.trim() || (launching !== null && launching !== name)}
+      loading={launching === name}
+      onclick={() => void launch(name)}>Lancer {label}</Button
+    >
+  </SettingsRow>
+{/snippet}
 
 <SettingsCard
   title="Le service voix"
@@ -92,8 +169,35 @@
       </SettingsRow>
     {/if}
     <SettingsRow label="Maintenant" hint="Le lance s’il le faut, sinon vérifie qu’il répond." error={lack}>
-      <Button variant="secondaire" size="petit" disabled={blocked} onclick={check}>Lancer ou vérifier</Button>
+      <Button
+        variant="secondaire"
+        size="petit"
+        disabled={blocked || busy === 'restart'}
+        loading={busy === 'check'}
+        onclick={check}>{busy === 'check' ? 'Vérification en cours' : 'Lancer ou vérifier'}</Button
+      >
     </SettingsRow>
+    {#if session.voiceArgs}
+      <SettingsRow
+        label="Relancer le service"
+        hint={waiting === 'restart'
+          ? 'Des réglages attendent : il tourne encore avec les réglages précédents.'
+          : 'L’arrête, puis le relance avec les champs ci-dessous.'}
+      >
+        <Button
+          variant={waiting === 'restart' ? 'principal' : 'secondaire'}
+          size="petit"
+          disabled={lack !== null || busy === 'check'}
+          loading={busy === 'restart'}
+          onclick={restart}>Relancer le service</Button
+        >
+      </SettingsRow>
+    {:else if waiting === 'manual'}
+      <SettingsRow
+        label="Des réglages attendent"
+        hint="Il a été lancé hors de l’appli, avec une autre transcription : relance-le toi-même pour les prendre."
+      />
+    {/if}
   {:else}
     <SettingsRow
       label="Dans le navigateur"
@@ -130,7 +234,7 @@
     {:else}
       <SettingsRow
         label="Adresse de whisper-server"
-        hint="Un programme à part, que tu lances toi-même : l’appli vérifie qu’il répond."
+        hint="Un programme à part : l’appli le lance si tu lui donnes son chemin, et vérifie qu’il répond."
       >
         <TextInput
           value={v.stt.url}
@@ -146,6 +250,9 @@
     >
       {@render state(stt)}
     </SettingsRow>
+    {#if v.stt.kind === 'whisper-server'}
+      {@render program('whisper-server', 'whisper-server', v.stt.program, (d) => d.voice.service.stt.program)}
+    {/if}
   </SettingsCard>
 
   <SettingsCard
@@ -165,7 +272,7 @@
 
   <SettingsCard
     title="RVC"
-    description="Facultatif : sa voix convertie par un programme à part, que tu lances toi-même."
+    description="Facultatif : sa voix convertie par un programme à part, lancé par toi ou par l’appli."
   >
     <SettingsRow label="Passer par RVC">
       {#snippet children({ labelId })}
@@ -202,6 +309,7 @@
       >
         {@render state(rvc)}
       </SettingsRow>
+      {@render program('rvc', 'RVC', v.rvc.program, (d) => d.voice.service.rvc.program)}
     {/if}
   </SettingsCard>
 

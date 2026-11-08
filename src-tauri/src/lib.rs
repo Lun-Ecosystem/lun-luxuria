@@ -2,6 +2,7 @@
 //! what a browser tab cannot: a window of its own, global keys, requests without CORS.
 
 mod body;
+mod programs;
 mod tray;
 mod voice;
 
@@ -22,19 +23,24 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .setup(|app| Ok(tray::setup(app.handle())?))
         .manage(voice::Launched::default())
+        .manage(programs::Programs::default())
         .invoke_handler(tauri::generate_handler![
             body::body_config,
             body::body_image,
             voice::voice_start,
+            voice::voice_restart,
+            voice::voice_running,
+            programs::program_start,
             tray::tray_state
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lun'Luxuria")
         .run(|app, event| {
-            // The voice service this app started goes with it.
+            // The voice service and the programs this app started go with it.
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
                 voice::stop(&app.state::<voice::Launched>());
+                programs::stop_all(&app.state::<programs::Programs>());
             }
         });
 }

@@ -57,10 +57,18 @@ export interface Settings {
 export interface VoiceService {
   launch: boolean;
   folder: string;
-  stt: { kind: 'faster' | 'whisper-server'; model: string; url: string };
+  stt: { kind: 'faster' | 'whisper-server'; model: string; url: string; program: Program };
   piper: string;
-  rvc: { on: boolean; url: string; gain: number };
+  rvc: { on: boolean; url: string; gain: number; program: Program };
   args: string[];
+}
+
+/** whisper-server or RVC, launched by the window: a `.exe` by its full path, its arguments one per line. */
+export interface Program {
+  path: string;
+  args: string[];
+  /** With the app, when nothing answers at its address yet. */
+  launch: boolean;
 }
 
 export const DEFAULTS: Settings = {
@@ -88,9 +96,19 @@ export const DEFAULTS: Settings = {
     service: {
       launch: false,
       folder: '',
-      stt: { kind: 'faster', model: 'small', url: 'http://127.0.0.1:8080' },
+      stt: {
+        kind: 'faster',
+        model: 'small',
+        url: 'http://127.0.0.1:8080',
+        program: { path: '', args: [], launch: false },
+      },
       piper: '',
-      rvc: { on: false, url: 'http://127.0.0.1:18888', gain: 2 },
+      rvc: {
+        on: false,
+        url: 'http://127.0.0.1:18888',
+        gain: 2,
+        program: { path: '', args: [], launch: false },
+      },
       args: [],
     },
   },

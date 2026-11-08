@@ -13,9 +13,9 @@ const ARG_LEN_MAX: usize = 1024;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/** The service this app started, if any: one at most, whatever the page asks. */
+/** The service this app started, if any, with its arguments: one at most, whatever the page asks. */
 #[derive(Default)]
-pub struct Launched(pub Mutex<Option<Child>>);
+pub struct Launched(pub Mutex<Option<(Child, Vec<String>)>>);
 
 pub fn checked_dir(dir: &str) -> Result<PathBuf, String> {
     let root = fs::canonicalize(dir).map_err(|_| "Dossier du service introuvable.".to_string())?;
@@ -65,13 +65,57 @@ pub fn start(
         .0
         .lock()
         .map_err(|_| "État du service illisible.".to_string())?;
-    if let Some(child) = held.as_mut()
+    if let Some((child, _)) = held.as_mut()
         && matches!(child.try_wait(), Ok(None))
     {
         return Ok(log.display().to_string());
     }
     let root = checked_dir(dir)?;
     checked_args(args)?;
+    spawn(&mut held, &root, args, log)
+}
+
+/** The arguments of the service this app started, while it runs; `None`: not started here, or gone. */
+pub fn running(launched: &Launched) -> Option<Vec<String>> {
+    let mut held = launched.0.lock().ok()?;
+    let (child, args) = held.as_mut()?;
+    matches!(child.try_wait(), Ok(None)).then(|| args.clone())
+}
+
+/**
+ * Stops the service this app started and starts it with new settings. One started by hand is never touched:
+ * its process is not ours to stop. The new folder and arguments are checked before the running one stops.
+ */
+pub fn restart(
+    launched: &Launched,
+    dir: &str,
+    args: &[String],
+    log: &Path,
+) -> Result<String, String> {
+    if running(launched).is_none() {
+        return Err(
+            "Le service voix n’a pas été lancé par l’appli : arrête-le toi-même, puis « Lancer ou vérifier »."
+                .to_string(),
+        );
+    }
+    let root = checked_dir(dir)?;
+    checked_args(args)?;
+    let mut held = launched
+        .0
+        .lock()
+        .map_err(|_| "État du service illisible.".to_string())?;
+    if let Some((mut child, _)) = held.take() {
+        kill_tree(&mut child);
+    }
+    spawn(&mut held, &root, args, log)
+}
+
+fn spawn(
+    held: &mut Option<(Child, Vec<String>)>,
+    root: &Path,
+    args: &[String],
+    log: &Path,
+) -> Result<String, String> {
     if let Some(parent) = log.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -81,7 +125,7 @@ pub fn start(
         .open(log)
         .map_err(|e| e.to_string())?;
     let err = out.try_clone().map_err(|e| e.to_string())?;
-    let child = command(&root, args)
+    let child = command(root, args)
         .stdout(out)
         .stderr(err)
         .spawn()
@@ -92,7 +136,7 @@ pub fn start(
                 format!("Lancement refusé : {e}")
             }
         })?;
-    *held = Some(child);
+    *held = Some((child, args.to_vec()));
     Ok(log.display().to_string())
 }
 
@@ -101,19 +145,24 @@ pub fn stop(launched: &Launched) {
     let Ok(mut held) = launched.0.lock() else {
         return;
     };
-    if let Some(mut child) = held.take() {
-        // A service already gone: its id may belong to another process by now.
-        #[cfg(windows)]
-        if matches!(child.try_wait(), Ok(None)) {
-            use std::os::windows::process::CommandExt;
-            let _ = Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &child.id().to_string()])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
-        }
-        let _ = child.kill();
-        let _ = child.wait();
+    if let Some((mut child, _)) = held.take() {
+        kill_tree(&mut child);
     }
+}
+
+/** A process this app started, with what it started in turn (uv, then python). */
+pub fn kill_tree(child: &mut Child) {
+    // A process already gone: its id may belong to another one by now.
+    #[cfg(windows)]
+    if matches!(child.try_wait(), Ok(None)) {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[tauri::command]
@@ -126,6 +175,23 @@ pub fn voice_start(
     use tauri::Manager;
     let logs = app.path().app_log_dir().map_err(|e| e.to_string())?;
     start(&launched, &dir, &args, &logs.join("voix.log"))
+}
+
+#[tauri::command]
+pub fn voice_restart(
+    app: tauri::AppHandle,
+    launched: tauri::State<'_, Launched>,
+    dir: String,
+    args: Vec<String>,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let logs = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    restart(&launched, &dir, &args, &logs.join("voix.log"))
+}
+
+#[tauri::command]
+pub fn voice_running(launched: tauri::State<'_, Launched>) -> Option<Vec<String>> {
+    running(&launched)
 }
 
 #[cfg(test)]
@@ -204,5 +270,43 @@ mod tests {
             .is_err()
         );
         assert!(launched.0.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_service_not_started_here_is_not_restarted() {
+        let launched = Launched::default();
+        let log = folder("relance", false).join("voix.log");
+        let dir = folder("relance-ok", true);
+        let err = restart(&launched, dir.to_str().unwrap(), &[], &log).unwrap_err();
+        assert!(err.contains("arrête-le toi-même"));
+        assert!(running(&launched).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_running_service_says_its_arguments_and_survives_a_refused_restart() {
+        let launched = Launched::default();
+        let ping = Command::new("C:\\Windows\\System32\\PING.EXE")
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let args = vec!["--stt".to_string(), "faster:small".to_string()];
+        *launched.0.lock().unwrap() = Some((ping, args.clone()));
+        assert_eq!(running(&launched), Some(args.clone()));
+        let log = folder("relance-refus", false).join("voix.log");
+        // A folder without the script: refused before the running service is stopped.
+        assert!(
+            restart(
+                &launched,
+                folder("sans-script", false).to_str().unwrap(),
+                &[],
+                &log
+            )
+            .is_err()
+        );
+        assert_eq!(running(&launched), Some(args));
+        stop(&launched);
+        assert!(running(&launched).is_none());
     }
 }

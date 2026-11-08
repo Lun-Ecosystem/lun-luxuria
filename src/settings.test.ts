@@ -48,16 +48,31 @@ describe('the voice service', () => {
     expect(s.voice.service).toEqual({
       launch: true,
       folder: 'D:\voix',
-      stt: { kind: 'whisper-server', model: 'small', url: 'http://127.0.0.1:8080' },
+      stt: {
+        kind: 'whisper-server',
+        model: 'small',
+        url: 'http://127.0.0.1:8080',
+        program: { path: '', args: [], launch: false },
+      },
       piper: 'D:\v fr.onnx',
-      rvc: { on: true, url: 'http://127.0.0.1:18888', gain: 1.5 },
+      rvc: {
+        on: true,
+        url: 'http://127.0.0.1:18888',
+        gain: 1.5,
+        program: { path: '', args: [], launch: false },
+      },
       args: ['--lang', 'en'],
     });
   });
 
   it('a local model by its name; without RVC, it stays off', () => {
     const s = readSettings(JSON.stringify({ voice: { service: { args: ['--stt', 'faster:medium'] } } }));
-    expect(s.voice.service.stt).toEqual({ kind: 'faster', model: 'medium', url: 'http://127.0.0.1:8080' });
+    expect(s.voice.service.stt).toEqual({
+      kind: 'faster',
+      model: 'medium',
+      url: 'http://127.0.0.1:8080',
+      program: { path: '', args: [], launch: false },
+    });
     expect(s.voice.service.rvc.on).toBe(false);
     expect(s.voice.service.args).toEqual([]);
   });
