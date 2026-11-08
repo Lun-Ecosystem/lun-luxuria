@@ -48,16 +48,31 @@ describe('the voice service', () => {
     expect(s.voice.service).toEqual({
       launch: true,
       folder: 'D:\voix',
-      stt: { kind: 'whisper-server', model: 'small', url: 'http://127.0.0.1:8080' },
+      stt: {
+        kind: 'whisper-server',
+        model: 'small',
+        url: 'http://127.0.0.1:8080',
+        program: { args: [], launch: false },
+      },
       piper: 'D:\v fr.onnx',
-      rvc: { on: true, url: 'http://127.0.0.1:18888', gain: 1.5 },
+      rvc: {
+        on: true,
+        url: 'http://127.0.0.1:18888',
+        gain: 1.5,
+        program: { args: [], launch: false },
+      },
       args: ['--lang', 'en'],
     });
   });
 
   it('a local model by its name; without RVC, it stays off', () => {
     const s = readSettings(JSON.stringify({ voice: { service: { args: ['--stt', 'faster:medium'] } } }));
-    expect(s.voice.service.stt).toEqual({ kind: 'faster', model: 'medium', url: 'http://127.0.0.1:8080' });
+    expect(s.voice.service.stt).toEqual({
+      kind: 'faster',
+      model: 'medium',
+      url: 'http://127.0.0.1:8080',
+      program: { args: [], launch: false },
+    });
     expect(s.voice.service.rvc.on).toBe(false);
     expect(s.voice.service.args).toEqual([]);
   });
@@ -79,6 +94,18 @@ describe('the voice service', () => {
   it('an unknown transcription comes back to the local one', () => {
     const service = { ...DEFAULTS.voice.service, stt: { ...DEFAULTS.voice.service.stt, kind: 'autre' } };
     expect(readSettings(JSON.stringify({ voice: { service } })).voice.service.stt.kind).toBe('faster');
+  });
+
+  it('saved before its programs, or with a program that is not one, each takes its defaults', () => {
+    const before = { kind: 'whisper-server', model: 'small', url: 'http://127.0.0.1:9000' };
+    const service = {
+      ...DEFAULTS.voice.service,
+      stt: before,
+      rvc: { ...DEFAULTS.voice.service.rvc, program: null },
+    };
+    const read = readSettings(JSON.stringify({ voice: { service } })).voice.service;
+    expect(read.stt).toEqual({ ...before, program: { args: [], launch: false } });
+    expect(read.rvc.program).toEqual({ args: [], launch: false });
   });
 
   it('fields already named are read as they are', () => {

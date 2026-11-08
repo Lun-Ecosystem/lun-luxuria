@@ -57,10 +57,20 @@ export interface Settings {
 export interface VoiceService {
   launch: boolean;
   folder: string;
-  stt: { kind: 'faster' | 'whisper-server'; model: string; url: string };
+  stt: { kind: 'faster' | 'whisper-server'; model: string; url: string; program: Program };
   piper: string;
-  rvc: { on: boolean; url: string; gain: number };
+  rvc: { on: boolean; url: string; gain: number; program: Program };
   args: string[];
+}
+
+/**
+ * whisper-server or RVC, launched by the window: its arguments one per line. Its `.exe` is never here: the person
+ * picks it in the system's dialog, and the window keeps it (`src-tauri/src/programs.rs`).
+ */
+export interface Program {
+  args: string[];
+  /** With the app, when nothing answers at its address yet. */
+  launch: boolean;
 }
 
 export const DEFAULTS: Settings = {
@@ -88,9 +98,19 @@ export const DEFAULTS: Settings = {
     service: {
       launch: false,
       folder: '',
-      stt: { kind: 'faster', model: 'small', url: 'http://127.0.0.1:8080' },
+      stt: {
+        kind: 'faster',
+        model: 'small',
+        url: 'http://127.0.0.1:8080',
+        program: { args: [], launch: false },
+      },
       piper: '',
-      rvc: { on: false, url: 'http://127.0.0.1:18888', gain: 2 },
+      rvc: {
+        on: false,
+        url: 'http://127.0.0.1:18888',
+        gain: 2,
+        program: { args: [], launch: false },
+      },
       args: [],
     },
   },
@@ -108,9 +128,11 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 
 /** What was saved wins, key by key: a setting added later takes its default, a bad type is ignored. */
 function merged<T>(base: T, saved: unknown): T {
-  if (isObject(base) && isObject(saved)) {
+  // A group saved as anything else (null included) comes back whole from the defaults.
+  if (isObject(base)) {
+    const from = isObject(saved) ? saved : {};
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(base)) out[k] = merged(v, saved[k]);
+    for (const [k, v] of Object.entries(base)) out[k] = merged(v, from[k]);
     return out as T;
   }
   if (Array.isArray(base)) return (Array.isArray(saved) ? saved : base) as T;

@@ -42,8 +42,16 @@ Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des R�
   "vignette":{"zoom":2,"x":50,"y":30}}`). Seuls ses fichiers images directs sont lus (png, jpg, webp, gif, 10 Mo au plus).
   Une image manquante rend le souffle, et l'écran dit pourquoi ; « Relire » recharge le dossier.
 - **Le service voix** : s'il ne répond pas, l'appli peut le lancer elle-même (`uv run service.py` dans le dossier
-  choisi, un argument par ligne), sans console. Sa sortie va dans `voix.log`, au dossier des journaux de l'appli
-  (`%LOCALAPPDATA%\io.github.lun-ecosystem.luxuria\logs`). Il s'arrête avec l'appli, et seulement celui qu'elle a lancé.
+  choisi, ses arguments tirés des champs), sans console. Sa sortie va dans `voix.log`, vidé à chaque lancement, au
+  dossier des journaux de l'appli (`%LOCALAPPDATA%\io.github.lun-ecosystem.luxuria\logs`). Un champ changé ne touche
+  pas au service qui tourne : l'écran dit ce qu'il utilise et ce qui attend, et « Relancer le service » l'arrête puis le
+  relance avec les champs. L'appli ne relance et n'arrête que celui qu'elle a lancé, et l'arrête avec elle.
+- **whisper-server et RVC** : l'appli peut les lancer, au démarrage (un interrupteur chacun) ou à la main (« Lancer… »).
+  Le `.exe` se choisit dans la boîte de dialogue du système et reste côté Rust (`programmes.json`, au dossier de
+  configuration de l'appli) : la page ne nomme jamais de chemin. Il part dans son dossier, sans shell ni console, avec
+  ses arguments un par ligne, et seulement si rien ne répond déjà à son adresse. Sa sortie va dans `whisper-server.log`
+  ou `rvc.log`, vidés à chaque lancement. Rattaché à un job Windows, il s'arrête avec l'appli, même si elle plante,
+  avec ce qu'il a ouvert lui-même : une fenêtre, ou un navigateur qui n'était pas déjà ouvert.
 - **L'icône près de l'horloge** : elle dit l'un de trois états, disponible (l'icône), en sourdine (grise), injoignable
   (grise et pâle), avec l'état en infobulle. Un clic ramène la fenêtre ; son menu l'affiche, met ou lève la sourdine, et
   quitte comme la fermeture (la présence finit de la même façon).

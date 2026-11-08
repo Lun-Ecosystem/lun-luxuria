@@ -27,13 +27,24 @@ vi.mock('./window.svelte.ts', () => ({
   ],
 }));
 
+// What the page asks of the window: answered here, by command name.
+const invoke = vi.hoisted(() => vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>(async () => null));
+vi.mock('@tauri-apps/api/core', async (real) => ({
+  ...(await real<typeof import('@tauri-apps/api/core')>()),
+  invoke,
+}));
+
 const { default: Reglages } = await import('../Reglages.svelte');
+const { toasts, dismissAll } = await import('../lib/ui/toasts.svelte.ts');
 const { Session } = await import('../session.svelte.ts');
 
 beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn());
   where.inWindow = true;
+  invoke.mockReset();
+  invoke.mockImplementation(async () => null);
+  dismissAll();
 });
 
 describe('the server’s address', () => {
@@ -170,5 +181,136 @@ describe('the voice theme', () => {
     render(Reglages, { session, close: () => {}, start: 'voix' });
     expect(screen.getByText(/whisper-server ne répond pas à http:\/\/127\.0\.0\.1:8080/)).toBeInTheDocument();
     expect(screen.getAllByText('Répond').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('the voice theme, after a change', () => {
+  const READY = { launch: true, folder: 'D:/voix', piper: 'D:/v.onnx' };
+  const service = (over: object = {}) =>
+    localStorage.setItem('luxuria.settings', JSON.stringify({ voice: { service: { ...READY, ...over } } }));
+  const answering = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ stt: { kind: 'faster', up: true }, rvc: null }), { status: 200 }),
+      ),
+    );
+
+  it('the button says it works, then gives its result', async () => {
+    service();
+    answering();
+    let release = () => {};
+    invoke.mockImplementation(() => new Promise((r) => (release = () => r(null))));
+    const session = new Session();
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Lancer ou vérifier' }));
+    await vi.waitFor(() =>
+      expect(screen.getByRole('button', { name: /Vérification/ })).toHaveAttribute('aria-busy', 'true'),
+    );
+    release();
+    await vi.waitFor(() => expect(toasts().map((t) => t.message)).toContain('Le service voix répond.'));
+    expect(screen.getByRole('button', { name: 'Lancer ou vérifier' })).not.toHaveAttribute('aria-busy');
+  });
+
+  it('started by the app with other fields: says it waits, and restarts it', async () => {
+    service({ stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' } });
+    answering();
+    const session = new Session();
+    session.voiceStatus = 'up';
+    session.voiceArgs = ['--stt', 'faster:small', '--tts', 'piper:D:/v.onnx'];
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    expect(screen.getByText(/tourne encore avec les réglages précédents/)).toBeInTheDocument();
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'voice_running' ? null : 'C:/logs/voix.log'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Relancer le service' }));
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('voice_restart', {
+        dir: 'D:/voix',
+        args: ['--stt', 'whisper-server:http://127.0.0.1:8080', '--tts', 'piper:D:/v.onnx'],
+      }),
+    );
+  });
+
+  it('started by hand with another transcription: says to restart it by hand, no restart button', () => {
+    service({ stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' } });
+    const session = new Session();
+    session.voiceStatus = 'up';
+    session.bricks = { stt: { kind: 'faster', up: true }, rvc: null };
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    expect(screen.getByText(/lancé hors de l’appli/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Relancer le service' })).toBeNull();
+  });
+
+  it('the running service wins over the fields, and each card says what waits for its restart', () => {
+    service({
+      stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' },
+      rvc: { on: true, url: 'http://127.0.0.1:18888', gain: 2 },
+    });
+    const session = new Session();
+    session.voiceStatus = 'up';
+    session.voiceArgs = ['--stt', 'faster:small', '--tts', 'piper:D:/v.onnx'];
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    expect(screen.getByText('En marche : Locale')).toBeInTheDocument();
+    expect(screen.getByText('whisper-server attend la relance du service.')).toBeInTheDocument();
+    expect(screen.getByText('En marche : sans RVC')).toBeInTheDocument();
+    expect(screen.getByText('RVC attend la relance du service.')).toBeInTheDocument();
+  });
+
+  it('started by hand with RVC, RVC switched off: says other settings wait, not another transcription', () => {
+    service({ rvc: { on: false, url: 'http://127.0.0.1:18888', gain: 2 } });
+    const session = new Session();
+    session.voiceStatus = 'up';
+    session.bricks = { stt: { kind: 'faster', up: true }, rvc: { up: true } };
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    expect(screen.getByText(/lancé hors de l’appli, avec d’autres réglages/)).toBeInTheDocument();
+  });
+
+  it('whisper-server and RVC: picked in the system’s dialog, then arguments, a switch, and a launch by hand', async () => {
+    service({
+      stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' },
+      rvc: { on: true, url: 'http://127.0.0.1:18888', gain: 2 },
+    });
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'program_pick'
+        ? 'D:/whisper/whisper-server.exe'
+        : cmd === 'program_start'
+          ? { outcome: 'answering', log: '' }
+          : null,
+    );
+    const session = new Session();
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    // Not picked: no path field to type, nothing to launch from here.
+    expect(screen.queryByRole('textbox', { name: /Programme/ })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Arguments de whisper-server' })).toBeNull();
+    expect(screen.getAllByText(/Choisis son \.exe pour que l’appli le lance/)).toHaveLength(2);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Choisir le programme de whisper-server' }));
+    expect(invoke).toHaveBeenCalledWith('program_pick', { name: 'whisper-server' });
+    await vi.waitFor(() => expect(screen.getByText('D:/whisper/whisper-server.exe')).toBeInTheDocument());
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Arguments de whisper-server' }), {
+      target: { value: '-m\nmodels/small.bin' },
+    });
+    expect(session.settings.voice.service.stt.program).toEqual({
+      args: ['-m', 'models/small.bin'],
+      launch: false,
+    });
+    expect(screen.getByRole('switch', { name: 'Lancer whisper-server avec l’appli' })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Lancer whisper-server' }));
+    await vi.waitFor(() =>
+      expect(screen.getByText('Il répond déjà à son adresse : rien n’a été lancé.')).toBeInTheDocument(),
+    );
+    expect(invoke).toHaveBeenCalledWith('program_start', {
+      name: 'whisper-server',
+      args: ['-m', 'models/small.bin'],
+      addr: '127.0.0.1:8080',
+    });
+    expect(screen.queryByRole('button', { name: 'Lancer RVC' })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Oublier le programme de whisper-server' }));
+    expect(invoke).toHaveBeenCalledWith('program_forget', { name: 'whisper-server' });
+    await vi.waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Arguments de whisper-server' })).toBeNull(),
+    );
   });
 });
