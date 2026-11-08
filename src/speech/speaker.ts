@@ -15,7 +15,7 @@ export interface Output {
 
 export type SpeakerEvent =
   | { type: 'first-sound'; id: number }
-  | { type: 'subtitle'; id: number; text: string }
+  | { type: 'subtitle'; id: number; text: string; mute?: true }
   | { type: 'silent'; cut?: boolean }
   | { type: 'failed'; text: string };
 
@@ -35,6 +35,9 @@ interface Turn {
 }
 
 const SYNTH_TIMEOUT_MS = 5000;
+
+/** How long words without a voice stay on screen before the next sentence: enough to read them. */
+export const readingMs = (text: string) => Math.max(1500, 60 * text.length);
 
 /** The words heard of a sentence cut in the middle: the sound carries no words, only a ratio. */
 export function wordsHeard(text: string, ratio: number): string {
@@ -139,7 +142,16 @@ export class Speaker {
       // Stopped while it was being made.
       if (this.#turns[0] !== turn || turn.pieces[turn.next] !== piece) return this.#pump();
       turn.next++;
-      if (!clip) return this.#pump();
+      if (!clip) {
+        // Its voice failed, its words are still paid for: said on screen, and nobody heard them.
+        this.#on({ type: 'subtitle', id: turn.id, text: piece.text, mute: true });
+        this.#waiting = true;
+        setTimeout(() => {
+          this.#waiting = false;
+          this.#pump();
+        }, readingMs(piece.text));
+        return;
+      }
       if (!turn.sounded) {
         turn.sounded = true;
         this.#on({ type: 'first-sound', id: turn.id });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Speaker, wordsHeard, type Clip, type Output, type SpeakerEvent } from './speaker.ts';
+import { readingMs, Speaker, wordsHeard, type Clip, type Output, type SpeakerEvent } from './speaker.ts';
 
 const CLIP: Clip = { samples: new Float32Array(1), rate: 16000 };
 const tick = () => new Promise((r) => setTimeout(r));
@@ -69,17 +69,27 @@ describe('one sentence after the other', () => {
     expect(t.subtitles()).toEqual(['Oui.']);
   });
 
-  it('a voice that fails says so and goes on', async () => {
-    const t = setup(async (x) => {
-      if (x === 'Un.') throw new Error('boom');
-      return CLIP;
-    });
-    t.speaker.add(1, 'Un.');
-    t.speaker.add(1, 'Deux.');
-    await tick();
-    await tick();
-    expect(t.events.some((e) => e.type === 'failed')).toBe(true);
-    expect(t.subtitles()).toEqual(['Deux.']);
+  it('a voice that fails says so, shows its words without sound for the time to read them, then goes on', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup(async (x) => {
+        if (x === 'Un.') throw new Error('boom');
+        return CLIP;
+      });
+      t.speaker.add(1, 'Un.');
+      t.speaker.add(1, 'Deux.');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.events.some((e) => e.type === 'failed')).toBe(true);
+      expect(t.events).toContainEqual({ type: 'subtitle', id: 1, text: 'Un.', mute: true });
+      expect(t.sounds).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(readingMs('Un.') - 1);
+      expect(t.subtitles()).toEqual(['Un.']);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(t.subtitles()).toEqual(['Un.', 'Deux.']);
+      expect(t.sounds).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -267,6 +267,8 @@ export class Session {
     if (e.type === 'subtitle') {
       clearTimeout(this.#subtitleTimer);
       this.subtitle = e.text;
+      // Without a voice it is not speaking, and the failure that says why stays.
+      if (e.mute) return;
       this.speaking = true;
       this.failure = '';
       this.capped = false;

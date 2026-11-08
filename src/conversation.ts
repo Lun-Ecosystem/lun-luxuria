@@ -91,6 +91,9 @@ export class Conversation {
         });
         this.#clockFrom = null;
       }
+    } else if (e.type === 'subtitle' && e.mute) {
+      // Its reply came, without a voice: no first sound will end the thinking.
+      this.#d.on({ type: 'thinking', on: false });
     } else if (e.type === 'silent') {
       this.#lastSpokeAt = this.#d.now();
       this.#d.on({ type: 'said' });
