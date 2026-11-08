@@ -380,6 +380,39 @@ describe('whisper-server and RVC', () => {
     expect(session.programs.rvc?.said).toBe('RVC ne répond toujours pas. Journal : C:\\logs\\rvc.log');
   });
 
+  it('launched again while followed: followed on from there, never given up for it', async () => {
+    const session = both();
+    await launchProgram(session, 'whisper-server', started('C:\\logs\\whisper-server.log'));
+    const again = vi.fn(async () => ({ outcome: 'running', log: 'C:\\logs\\whisper-server.log' }));
+    let naps = 0;
+    const sleep = async () => {
+      if (naps++ === 0) await launchProgram(session, 'whisper-server', again);
+    };
+    const states = ['starting', 'answering'];
+    await followPrograms(
+      session,
+      vi.fn(async () => states.shift()),
+      sleep,
+      noBricks,
+    );
+    expect(session.programs['whisper-server']).toMatchObject({ said: 'whisper-server répond.', ok: true });
+  });
+
+  it('switched off while it loads: followed until it answers all the same', async () => {
+    const session = both();
+    await launchProgram(session, 'rvc', started());
+    const sleep = async () => {
+      session.settings.voice.service.rvc.on = false;
+    };
+    const states = ['starting', 'answering'];
+    const call = vi.fn<(cmd: string, a?: Record<string, unknown>) => Promise<string | undefined>>(async () =>
+      states.shift(),
+    );
+    await followPrograms(session, call, sleep, noBricks);
+    expect(call).toHaveBeenCalledWith('program_state', { name: 'rvc', addr: 'localhost:18888' });
+    expect(session.programs.rvc).toMatchObject({ said: 'RVC répond.', ok: true });
+  });
+
   it('a second follow joins the one under way', async () => {
     const session = both();
     session.following = true;

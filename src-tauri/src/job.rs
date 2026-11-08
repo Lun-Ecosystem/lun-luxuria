@@ -48,6 +48,20 @@ mod imp {
             // SAFETY: both handles stay valid while `self` and `child` live.
             unsafe { AssignProcessToJobObject(self.0, child.as_raw_handle() as HANDLE) != 0 }
         }
+
+        #[cfg(test)]
+        pub fn holds(&self, child: &Child) -> bool {
+            let mut inside = 0;
+            // SAFETY: both handles stay valid while `self` and `child` live.
+            unsafe {
+                windows_sys::Win32::System::JobObjects::IsProcessInJob(
+                    child.as_raw_handle() as HANDLE,
+                    self.0,
+                    &mut inside,
+                ) != 0
+                    && inside != 0
+            }
+        }
     }
 
     impl Drop for Job {
@@ -66,17 +80,58 @@ mod imp {
 pub fn adopt(child: &Child) -> bool {
     #[cfg(windows)]
     {
-        use std::sync::OnceLock;
-        // Never dropped: its handle closes with the app's process, which is the point.
-        static JOB: OnceLock<Option<imp::Job>> = OnceLock::new();
-        JOB.get_or_init(imp::Job::new)
-            .as_ref()
-            .is_some_and(|job| job.adopt(child))
+        job().is_some_and(|job| job.adopt(child))
     }
     #[cfg(not(windows))]
     {
         let _ = child;
         false
+    }
+}
+
+/** The app's job, made with the first child. Never dropped: its handle closes with the app's process, the point. */
+#[cfg(windows)]
+fn job() -> Option<&'static imp::Job> {
+    static JOB: std::sync::OnceLock<Option<imp::Job>> = std::sync::OnceLock::new();
+    JOB.get_or_init(imp::Job::new).as_ref()
+}
+
+/** For the tests: whether a child is in the app's job, and a process watched until it ends. */
+#[cfg(all(test, windows))]
+pub mod probe {
+    use std::process::Child;
+    use std::time::Duration;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+
+    pub fn in_job(child: &Child) -> bool {
+        super::job().is_some_and(|job| job.holds(child))
+    }
+
+    /** A process held by a handle of its own: its id may serve again once it ends, its handle never. */
+    pub struct Watch(HANDLE);
+
+    impl Watch {
+        pub fn new(pid: u32) -> Watch {
+            // SAFETY: a handle we own, closed on drop.
+            let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+            assert!(!handle.is_null(), "no process {pid}");
+            Watch(handle)
+        }
+
+        pub fn ended(&self, within: Duration) -> bool {
+            // SAFETY: our handle, valid until drop.
+            unsafe { WaitForSingleObject(self.0, within.as_millis() as u32) == WAIT_OBJECT_0 }
+        }
+    }
+
+    impl Drop for Watch {
+        fn drop(&mut self) {
+            // SAFETY: the handle is ours and closed once.
+            unsafe { CloseHandle(self.0) };
+        }
     }
 }
 

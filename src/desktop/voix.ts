@@ -292,12 +292,12 @@ export async function forgetProgram(session: Session, name: ProgramName, call: C
 
 const OUTCOME: Record<string, string> = {
   started: 'Lancé par l’appli : il se charge.',
-  restarted: 'Relancé avec ses nouveaux arguments : il se charge.',
+  restarted: 'Relancé avec ses nouveaux réglages : il se charge.',
   running: 'Déjà lancé par l’appli, avec ces arguments.',
   answering: 'Il répond déjà à son adresse : rien n’a été lancé.',
 };
 
-/** Launches one program; true when it was started now, and is then followed until it answers. */
+/** Launches one program; true when it is ours and on its way (started, restarted or already ours), then followed. */
 export async function launchProgram(
   session: Session,
   name: ProgramName,
@@ -320,7 +320,8 @@ export async function launchProgram(
       outcome: string;
       log: string;
     };
-    const now = outcome === 'started' || outcome === 'restarted';
+    // Someone else's answers already; ours, even already running, is followed until it does.
+    const now = outcome !== 'answering';
     session.programs[name] = {
       said: OUTCOME[outcome] ?? outcome,
       ok: true,
@@ -342,6 +343,10 @@ export async function startPrograms(session: Session, call: Call = invoke): Prom
   return started.some(Boolean);
 }
 
+const NAMES = Object.keys(PROGRAMS) as ProgramName[];
+/** Where a program answers, from the fields, in use or not. */
+const urlOf = (v: VoiceService, name: ProgramName) => (name === 'rvc' ? v.rvc.url : v.stt.url);
+
 /**
  * Follows the programs being launched until each answers at its address, ends, or the wait runs out, and says it.
  * One follow at a time: a program launched meanwhile joins the one under way.
@@ -354,24 +359,23 @@ export async function followPrograms(
 ): Promise<void> {
   if (session.following) return;
   session.following = true;
+  // Every program being launched, in use or not: one switched off meanwhile still says how it ends.
+  const waiting = () => NAMES.filter((name) => session.programs[name]?.starting);
   try {
-    for (;;) {
-      const waiting = inUse(session.settings.voice.service).filter((p) => session.programs[p.name]?.starting);
-      if (!waiting.length) return;
+    while (waiting().length) {
       await sleep(POLL_MS);
-      for (const p of waiting) {
-        const s = session.programs[p.name]!;
-        const label = PROGRAMS[p.name];
-        const now = await Promise.resolve(
-          call('program_state', { name: p.name, addr: addrOf(p.url) ?? '' }),
-        ).catch(() => 'starting');
+      // Read after the pause: a program launched again meanwhile is followed from what that launch said.
+      for (const name of waiting()) {
+        const s = session.programs[name]!;
+        const label = PROGRAMS[name];
+        const addr = addrOf(urlOf(session.settings.voice.service, name)) ?? '';
+        const now = await Promise.resolve(call('program_state', { name, addr })).catch(() => 'starting');
         const left = (s.left ?? 0) - 1;
-        if (now === 'answering')
-          session.programs[p.name] = { said: `${label} répond.`, ok: true, log: s.log };
+        if (now === 'answering') session.programs[name] = { said: `${label} répond.`, ok: true, log: s.log };
         else if (now !== 'starting')
-          session.programs[p.name] = { said: `${label} s’est arrêté. Journal : ${s.log}`, log: s.log };
+          session.programs[name] = { said: `${label} s’est arrêté. Journal : ${s.log}`, log: s.log };
         else if (left <= 0)
-          session.programs[p.name] = {
+          session.programs[name] = {
             said: `${label} ne répond toujours pas. Journal : ${s.log}`,
             log: s.log,
           };

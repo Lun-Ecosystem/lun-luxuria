@@ -46,6 +46,11 @@ pub fn checked_name(name: &str) -> Result<&'static str, String> {
         .ok_or_else(|| "Programme inconnu.".to_string())
 }
 
+/** How the screen names it. */
+pub fn label(name: &str) -> &str {
+    if name == "rvc" { "RVC" } else { name }
+}
+
 /** An existing `.exe`, by its full path; kept as written, so that its folder is a plain one for the program. */
 pub fn checked_exe(path: &str) -> Result<PathBuf, String> {
     let exe = PathBuf::from(path.trim());
@@ -117,6 +122,8 @@ pub fn start(
     let name = checked_name(name)?;
     let exe = checked_exe(path.ok_or("Choisis d’abord son programme.")?)?;
     checked_args(args)?;
+    // shortcut: held through the probe and the early wait (1.5 s), so two programs start one after the other;
+    // one lock per program if starting them ever feels slow.
     let mut held = hold(&programs.0);
     let mut restarted = false;
     if let Some(h) = held.get_mut(name)
@@ -143,7 +150,8 @@ pub fn start(
         spawn_logged(command(&exe, args), out).map_err(|e| format!("Lancement refusé : {e}"))?;
     if let Some(status) = early_exit(&mut child, EARLY) {
         return Err(format!(
-            "{name} s’est arrêté aussitôt ({}). Journal : {}",
+            "{} s’est arrêté aussitôt ({}). Journal : {}",
+            label(name),
             ended(status),
             log.display()
         ));
@@ -198,15 +206,23 @@ pub fn program_paths(app: tauri::AppHandle) -> Result<HashMap<String, String>, S
     Ok(read_paths(&paths_file(&app)?))
 }
 
-/** The system's dialog, opened here: only the person chooses what the app may launch. `None`: cancelled. */
+/**
+ * The system's dialog, opened here: only the person chooses what the app may launch. `None`: cancelled. Modal to
+ * the window, so that a second click cannot open another one.
+ */
 #[tauri::command(async)]
-pub fn program_pick(app: tauri::AppHandle, name: String) -> Result<Option<String>, String> {
+pub fn program_pick(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    name: String,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let name = checked_name(&name)?;
     let Some(picked) = app
         .dialog()
         .file()
-        .set_title(format!("Le programme de {name}"))
+        .set_parent(&window)
+        .set_title(format!("Le programme de {}", label(name)))
         .add_filter("Programme", &["exe"])
         .blocking_pick_file()
     else {
@@ -265,6 +281,8 @@ mod tests {
         assert_eq!(checked_name("rvc"), Ok("rvc"));
         assert_eq!(checked_name("whisper-server"), Ok("whisper-server"));
         assert!(checked_name("cmd").is_err());
+        assert_eq!(label("rvc"), "RVC");
+        assert_eq!(label("whisper-server"), "whisper-server");
     }
 
     #[test]
@@ -381,18 +399,32 @@ mod tests {
 
         #[test]
         fn started_held_kept_then_restarted_with_new_arguments_then_stopped() {
+            use crate::job::probe::{Watch, in_job};
             let programs = Programs::default();
             let log = dir("lance").join("rvc.log");
             let addr = "127.0.0.1:9";
+            let pid = |p: &Programs| p.0.lock().unwrap()["rvc"].child.id();
             let first = start(&programs, "rvc", Some(PING), &args("30"), addr, &log).unwrap();
             assert_eq!(first.outcome, "started");
             assert_eq!(first.log, log.display().to_string());
+            assert!(in_job(&programs.0.lock().unwrap()["rvc"].child));
             assert_eq!(state(&programs, "rvc", addr), Ok("starting"));
+            let first_run = Watch::new(pid(&programs));
             let same = start(&programs, "rvc", Some(PING), &args("30"), addr, &log).unwrap();
             assert_eq!(same.outcome, "running");
+            assert!(!first_run.ended(Duration::ZERO));
             let other = start(&programs, "rvc", Some(PING), &args("40"), addr, &log).unwrap();
             assert_eq!(other.outcome, "restarted");
+            assert!(
+                first_run.ended(Duration::from_secs(5)),
+                "the old run must stop"
+            );
+            let second_run = Watch::new(pid(&programs));
             stop_all(&programs);
+            assert!(
+                second_run.ended(Duration::from_secs(5)),
+                "nothing stays after exit"
+            );
             assert!(programs.0.lock().unwrap().is_empty());
             assert_eq!(state(&programs, "rvc", addr), Ok("absent"));
         }

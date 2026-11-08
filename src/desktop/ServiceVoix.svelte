@@ -132,8 +132,11 @@
   >
     <span class="gestes">
       {#if path}
-        <Button variant="fantome" size="petit" onclick={() => void forgetProgram(session, name)}
-          >Oublier</Button
+        <Button
+          variant="fantome"
+          size="petit"
+          aria-label="Oublier le programme de {label}"
+          onclick={() => void forgetProgram(session, name)}>Oublier</Button
         >
       {/if}
       <Button
@@ -231,7 +234,7 @@
     {:else if waiting === 'manual'}
       <SettingsRow
         label="Des réglages attendent"
-        hint="Il a été lancé hors de l’appli, avec une autre transcription : relance-le toi-même pour les prendre."
+        hint="Il a été lancé hors de l’appli, avec d’autres réglages : relance-le toi-même pour les prendre."
       />
     {/if}
   {:else}

@@ -256,6 +256,15 @@ describe('the voice theme, after a change', () => {
     expect(screen.getByText('RVC attend la relance du service.')).toBeInTheDocument();
   });
 
+  it('started by hand with RVC, RVC switched off: says other settings wait, not another transcription', () => {
+    service({ rvc: { on: false, url: 'http://127.0.0.1:18888', gain: 2 } });
+    const session = new Session();
+    session.voiceStatus = 'up';
+    session.bricks = { stt: { kind: 'faster', up: true }, rvc: { up: true } };
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    expect(screen.getByText(/lancé hors de l’appli, avec d’autres réglages/)).toBeInTheDocument();
+  });
+
   it('whisper-server and RVC: picked in the system’s dialog, then arguments, a switch, and a launch by hand', async () => {
     service({
       stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' },
@@ -298,7 +307,7 @@ describe('the voice theme, after a change', () => {
     });
     expect(screen.queryByRole('button', { name: 'Lancer RVC' })).toBeNull();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Oublier' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Oublier le programme de whisper-server' }));
     expect(invoke).toHaveBeenCalledWith('program_forget', { name: 'whisper-server' });
     await vi.waitFor(() =>
       expect(screen.queryByRole('textbox', { name: 'Arguments de whisper-server' })).toBeNull(),

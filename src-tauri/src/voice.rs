@@ -61,7 +61,7 @@ pub fn command(dir: &Path, args: &[String]) -> Command {
     cmd
 }
 
-/** The log of this launch, emptied: what it says is about this run. */
+/** The log of a launch, checked before anything stops; emptied by `spawn_logged`, once what it replaces is gone. */
 pub fn open_log(log: &Path) -> Result<File, String> {
     if let Some(parent) = log.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -69,13 +69,14 @@ pub fn open_log(log: &Path) -> Result<File, String> {
     OpenOptions::new()
         .create(true)
         .write(true)
-        .truncate(true)
+        .truncate(false)
         .open(log)
         .map_err(|e| format!("Journal impossible à ouvrir : {e}"))
 }
 
-/** Spawns with its output in the log, and puts it in the app's job. */
+/** Spawns with its output in the log, emptied now so that it says this run only, and puts it in the app's job. */
 pub fn spawn_logged(mut cmd: Command, out: File) -> Result<Child, std::io::Error> {
+    out.set_len(0)?;
     let err = out.try_clone()?;
     let child = cmd.stdout(out).stderr(err).spawn()?;
     crate::job::adopt(&child);
@@ -96,11 +97,18 @@ pub fn early_exit(child: &mut Child, within: Duration) -> Option<ExitStatus> {
     }
 }
 
-/** « code 1 », or what the system says when there is none. */
+/** « code 1 », a system status in hexadecimal (« code 0xc0000135 »), or what the system says when there is none. */
 pub fn ended(status: ExitStatus) -> String {
-    status
-        .code()
-        .map_or_else(|| status.to_string(), |c| format!("code {c}"))
+    status.code().map_or_else(
+        || status.to_string(),
+        |c| {
+            if c < 0 {
+                format!("code {:#x}", c as u32)
+            } else {
+                format!("code {c}")
+            }
+        },
+    )
 }
 
 /** Starts the service once; a second call while it runs only says so. Returns the log's path. */
@@ -240,6 +248,8 @@ pub fn voice_running(launched: tauri::State<'_, Launched>) -> Option<Vec<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use crate::job::probe::{Watch, in_job};
 
     fn folder(tag: &str, with_script: bool) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("luxuria-voix-{tag}-{}", std::process::id()));
@@ -325,12 +335,19 @@ mod tests {
         assert!(running(&launched).is_none());
     }
 
+    #[cfg(windows)]
     #[test]
-    fn each_launch_empties_its_log() {
+    fn each_launch_empties_its_log_once_what_it_replaces_is_gone() {
         let log = folder("journal", false).join("voix.log");
         fs::write(&log, "ancien").unwrap();
-        drop(open_log(&log).unwrap());
-        assert_eq!(fs::read_to_string(&log).unwrap(), "");
+        // Opened before the old run stops, which may still write: emptied only at the launch.
+        let out = open_log(&log).unwrap();
+        assert_eq!(fs::read(&log).unwrap(), b"ancien");
+        let mut child =
+            spawn_logged(Command::new("C:\\Windows\\System32\\whoami.exe"), out).unwrap();
+        child.wait().unwrap();
+        let now = fs::read(&log).unwrap();
+        assert!(!now.is_empty() && !now.windows(6).any(|w| w == b"ancien"));
     }
 
     #[cfg(windows)]
@@ -374,14 +391,23 @@ mod tests {
             "whisper-server:http://127.0.0.1:8080".to_string(),
         ];
         let log = base.join("voix.log");
+        let pid = |l: &Launched| l.0.lock().unwrap().as_ref().unwrap().0.id();
+        let old = Watch::new(pid(&launched));
         assert!(
             restart_with(&launched, dir.to_str().unwrap(), &next, &log, |_, _| ping(
                 "30"
             ))
             .is_ok()
         );
+        assert!(old.ended(Duration::from_secs(5)), "the old run must stop");
         assert_eq!(running(&launched), Some(next));
+        assert!(in_job(&launched.0.lock().unwrap().as_ref().unwrap().0));
+        let now = Watch::new(pid(&launched));
         stop(&launched);
+        assert!(
+            now.ended(Duration::from_secs(5)),
+            "nothing stays after exit"
+        );
         assert!(running(&launched).is_none());
     }
 
@@ -394,6 +420,10 @@ mod tests {
             .unwrap();
         let status = early_exit(&mut child, Duration::from_secs(5)).expect("ended");
         assert!(ended(status).starts_with("code"));
+        use std::os::windows::process::ExitStatusExt;
+        assert_eq!(ended(ExitStatus::from_raw(1)), "code 1");
+        // A missing DLL, as the system says it: only readable in hexadecimal.
+        assert_eq!(ended(ExitStatus::from_raw(0xC000_0135)), "code 0xc0000135");
         let mut long = ping("30").stdout(Stdio::null()).spawn().unwrap();
         assert!(early_exit(&mut long, Duration::from_millis(200)).is_none());
         kill_tree(&mut long);
