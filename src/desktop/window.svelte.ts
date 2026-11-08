@@ -132,3 +132,6 @@ export function windowFollows(session: Session): void {
     ]);
   });
 }
+
+/** Quitting goes through the closing of the window: the presence ends first, the voice service stops with the app. */
+export const quit = () => getCurrentWindow().close();

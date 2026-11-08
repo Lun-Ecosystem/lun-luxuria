@@ -35,6 +35,20 @@ describe('the desk mute', () => {
   });
 });
 
+describe('a voice that does not answer', () => {
+  it('is said on the scene, with the way to its setting', async () => {
+    const session = new Session();
+    const openSettings = vi.fn();
+    render(Scene, { session, openSettings });
+    expect(screen.queryByText(/Sa voix ne répond pas/)).toBeNull();
+    session.voiceStatus = 'down';
+    flushSync();
+    expect(screen.getByText(/Sa voix ne répond pas/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Régler la voix' }));
+    expect(openSettings).toHaveBeenCalledWith('voix');
+  });
+});
+
 describe('the body in images', () => {
   it('a broken image gives the breath, and a repaired address brings the image back without a reload', () => {
     const session = new Session();

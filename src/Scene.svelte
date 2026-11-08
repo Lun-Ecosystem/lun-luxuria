@@ -14,7 +14,7 @@
   import { IconButton } from './lib/ui/index.ts';
   import type { Session } from './session.svelte.ts';
 
-  let { session, openSettings }: { session: Session; openSettings: () => void } = $props();
+  let { session, openSettings }: { session: Session; openSettings: (theme?: 'voix') => void } = $props();
   const mouth = new Mouth();
   const open = $derived(mouth.next(session.level));
   const small = $derived(session.layout === 'small');
@@ -68,6 +68,14 @@
     {/if}
     {#if session.trace}<span class="trace">Filtré : {session.trace}</span>{/if}
     {#if session.failure}<span class="echec" role="alert">{session.failure}</span>{/if}
+    {#if session.voiceStatus === 'down'}
+      <span class="echec" role="status">
+        Sa voix ne répond pas : il ne t’entend pas et ne parle pas.
+        <button class="reprise" onclick={() => openSettings('voix')}>Régler la voix</button>
+      </span>
+    {:else if session.voiceStatus === 'starting'}
+      <span class="etiquette" role="status">Sa voix démarre : les modèles se chargent.</span>
+    {/if}
   </div>
 
   <div class="controles">
@@ -97,7 +105,7 @@
       label={small ? 'Revenir à la scène' : 'Passer en petit mode'}
       onclick={() => session.setLayout(small ? 'scene' : 'small')}
     />
-    <IconButton icon={Settings2} label="Réglages" onclick={openSettings} />
+    <IconButton icon={Settings2} label="Réglages" onclick={() => openSettings()} />
   </div>
 
   {#if session.threadOpen}
