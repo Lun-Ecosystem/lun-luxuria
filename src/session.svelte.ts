@@ -4,6 +4,7 @@ import { Conversation } from './conversation.ts';
 import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
 import { CoreClient } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
+import type { Bricks } from './desktop/voix.ts';
 import { pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
@@ -71,6 +72,10 @@ export class Session {
   bodySaid = $state('');
   /** In the window: whether the voice service answers, was started, or why not. */
   voiceSaid = $state('');
+  /** The voice service: unknown until tested, then up, starting (launched by the window), or down. */
+  voiceStatus = $state<'unknown' | 'up' | 'starting' | 'down'>('unknown');
+  /** What the service says of whisper-server and RVC, once it answers. */
+  bricks = $state<Bricks | null>(null);
   /** In the window: why starting with Windows could not be read or changed. */
   startSaid = $state('');
   token = $state<string | null>(stored(TOKEN_KEY));
