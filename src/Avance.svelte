@@ -5,7 +5,8 @@
 
   /* What the kit has not: the rest of a theme, folded under its everyday settings and always there. */
 
-  let { what, children }: { what: string; children: Snippet } = $props();
+  // Rows by default, as one card; `cards` when what it holds is grouped in cards of its own.
+  let { what, cards = false, children }: { what: string; cards?: boolean; children: Snippet } = $props();
   let block: HTMLDetailsElement;
 
   // Folded never hides what blocks: an error shown inside opens it; it never closes by itself.
@@ -20,7 +21,7 @@
   });
 </script>
 
-<details class="avance" bind:this={block}>
+<details class={['avance', { cartes: cards }]} bind:this={block}>
   <summary>
     Réglages avancés : {what}
     <ChevronRight size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />
@@ -32,6 +33,9 @@
   .avance {
     border: 1px solid var(--bordure);
     border-radius: var(--r-3);
+  }
+  .avance:not(.cartes) {
+    background: var(--surface-1);
   }
   summary {
     display: flex;
@@ -69,9 +73,13 @@
     }
   }
   .dedans {
+    border-top: 1px solid var(--bordure);
+  }
+  .cartes .dedans {
     display: flex;
     flex-direction: column;
     gap: 14px;
     padding: 2px 12px 14px;
+    border-top: 0;
   }
 </style>

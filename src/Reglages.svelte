@@ -148,8 +148,8 @@
     { value: 'muted', label: 'Coupé' },
   ];
   const BARGE = [
-    { value: 'now', label: 'Immédiate' },
-    { value: 'soft', label: 'À la fin de la phrase' },
+    { value: 'soft', label: 'Doucement' },
+    { value: 'now', label: 'Tout de suite' },
   ];
   const FILTER = 'Seules les phrases qui lui sont adressées partent.';
   const ROOMS = [
@@ -192,9 +192,45 @@
       {value}
       {suffix}
       size="petit"
+      class={suffix ? 'court' : undefined}
       aria-label={label}
       onchange={(e) => on((e.currentTarget as HTMLInputElement).value)}
     />
+  </SettingsRow>
+{/snippet}
+
+{#snippet micro(hint: string | undefined)}
+  {@render toggle('Annulation d’écho du micro', hint, s.voice.echoCancellation, (v) =>
+    set((d) => (d.voice.echoCancellation = v)),
+  )}
+  {@render toggle('Suppression de bruit du micro', hint, s.voice.noiseSuppression, (v) =>
+    set((d) => (d.voice.noiseSuppression = v)),
+  )}
+{/snippet}
+
+<!-- A value and the switch that turns it on, on one row: the row's label names the switch. -->
+{#snippet paired(
+  label: string,
+  hint: string,
+  checked: boolean,
+  on: (v: boolean) => void,
+  valueLabel: string,
+  value: string,
+  suffix: string | undefined,
+  onValue: (v: string) => void,
+)}
+  <SettingsRow {label} {hint}>
+    {#snippet children({ labelId })}
+      <TextInput
+        {value}
+        {suffix}
+        size="petit"
+        class={suffix ? 'court' : undefined}
+        aria-label={valueLabel}
+        onchange={(e) => onValue((e.currentTarget as HTMLInputElement).value)}
+      />
+      <Switch {checked} aria-labelledby={labelId} onchange={on} />
+    {/snippet}
   </SettingsRow>
 {/snippet}
 
@@ -283,38 +319,36 @@
 
         {#if s.brain === 'alone'}
           <Avance what="le modèle, la clé, le plafond">
-            <SettingsCard title="Le modèle">
-              {@render field(
-                'Adresse du modèle',
-                'Compatible OpenAI, souvent terminée par /v1.',
-                s.model.url,
-                undefined,
-                (v) => set((d) => (d.model.url = v.trim() || DEFAULTS.model.url)),
-              )}
-              {@render field('Nom du modèle', undefined, s.model.name, undefined, (v) =>
-                set((d) => (d.model.name = v.trim())),
-              )}
-              <SettingsRow label="Clé" hint="Facultative. Gardée dans ce navigateur, sur ce poste seulement.">
-                <TextInput
-                  type="password"
-                  value={s.model.key}
-                  size="petit"
-                  autocomplete="off"
-                  aria-label="Clé"
-                  onchange={(e) => {
-                    const value = (e.currentTarget as HTMLInputElement).value.trim();
-                    set((d) => (d.model.key = value));
-                  }}
-                />
-              </SettingsRow>
-              {@render field(
-                'Plafond par jour',
-                'Au-delà, plus de réponse jusqu’au lendemain. 0 : sans plafond.',
-                String(s.model.tokensPerDay),
-                'jetons',
-                (v) => set((d) => (d.model.tokensPerDay = number(v, 0, 100_000_000, d.model.tokensPerDay))),
-              )}
-            </SettingsCard>
+            {@render field(
+              'Adresse du modèle',
+              'Compatible OpenAI, souvent terminée par /v1.',
+              s.model.url,
+              undefined,
+              (v) => set((d) => (d.model.url = v.trim() || DEFAULTS.model.url)),
+            )}
+            {@render field('Nom du modèle', undefined, s.model.name, undefined, (v) =>
+              set((d) => (d.model.name = v.trim())),
+            )}
+            <SettingsRow label="Clé" hint="Facultative. Gardée dans ce navigateur, sur ce poste seulement.">
+              <TextInput
+                type="password"
+                value={s.model.key}
+                size="petit"
+                autocomplete="off"
+                aria-label="Clé"
+                onchange={(e) => {
+                  const value = (e.currentTarget as HTMLInputElement).value.trim();
+                  set((d) => (d.model.key = value));
+                }}
+              />
+            </SettingsRow>
+            {@render field(
+              'Plafond par jour',
+              'Au-delà, plus de réponse jusqu’au lendemain. 0 : sans plafond.',
+              String(s.model.tokensPerDay),
+              'jetons',
+              (v) => set((d) => (d.model.tokensPerDay = number(v, 0, 100_000_000, d.model.tokensPerDay))),
+            )}
           </Avance>
         {/if}
       {:else if page.id === 'corps'}
@@ -369,7 +403,7 @@
           {@render toggle('Filtre en petit mode', FILTER, s.filter.small, (v) =>
             set((d) => (d.filter.small = v)),
           )}
-          {@render toggle('Touche à maintenir', undefined, s.key.on, (v) => set((d) => (d.key.on = v)))}
+          {@render toggle('Touche à tenir', undefined, s.key.on, (v) => set((d) => (d.key.on = v)))}
           {@render field(
             'Code de la touche',
             inWindow
@@ -380,8 +414,8 @@
             (v) => set((d) => (d.key.code = v.trim() || DEFAULTS.key.code)),
           )}
           {@render toggle(
-            'Mention du nom',
-            'Son nom et les mots ajoutés ; une transcription proche compte aussi.',
+            'Son nom l’appelle',
+            'Son nom et les mots que tu ajoutes ; une transcription proche compte aussi.',
             s.name.on,
             (v) => set((d) => (d.name.on = v)),
           )}
@@ -407,117 +441,108 @@
         </SettingsCard>
 
         <Avance what="fin de phrase, filtre, interruption, applis ignorées, mesures">
-          <SettingsCard title="Fin de phrase">
-            {@render field(
-              'Silence de fin de phrase',
-              `Conseillé : ${secs(PRESETS.normal.silenceMs)} s, de 0,2 à 3 s.`,
-              secs(s.endOfSpeech.silenceMs),
-              's',
-              (v) => set((d) => (d.endOfSpeech.silenceMs = ms(v, 200, 3000, d.endOfSpeech.silenceMs))),
-            )}
-            {@render toggle(
-              'Répondre dès une courte pause',
-              'Sa réponse se prépare sans se dire, et se retire si tu continues. Chaque essai coûte un appel.',
-              s.endOfSpeech.speculate,
-              (v) => set((d) => (d.endOfSpeech.speculate = v)),
-            )}
-            {@render field('Courte pause', undefined, secs(s.endOfSpeech.pauseMs), 's', (v) =>
-              set((d) => (d.endOfSpeech.pauseMs = ms(v, 64, 2000, d.endOfSpeech.pauseMs))),
-            )}
-            {@render field(
-              'Seuil du silence',
-              'Plus bas, le micro entend tout ; plus haut, il faut parler plus fort. ' +
-                `Conseillé : ${PRESETS.normal.floorDb} dB.`,
-              String(s.endOfSpeech.floorDb),
-              'dB',
-              (v) => set((d) => (d.endOfSpeech.floorDb = number(v, -90, -10, d.endOfSpeech.floorDb))),
-            )}
-            {@render field(
-              'Durée minimale de phrase',
-              'Plus court, c’est un bruit.',
-              secs(s.endOfSpeech.minSpeechMs),
-              's',
-              (v) => set((d) => (d.endOfSpeech.minSpeechMs = ms(v, 32, 3000, d.endOfSpeech.minSpeechMs))),
-            )}
-          </SettingsCard>
-
-          <SettingsCard
-            title="Le filtre"
-            description="Une phrase part si elle passe l’une des règles activées."
-          >
-            {@render field(
-              'Tolérance',
-              'Lettres d’écart admises avec ce que la transcription a écrit.',
-              String(s.name.tolerance),
-              undefined,
-              (v) => set((d) => (d.name.tolerance = number(v, 0, 4, d.name.tolerance))),
-            )}
-            {@render toggle(
-              'Fenêtre après sa parole',
-              'Sans dire son nom, pendant ce temps.',
-              s.window.on,
-              (v) => set((d) => (d.window.on = v)),
-            )}
-            {@render field('Durée de la fenêtre', undefined, comma(s.window.seconds), 's', (v) =>
-              set((d) => (d.window.seconds = number(v, 1, 300, d.window.seconds))),
-            )}
-            {@render toggle(
-              'Trace d’une phrase ignorée',
-              'Sur cet écran seulement, rien ne part.',
-              s.traceIgnored,
-              (v) => set((d) => (d.traceIgnored = v)),
-            )}
-          </SettingsCard>
-
-          <SettingsCard title="L’interrompre">
-            {@render toggle('Couper à la voix', undefined, s.bargeIn.on, (v) =>
-              set((d) => (d.bargeIn.on = v)),
-            )}
-            <SettingsRow label="Façon de couper">
+          {@render field(
+            'Silence de fin de phrase',
+            `Conseillé : ${secs(PRESETS.normal.silenceMs)} s, de 0,2 à 3 s.`,
+            secs(s.endOfSpeech.silenceMs),
+            's',
+            (v) => set((d) => (d.endOfSpeech.silenceMs = ms(v, 200, 3000, d.endOfSpeech.silenceMs))),
+          )}
+          {@render paired(
+            'Répondre dès une courte pause',
+            'La réponse préparée est retirée si tu continues. Chaque essai coûte un appel.',
+            s.endOfSpeech.speculate,
+            (v) => set((d) => (d.endOfSpeech.speculate = v)),
+            'Courte pause',
+            secs(s.endOfSpeech.pauseMs),
+            's',
+            (v) => set((d) => (d.endOfSpeech.pauseMs = ms(v, 64, 2000, d.endOfSpeech.pauseMs))),
+          )}
+          {@render field(
+            'Seuil du silence',
+            `En dessous, le micro entend le silence. Conseillé : ${PRESETS.normal.floorDb} dB.`,
+            String(s.endOfSpeech.floorDb),
+            'dB',
+            (v) => set((d) => (d.endOfSpeech.floorDb = number(v, -90, -10, d.endOfSpeech.floorDb))),
+          )}
+          {@render field(
+            'Parole la plus courte',
+            'Plus court, c’est un bruit.',
+            secs(s.endOfSpeech.minSpeechMs),
+            's',
+            (v) => set((d) => (d.endOfSpeech.minSpeechMs = ms(v, 32, 3000, d.endOfSpeech.minSpeechMs))),
+          )}
+          {@render paired(
+            'L’écouter après sa phrase',
+            'Sans dire son nom, pendant ce temps.',
+            s.window.on,
+            (v) => set((d) => (d.window.on = v)),
+            'Durée de l’écoute après sa phrase',
+            comma(s.window.seconds),
+            's',
+            (v) => set((d) => (d.window.seconds = number(v, 1, 300, d.window.seconds))),
+          )}
+          {@render field(
+            'Tolérance sur son nom',
+            'Lettres d’écart admises avec ce que la transcription a écrit.',
+            String(s.name.tolerance),
+            'lettres',
+            (v) => set((d) => (d.name.tolerance = number(v, 0, 4, d.name.tolerance))),
+          )}
+          {@render toggle(
+            'Trace d’une phrase ignorée',
+            'Sur cet écran seulement, rien ne part.',
+            s.traceIgnored,
+            (v) => set((d) => (d.traceIgnored = v)),
+          )}
+          <SettingsRow label="L’interrompre à la voix">
+            {#snippet children({ labelId })}
               <Segmented
                 options={BARGE}
                 value={s.bargeIn.mode}
-                label="Façon de couper"
+                label="Façon de l’interrompre"
                 size="petit"
                 onchange={(v) => set((d) => (d.bargeIn.mode = v as 'soft' | 'now'))}
               />
-            </SettingsRow>
-            {@render field(
-              'Voix tenue avant de couper',
-              'Une toux plus courte ne coupe rien.',
-              secs(s.bargeIn.holdMs),
-              's',
-              (v) => set((d) => (d.bargeIn.holdMs = ms(v, 32, 3000, d.bargeIn.holdMs))),
-            )}
-          </SettingsCard>
-
-          <SettingsCard title="Une autre appli sur le micro">
-            {@render toggle(
-              'Détection',
-              'L’écoute s’arrête et la voix se tait. Un serveur relié reçoit « occupé », jamais le nom de l’appli.',
-              s.busy.on,
-              (v) => set((d) => (d.busy.on = v)),
-            )}
-            {@render field(
-              'Applis ignorées',
-              'Séparées par des virgules.',
-              s.busy.ignored.join(', '),
-              undefined,
-              (v) => set((d) => (d.busy.ignored = list(v))),
-            )}
-            {@render field('Délai de retour', undefined, comma(s.busy.returnSeconds), 's', (v) =>
-              set((d) => (d.busy.returnSeconds = number(v, 0, 120, d.busy.returnSeconds))),
-            )}
-          </SettingsCard>
-
-          <SettingsCard title="Mesures de cette session">
-            <SettingsRow
-              label="De ta dernière syllabe à son premier son"
-              hint={direct.length
-                ? `Médiane ${secs(median(direct)!)} s sur ${direct.length} tours, dernier ${secs(direct[0]!)} s.`
-                : 'Pas encore de tour à la voix.'}
-            />
-          </SettingsCard>
+              <Switch
+                checked={s.bargeIn.on}
+                aria-labelledby={labelId}
+                onchange={(v) => set((d) => (d.bargeIn.on = v))}
+              />
+            {/snippet}
+          </SettingsRow>
+          {@render field(
+            'Voix tenue avant de l’interrompre',
+            'Une toux plus courte ne coupe rien.',
+            secs(s.bargeIn.holdMs),
+            's',
+            (v) => set((d) => (d.bargeIn.holdMs = ms(v, 32, 3000, d.bargeIn.holdMs))),
+          )}
+          {@render paired(
+            'Applis qui prennent le micro',
+            'Une appli en appel met l’écoute en pause ; un serveur relié ne reçoit que « occupé ». ' +
+              'Celles écrites ici sont ignorées.',
+            s.busy.on,
+            (v) => set((d) => (d.busy.on = v)),
+            'Applis ignorées',
+            s.busy.ignored.join(', '),
+            undefined,
+            (v) => set((d) => (d.busy.ignored = list(v))),
+          )}
+          {@render field(
+            'Délai de retour',
+            'Après la fin de leur appel, avant de réécouter.',
+            comma(s.busy.returnSeconds),
+            's',
+            (v) => set((d) => (d.busy.returnSeconds = number(v, 0, 120, d.busy.returnSeconds))),
+          )}
+          <SettingsRow
+            label="Mesures de cette session"
+            hint={direct.length
+              ? `De ta dernière syllabe à son premier son : médiane ${secs(median(direct)!)} s sur ` +
+                `${direct.length} tours, dernier ${secs(direct[0]!)} s.`
+              : 'Latence par tour, pour régler la fin de phrase. Pas encore de tour à la voix.'}
+          />
         </Avance>
       {:else if page.id === 'voix'}
         <SettingsCard title="Ce qu’on entend">
@@ -528,6 +553,7 @@
               max={100}
               step={5}
               label="Volume"
+              class="volume"
               onchange={(v) => set((d) => (d.voice.volume = v / 100))}
             />
           </SettingsRow>
@@ -552,16 +578,18 @@
 
         <ServiceVoix {session} {set} part="courant" />
 
-        <Avance what={inWindow ? 'le service et ses programmes, l’écho et le bruit' : 'l’écho et le bruit'}>
+        <Avance
+          cards={inWindow}
+          what={inWindow ? 'le service et ses programmes, l’écho et le bruit' : 'l’écho et le bruit'}
+        >
           <ServiceVoix {session} {set} part="avance" />
-          <SettingsCard title="Le micro" description="À sa prochaine ouverture.">
-            {@render toggle('Annulation d’écho du micro', undefined, s.voice.echoCancellation, (v) =>
-              set((d) => (d.voice.echoCancellation = v)),
-            )}
-            {@render toggle('Suppression de bruit du micro', undefined, s.voice.noiseSuppression, (v) =>
-              set((d) => (d.voice.noiseSuppression = v)),
-            )}
-          </SettingsCard>
+          {#if inWindow}
+            <SettingsCard title="Le micro" description="À sa prochaine ouverture.">
+              {@render micro(undefined)}
+            </SettingsCard>
+          {:else}
+            {@render micro('À sa prochaine ouverture.')}
+          {/if}
         </Avance>
       {:else if page.id === 'fenetre'}
         <Fenetre {session} {set} />
@@ -620,6 +648,16 @@
     gap: 18px;
     max-width: 720px;
     margin: 0 auto;
+  }
+  /* A number and its unit: as wide as a value, right-aligned. The input is inside the kit's field. */
+  .contenu :global(.court input) {
+    flex: none;
+    width: 7ch;
+    text-align: right;
+  }
+  .contenu :global(.volume) {
+    width: 280px;
+    max-width: 100%;
   }
   /* A row whose field needs the whole width: the label above it. `.ligne` is the kit's row, generated. */
   .contenu :global(.ligne.pleine) {

@@ -111,13 +111,13 @@ describe('the settings', () => {
     localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
     render(Reglages, { session: new Session(), close: () => {}, start: 'ecoute' });
     for (const name of [
-      'Touche à maintenir',
-      'Mention du nom',
-      'Fenêtre après sa parole',
+      'Touche à tenir',
+      'Son nom l’appelle',
+      'L’écouter après sa phrase',
       'Trace d’une phrase ignorée',
-      'Détection',
+      'Applis qui prennent le micro',
       'Répondre dès une courte pause',
-      'Couper à la voix',
+      'L’interrompre à la voix',
     ])
       expect(screen.getByRole('switch', { name })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('link', { name: 'Voix' }));
@@ -140,12 +140,12 @@ describe('the settings', () => {
   it('a value out of range is brought back in range, garbage leaves it unchanged', async () => {
     const session = new Session();
     render(Reglages, { session, close: () => {}, start: 'ecoute' });
-    const box = screen.getByRole('textbox', { name: 'Durée de la fenêtre' });
+    const box = screen.getByRole('textbox', { name: 'Durée de l’écoute après sa phrase' });
     await userEvent.clear(box);
     await userEvent.type(box, '9999');
     await userEvent.tab();
     await waitFor(() => expect(session.settings.window.seconds).toBe(300));
-    const again = screen.getByRole('textbox', { name: 'Durée de la fenêtre' });
+    const again = screen.getByRole('textbox', { name: 'Durée de l’écoute après sa phrase' });
     await userEvent.clear(again);
     await userEvent.type(again, 'abc');
     await userEvent.tab();

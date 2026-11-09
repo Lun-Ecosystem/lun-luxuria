@@ -377,14 +377,19 @@ describe('everyday first', () => {
       'Façon de parler en petit mode',
       'Filtre dans la scène',
       'Filtre en petit mode',
-      'Touche à maintenir',
+      'Touche à tenir',
       'Code de la touche',
-      'Mention du nom',
+      'Son nom l’appelle',
       'Autres mots reconnus',
       'Autour de toi',
     ])
       expect(within(advanced()).queryByLabelText(label)).toBeNull();
-    for (const label of ['Silence de fin de phrase', 'Tolérance', 'Couper à la voix', 'Applis ignorées'])
+    for (const label of [
+      'Silence de fin de phrase',
+      'Tolérance sur son nom',
+      'L’interrompre à la voix',
+      'Applis ignorées',
+    ])
       expect(within(advanced()).getByLabelText(label)).toBeInTheDocument();
     expect(within(advanced()).getByText('Mesures de cette session')).toBeInTheDocument();
   });
@@ -418,25 +423,25 @@ describe('nothing disappears', () => {
     ecoute: [
       'Façon de parler dans la scène',
       'Façon de parler en petit mode',
-      'Touche à maintenir',
+      'Touche à tenir',
       'Code de la touche',
       'Filtre dans la scène',
       'Filtre en petit mode',
-      'Mention du nom',
+      'Son nom l’appelle',
       'Autres mots reconnus',
-      'Tolérance',
-      'Fenêtre après sa parole',
-      'Durée de la fenêtre',
+      'Tolérance sur son nom',
+      'L’écouter après sa phrase',
+      'Durée de l’écoute après sa phrase',
       'Trace d’une phrase ignorée',
       'Silence de fin de phrase',
       'Répondre dès une courte pause',
       'Courte pause',
       'Seuil du silence',
-      'Durée minimale de phrase',
-      'Couper à la voix',
-      'Façon de couper',
-      'Voix tenue avant de couper',
-      'Détection',
+      'Parole la plus courte',
+      'L’interrompre à la voix',
+      'Façon de l’interrompre',
+      'Voix tenue avant de l’interrompre',
+      'Applis qui prennent le micro',
       'Applis ignorées',
       'Délai de retour',
     ],
@@ -483,6 +488,42 @@ describe('nothing disappears', () => {
     opened('voix', { brain: 'linked' });
     for (const label of ['L’accueil, au lancement et au retour', 'Les urgences', 'La parole spontanée'])
       expect(screen.getByLabelText(label)).toBeInTheDocument();
+  });
+});
+
+describe('folded, as rows', () => {
+  it('the listening: rows and no card, a value and its switch on one row', () => {
+    opened('ecoute');
+    expect(within(advanced()).queryAllByRole('heading')).toEqual([]);
+    for (const [toggle, value] of [
+      ['Répondre dès une courte pause', 'Courte pause'],
+      ['L’écouter après sa phrase', 'Durée de l’écoute après sa phrase'],
+      ['Applis qui prennent le micro', 'Applis ignorées'],
+    ] as const)
+      expect(screen.getByRole('switch', { name: toggle }).closest('.ligne')).toContainElement(
+        screen.getByRole('textbox', { name: value }),
+      );
+  });
+
+  it('the voice in a tab: rows too; in the window, its programs keep their cards', () => {
+    where.inWindow = false;
+    opened('voix');
+    expect(within(advanced()).queryAllByRole('heading')).toEqual([]);
+    cleanup();
+    where.inWindow = true;
+    opened('voix');
+    expect(within(advanced()).getAllByRole('heading').length).toBeGreaterThan(1);
+  });
+
+  it('the interruption, in the mockup’s words', () => {
+    opened('ecoute');
+    for (const name of ['Doucement', 'Tout de suite'])
+      expect(screen.getByRole('radio', { name })).toBeInTheDocument();
+  });
+
+  it('the agent, alone: rows and no card', () => {
+    opened('agent');
+    expect(within(advanced()).queryAllByRole('heading')).toEqual([]);
   });
 });
 
@@ -537,7 +578,7 @@ describe('what reads', () => {
 
   it('every duration in seconds reads with a comma', () => {
     opened('ecoute', { window: { seconds: 2.5 }, busy: { returnSeconds: 1.5 } });
-    expect(screen.getByRole('textbox', { name: 'Durée de la fenêtre' })).toHaveValue('2,5');
+    expect(screen.getByRole('textbox', { name: 'Durée de l’écoute après sa phrase' })).toHaveValue('2,5');
     expect(screen.getByRole('textbox', { name: 'Délai de retour' })).toHaveValue('1,5');
   });
 
