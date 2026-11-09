@@ -150,13 +150,14 @@ describe('the session, away and back', () => {
 
 describe('a phrase heard', () => {
   /** Talks into the microphone: loud frames, then silence, 32 ms each, as the worklet gives them. */
-  function say(loudFrames: number) {
+  function say(loudFrames: number, holding?: Session) {
     const onFrame = (mic.open.mock.calls.at(-1) as unknown as [unknown, (f: Float32Array) => void])[1];
     const loud = new Float32Array(512).fill(0.3);
     const quiet = new Float32Array(512);
     let at = Date.now();
     for (let i = 0; i < loudFrames + 40; i++) {
       vi.setSystemTime((at += 32));
+      holding?.holdKey(i < loudFrames);
       onFrame(i < loudFrames ? loud : quiet);
     }
   }
@@ -178,6 +179,7 @@ describe('a phrase heard', () => {
     expect(s.heardAt).toBeGreaterThan(0);
     expect(s.away).toBe(false);
     expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
+    expect(s.spoke).toBe(true); // the scene's instruction goes
   });
 
   it('a noise does not count', async () => {
@@ -196,7 +198,34 @@ describe('a phrase heard', () => {
     await flush();
     expect(sent).not.toContain('send');
     expect(s.heardAt).toBe(0);
+    expect(s.spoke).toBe(false); // the scene's instruction stays
     expect(s.thinking).toBe(false); // the end of the sentence had committed it before the verdict
+  });
+
+  // The verdict comes after the transcription, so always after the key was let go.
+  it('a phrase said while holding the key passes the filter, though the key is up at the verdict', async () => {
+    const { s, sent } = await heard('on se voit demain', {
+      talk: { scene: 'key', small: 'key' },
+      filter: { scene: true, small: true },
+      key: { on: true, code: 'F9' },
+    });
+    say(20, s);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+  });
+
+  it('a key pressed and let go in the silence before does not let the next phrase through', async () => {
+    const { s, stt, sent } = await heard('on se voit demain', {
+      filter: { scene: true, small: true },
+      key: { on: true, code: 'F9' },
+    });
+    s.holdKey(true);
+    say(0);
+    s.holdKey(false);
+    say(20);
+    await vi.waitFor(() => expect(stt).toHaveBeenCalled());
+    await flush();
+    await flush();
+    expect(sent).not.toContain('send');
   });
 });
 

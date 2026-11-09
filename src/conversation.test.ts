@@ -70,6 +70,40 @@ function setup(
   return { convo, calls, events, sounds, sends, say, advance };
 }
 
+describe('addressed: a phrase for her, said once the sentence is over', () => {
+  const addressed = (events: ConversationEvent[]) => events.filter((e) => e.type === 'addressed').length;
+
+  it('passed on a pause, it counts only at the end of the sentence', async () => {
+    const t = setup();
+    t.convo.onEndpoint({ type: 'pause', audio: AUDIO });
+    await tick();
+    expect(addressed(t.events)).toBe(0);
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });
+    await tick();
+    expect(addressed(t.events)).toBe(1);
+  });
+
+  it('a fragment withdrawn never counts; the sentence that follows does, once', async () => {
+    const t = setup();
+    t.convo.onEndpoint({ type: 'pause', audio: AUDIO });
+    await tick();
+    t.convo.onEndpoint({ type: 'resume' });
+    await tick();
+    expect(addressed(t.events)).toBe(0);
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 2000 });
+    await tick();
+    expect(addressed(t.events)).toBe(1);
+  });
+
+  it('the end before the verdict of its fragment: it counts at the verdict', async () => {
+    const t = setup();
+    t.convo.onEndpoint({ type: 'pause', audio: AUDIO });
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });
+    await tick();
+    expect(addressed(t.events)).toBe(1);
+  });
+});
+
 describe("the speaker's sentence, with an attempt on the pause", () => {
   it("held until the end, then released, and the chronometer runs from the speaker's last voice", async () => {
     const t = setup();

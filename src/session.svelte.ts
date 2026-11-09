@@ -121,6 +121,8 @@ export class Session {
   /** Chosen when entering: a change of brain goes through a reload. */
   brain: Brain = this.core;
   #keyHeld = false;
+  /** The key was held during the phrase being heard: let go before its end, it still counts. */
+  #keyInPhrase = false;
   #stop = new AbortController();
   #mic: { stop(): void } | null = null;
   #endpointer = new Endpointer();
@@ -227,7 +229,7 @@ export class Session {
       )),
       settings: () => this.settings,
       layout: () => this.layout,
-      keyHeld: () => this.#keyHeld,
+      keyHeld: () => this.#keyHeld || this.#keyInPhrase,
       silenced: () => this.silenced,
       now: () => Date.now(),
       on: (e) => {
@@ -434,8 +436,12 @@ export class Session {
     const { talk, endOfSpeech, key } = this.settings;
     const onlyKey = talk[this.layout] === 'key';
     const voice = onlyKey && (!key.on || !this.#keyHeld) ? 0 : levelToVoice(frame, endOfSpeech.floorDb);
+    if (this.#keyHeld) this.#keyInPhrase = true;
     for (const e of this.#endpointer.push(frame, voice, Date.now())) {
-      if (e.type === 'start') this.hearing = true;
+      if (e.type === 'start') {
+        this.hearing = true;
+        this.#keyInPhrase = this.#keyHeld;
+      }
       if (e.type === 'end' || e.type === 'noise') this.hearing = false;
       this.#convo?.onEndpoint(e);
     }
