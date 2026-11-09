@@ -47,6 +47,14 @@ describe('a voice that does not answer', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Régler la voix' }));
     expect(openSettings).toHaveBeenCalledWith('voix');
   });
+
+  it('says it without a gender', () => {
+    const session = new Session();
+    render(Scene, { session, openSettings: () => {} });
+    session.voiceStatus = 'down';
+    flushSync();
+    expect(screen.getByText(/Sa voix ne répond pas/).textContent).not.toMatch(/\bil\b/);
+  });
 });
 
 describe('the body in images', () => {

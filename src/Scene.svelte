@@ -116,7 +116,7 @@
     {#if session.failure}<span class="echec" role="alert">{session.failure}</span>{/if}
     {#if session.voiceStatus === 'down'}
       <span class="echec" role="status">
-        Sa voix ne répond pas : il ne t’entend pas et ne parle pas.
+        Sa voix ne répond pas : ni écoute ni parole pour l’instant.
         <button class="reprise" onclick={() => openSettings('voix')}>Régler la voix</button>
       </span>
     {:else if session.voiceStatus === 'starting'}
