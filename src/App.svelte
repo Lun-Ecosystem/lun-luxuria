@@ -13,8 +13,6 @@
   import { Session } from './session.svelte.ts';
 
   const session = new Session();
-  /** In the window, nothing missing at launch: a short wait for the voice, then the scene. */
-  let entersByItself = false;
   if (inWindow) {
     windowFollows(session);
     keysFollow(session);
@@ -22,7 +20,6 @@
     trayFollows(session);
     autostartFollows(session);
     awayFollows(session);
-    entersByItself = enterFollows(session);
     void startAll(session);
   } else {
     // A browser tab never launches it: once entered, it only says whether it answers. Nothing runs before.
@@ -31,6 +28,8 @@
       void checkVoice(session);
     });
   }
+  /** In the window, nothing missing at launch: a short wait for the voice, then the scene. */
+  const entersByItself = inWindow && enterFollows(session);
   let code = $state('');
   // A token the server forgot comes back here, with its reason.
   let refused = $state(session.arrivalSaid);

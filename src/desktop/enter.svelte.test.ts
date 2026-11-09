@@ -20,7 +20,7 @@ function ready(settings: object = { model: { name: 'qwen3:8b' } }) {
 describe('the window enters by itself', () => {
   it('once the voice service has answered, and only once', () => {
     const { s, enter } = ready();
-    const stop = $effect.root(() => enterFollows(s));
+    const stop = $effect.root(() => void enterFollows(s));
     flushSync();
     expect(enter).not.toHaveBeenCalled(); // not known yet
     s.voiceStatus = 'starting';
@@ -38,7 +38,7 @@ describe('the window enters by itself', () => {
 
   it('a service that does not answer is a verdict too: it enters without its voice', () => {
     const { s, enter } = ready();
-    const stop = $effect.root(() => enterFollows(s));
+    const stop = $effect.root(() => void enterFollows(s));
     s.voiceStatus = 'down';
     flushSync();
     expect(enter).toHaveBeenCalledOnce();
@@ -59,7 +59,7 @@ describe('the window enters by itself', () => {
 
   it('entered meanwhile by the person: not a second time', () => {
     const { s, enter } = ready();
-    const stop = $effect.root(() => enterFollows(s));
+    const stop = $effect.root(() => void enterFollows(s));
     s.entered = true;
     s.voiceStatus = 'up';
     flushSync();
