@@ -27,16 +27,24 @@
 
 <aside class="fil" aria-label="Le fil">
   <h2>Le fil</h2>
-  <ol bind:this={list}>
-    {#each session.thread as m (m.id)}
-      <li class={m.role}>
-        {#if m.status === 'pending'}<span class="attente">…</span>
-        {:else if m.status === 'error'}<span class="erreur">{m.error ?? 'Pas de réponse.'}</span>
-        {:else}{m.text}{/if}
-        {#if m.status !== 'pending'}<time datetime={m.at}>{hour(m.at)}</time>{/if}
-      </li>
-    {/each}
-  </ol>
+  {#if session.thread.length === 0}
+    <div class="vide">
+      <!-- Linked, the thread is the server's, not the day's. -->
+      <p class="rien">{session.settings.brain === 'alone' ? 'Rien encore aujourd’hui.' : 'Rien encore.'}</p>
+      <p>Ce que vous vous dites s’écrit ici, à la voix comme à l’écrit.</p>
+    </div>
+  {:else}
+    <ol bind:this={list}>
+      {#each session.thread as m (m.id)}
+        <li class={m.role}>
+          {#if m.status === 'pending'}<span class="attente">…</span>
+          {:else if m.status === 'error'}<span class="erreur">{m.error ?? 'Pas de réponse.'}</span>
+          {:else}{m.text}{/if}
+          {#if m.status !== 'pending'}<time datetime={m.at}>{hour(m.at)}</time>{/if}
+        </li>
+      {/each}
+    </ol>
+  {/if}
   {#if session.silenced}
     <p class="sourdine" id="fil-sourdine">En sourdine. Sortir de la sourdine pour lui écrire.</p>
   {/if}
@@ -110,6 +118,26 @@
     color: var(--texte-3);
     font-family: Inter, sans-serif;
     font-size: 11.5px;
+  }
+  .vide {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    padding: 24px 16px;
+    text-align: center;
+    font-family: Inter, sans-serif;
+  }
+  .vide p {
+    margin: 0;
+    font-size: 12.5px;
+    color: var(--texte-3);
+  }
+  .vide .rien {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--texte-2);
   }
   .attente {
     color: var(--texte-3);

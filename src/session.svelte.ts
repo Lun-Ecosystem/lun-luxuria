@@ -5,7 +5,7 @@ import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
 import { CoreClient } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
 import type { Bricks, ProgramName, ProgramState } from './desktop/voix.ts';
-import { pageNet } from './desktop/net.ts';
+import { inWindow, pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
 import { presenceKeeper, watchPage } from './page.ts';
@@ -55,7 +55,8 @@ function store(key: string, value: string | null): void {
 /** Ties the pure parts to the browser. Nothing is decided here that a test should see. */
 export class Session {
   settings = $state<Settings>(readSettings(stored(SETTINGS_KEY)));
-  layout = $state<Layout>(stored(LAYOUT_KEY) === 'small' ? 'small' : 'scene');
+  // The small mode only has a meaning in the window: a tab shows the scene, whatever was saved.
+  layout = $state<Layout>(inWindow && stored(LAYOUT_KEY) === 'small' ? 'small' : 'scene');
   /** A cut microphone never comes back on by itself: only the button changes this. */
   micOn = $state(stored(MIC_KEY) === 'on');
   /** The desk mute: no capture, nothing said of herself, nothing sent. Never lifted by itself either. */
@@ -82,6 +83,8 @@ export class Session {
   away = $state(false);
   /** When a phrase was last heard or written: talking without keys is being there too. */
   heardAt = 0;
+  /** A phrase of the person left in this session, heard or written: the scene's instruction has done its job. */
+  spoke = $state(false);
   /** The thread over the scene; in the window's small mode, it turns the thumbnail into a panel. */
   threadOpen = $state(false);
   /** In the window: what the global keys could not take, said on the settings screen. */
@@ -231,6 +234,7 @@ export class Session {
         if (e.type === 'thinking') this.thinking = e.on;
         else if (e.type === 'addressed') {
           // Only a phrase the filter let through: noise, a video or someone else in the room do not count.
+          this.spoke = true;
           void this.#heard();
         } else if (e.type === 'ignored') this.#showTrace(e.text);
         else if (e.type === 'latency') this.latencies = [e, ...this.latencies].slice(0, 20);
@@ -478,6 +482,7 @@ export class Session {
 
   async write(text: string): Promise<void> {
     if (this.silenced) return;
+    this.spoke = true;
     await this.#heard();
     try {
       await this.#convo?.write(text);
