@@ -80,6 +80,8 @@ export class Session {
   entered = $state(false);
   /** In the window: no input for the set delay (`desktop/away.ts`). */
   away = $state(false);
+  /** When a phrase was last heard or written: talking without keys is being there too. */
+  heardAt = 0;
   /** The thread over the scene; in the window's small mode, it turns the thumbnail into a panel. */
   threadOpen = $state(false);
   /** In the window: what the global keys could not take, said on the settings screen. */
@@ -285,12 +287,16 @@ export class Session {
   // A refused beat, the page shown again and the stream coming back may fall together: one start.
   #presence = presenceKeeper(
     async () => {
+      // Also reached from a beat refused while away: it must not reopen the presence.
+      if (this.away) return;
       try {
         await this.brain.presence('started', {
           ...this.#flags(),
           ritual: this.settings.speak.ritual && !this.silenced,
         });
         this.linked = true;
+        // Gone while the start was on its way: it closes again.
+        if (this.away) void this.brain.presence('stopped').catch(() => {});
       } catch {
         this.linked = false;
       }
@@ -311,12 +317,18 @@ export class Session {
   #beat = () => (this.away ? Promise.resolve() : this.#presence.beat());
 
   /** Only what the server is told changes: listening and the mute stay as they are. */
-  setAway(next: boolean): void {
+  async setAway(next: boolean): Promise<void> {
     if (next === this.away) return;
     this.away = next;
     if (!this.entered) return;
-    if (next) void this.brain.presence('stopped').catch(() => {});
-    else void this.#announce();
+    if (next) await this.brain.presence('stopped').catch(() => {});
+    else await this.#announce();
+  }
+
+  /** A phrase heard or written: the person is there, as with a key. Away, the presence comes back first. */
+  #heard(): Promise<void> {
+    this.heardAt = Date.now();
+    return this.setAway(false);
   }
 
   #onLive(e: LiveEvent): void {
@@ -417,6 +429,7 @@ export class Session {
     for (const e of this.#endpointer.push(frame, voice, Date.now())) {
       if (e.type === 'start') this.hearing = true;
       if (e.type === 'end' || e.type === 'noise') this.hearing = false;
+      if (e.type === 'end') void this.#heard();
       this.#convo?.onEndpoint(e);
     }
   }
@@ -462,6 +475,7 @@ export class Session {
 
   async write(text: string): Promise<void> {
     if (this.silenced) return;
+    await this.#heard();
     try {
       await this.#convo?.write(text);
       // It went through: an older failure no longer holds.

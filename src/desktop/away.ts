@@ -12,8 +12,9 @@ export function isAway(idleMs: number, away: Settings['away']): boolean {
 }
 
 /**
- * The time since the last key or mouse input on the whole session, read by the window. A locked session takes
- * no input, so it counts too. Unreadable, the person counts as present, as before this existed. Returns the stop.
+ * The time since the last key or mouse input on the whole session, read by the window, or since a phrase was
+ * heard or written, whichever is shorter. A locked session takes no input, so it counts too. Unreadable, the
+ * person counts as present, as before this existed. Returns the stop.
  */
 export function awayFollows(
   session: Session,
@@ -22,9 +23,9 @@ export function awayFollows(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   const tick = async () => {
-    const ms = await idle().catch(() => 0);
+    const ms = Math.min(await idle().catch(() => 0), Date.now() - session.heardAt);
     if (stopped) return;
-    session.setAway(isAway(ms, session.settings.away));
+    void session.setAway(isAway(ms, session.settings.away));
     timer = setTimeout(() => void tick(), session.away ? AWAY_POLL_MS : PRESENT_POLL_MS);
   };
   void tick();

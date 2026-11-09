@@ -101,7 +101,8 @@ describe('the desk mute', () => {
 });
 
 describe('the absence', () => {
-  it('its switch and its delay are in the window’s theme, and saved as typed', async () => {
+  it('linked, its switch and its delay are in the window’s theme, and saved as typed', async () => {
+    localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
     const session = new Session();
     render(Reglages, { session, close: () => {} });
     await fireEvent.click(screen.getByRole('link', { name: 'Fenêtre' }));
@@ -110,8 +111,20 @@ describe('the absence', () => {
     expect(delay).toHaveValue('15');
     await fireEvent.change(delay, { target: { value: '30' } });
     expect(session.settings.away.minutes).toBe(30);
+    await fireEvent.change(delay, { target: { value: '7,6' } });
+    expect(session.settings.away.minutes).toBe(8);
+    await fireEvent.change(delay, { target: { value: '0' } });
+    expect(session.settings.away.minutes).toBe(1);
+    await fireEvent.change(delay, { target: { value: '' } });
+    expect(session.settings.away.minutes).toBe(1);
     await fireEvent.click(screen.getByRole('switch', { name: 'Absence' }));
     expect(session.settings.away.on).toBe(false);
+  });
+
+  it('alone, nobody to tell: no absence', async () => {
+    render(Reglages, { session: new Session(), close: () => {} });
+    await fireEvent.click(screen.getByRole('link', { name: 'Fenêtre' }));
+    expect(screen.queryByRole('switch', { name: 'Absence' })).toBeNull();
   });
 });
 

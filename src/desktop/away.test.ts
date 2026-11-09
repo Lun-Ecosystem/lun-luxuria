@@ -93,6 +93,47 @@ describe('the session, away and back', () => {
     expect(sent).toEqual(['started', 'stopped']);
   });
 
+  it('a beat refused after the stop does not reopen the presence', async () => {
+    const { s, sent } = linked();
+    await s.enter();
+    let answer: (a: 'gone') => void = () => {};
+    s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+      sent.push(state);
+      return state === 'beat' ? new Promise<'gone'>((r) => (answer = r)) : undefined;
+    }) as typeof s.core.presence;
+    s.toggleMute(); // a beat leaves
+    s.setAway(true);
+    answer('gone'); // the server took the stop first
+    await flush();
+    expect(sent.slice(-2)).toEqual(['beat', 'stopped']);
+  });
+
+  it('a start still on its way when the absence comes closes again', async () => {
+    const { s, sent } = linked();
+    let arrive: () => void = () => {};
+    s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+      sent.push(state);
+      if (state === 'started') await new Promise<void>((r) => (arrive = r));
+      return undefined;
+    }) as typeof s.core.presence;
+    const entering = s.enter();
+    await flush();
+    s.setAway(true);
+    arrive();
+    await entering;
+    await flush();
+    expect(sent).toEqual(['started', 'stopped', 'stopped']);
+  });
+
+  it('a phrase written while away brings the presence back before it leaves', async () => {
+    const { s, sent } = linked();
+    s.core.send = vi.fn(async () => void sent.push('send'));
+    await s.enter();
+    s.setAway(true);
+    await s.write('je suis là');
+    expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
+  });
+
   it('away before entering: nothing is announced until the first input', async () => {
     const { s, sent } = linked();
     s.setAway(true);
@@ -116,6 +157,18 @@ describe('following the input', () => {
     idle = 2000;
     await vi.advanceTimersByTimeAsync(5000);
     expect(s.away).toBe(false);
+    stop();
+  });
+
+  it('a phrase heard counts as an input: a talk without keys keeps the presence', async () => {
+    vi.useFakeTimers();
+    const s = new Session();
+    const stop = awayFollows(s, async () => 60 * MIN);
+    s.heardAt = Date.now() - 2 * MIN;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.away).toBe(false);
+    await vi.advanceTimersByTimeAsync(14 * MIN);
+    expect(s.away).toBe(true); // nothing heard for 16 minutes
     stop();
   });
 
