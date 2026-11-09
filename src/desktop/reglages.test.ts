@@ -164,7 +164,8 @@ describe('the voice theme', () => {
     render(Reglages, { session: new Session(), close: () => {}, start: 'voix' });
     expect(screen.getByRole('textbox', { name: 'Fichier de la voix' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'whisper-server' })).toBeInTheDocument();
-    expect(screen.getByText(/Il manque le dossier du service/)).toBeInTheDocument();
+    // Said by the button that waits, and in the folded block, by the fields.
+    expect(screen.getAllByText(/Il manque le dossier du service/)).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Lancer ou vérifier' })).toBeDisabled();
   });
 
@@ -457,6 +458,24 @@ describe('nothing disappears', () => {
       for (const label of labels) expect(screen.getAllByLabelText(label).length).toBeGreaterThan(0);
     });
 
+  it('the rows that show only once set: the launch, whisper-server, RVC', () => {
+    opened('voix', {
+      voice: { service: { launch: true, stt: { kind: 'whisper-server' }, rvc: { on: true } } },
+    });
+    for (const label of ['Dossier du service', 'Adresse de whisper-server', 'Adresse de RVC', 'Gain de RVC'])
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
+  });
+
+  it('in a tab: the body by its images, and the service checked by hand', () => {
+    where.inWindow = false;
+    opened('corps');
+    for (const label of ['Image au repos', 'Image pendant la parole'])
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
+    cleanup();
+    opened('voix');
+    expect(screen.getByRole('button', { name: 'Vérifier' })).toBeInTheDocument();
+  });
+
   it('linked: the server’s address and what is said aloud', () => {
     opened('agent', { brain: 'linked' });
     expect(screen.getByLabelText('Adresse du serveur')).toBeInTheDocument();
@@ -464,6 +483,19 @@ describe('nothing disappears', () => {
     opened('voix', { brain: 'linked' });
     for (const label of ['L’accueil, au lancement et au retour', 'Les urgences', 'La parole spontanée'])
       expect(screen.getByLabelText(label)).toBeInTheDocument();
+  });
+});
+
+describe('folded, never hiding what blocks', () => {
+  it('the launch lacks a field: the block opens by itself, and says what', () => {
+    opened('voix', { voice: { service: { launch: true, folder: '' } } });
+    expect(advanced()).toHaveAttribute('open');
+    expect(within(advanced()).getByText(/Il manque le dossier du service/)).toBeInTheDocument();
+  });
+
+  it('nothing lacks: it stays folded', () => {
+    opened('voix', { voice: { service: { launch: true, folder: 'C:/voix', piper: 'voix.onnx' } } });
+    expect(advanced()).not.toHaveAttribute('open');
   });
 });
 
@@ -501,6 +533,12 @@ describe('what reads', () => {
     expect(session.settings.endOfSpeech.silenceMs).toBe(800);
     expect(screen.getByRole('textbox', { name: 'Courte pause' })).toHaveValue('0,16');
     expect(screen.getByText(/Conseillé : -50 dB/)).toBeInTheDocument();
+  });
+
+  it('every duration in seconds reads with a comma', () => {
+    opened('ecoute', { window: { seconds: 2.5 }, busy: { returnSeconds: 1.5 } });
+    expect(screen.getByRole('textbox', { name: 'Durée de la fenêtre' })).toHaveValue('2,5');
+    expect(screen.getByRole('textbox', { name: 'Délai de retour' })).toHaveValue('1,5');
   });
 
   it('the volume is a slider', () => {

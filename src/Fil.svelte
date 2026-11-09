@@ -28,11 +28,13 @@
 <aside class="fil" aria-label="Le fil">
   <h2>Le fil</h2>
   {#if session.thread.length === 0}
-    <div class="vide">
-      <!-- Linked, the thread is the server's, not the day's. -->
-      <p class="rien">{session.settings.brain === 'alone' ? 'Rien encore aujourd’hui.' : 'Rien encore.'}</p>
-      <p>Ce que vous vous dites s’écrit ici, à la voix comme à l’écrit.</p>
-    </div>
+    {#if session.threadRead}
+      <div class="vide">
+        <!-- Linked, the thread is the server's, not the day's. -->
+        <p class="rien">{session.settings.brain === 'alone' ? 'Rien encore aujourd’hui.' : 'Rien encore.'}</p>
+        <p>Ce que vous vous dites s’écrit ici, à la voix comme à l’écrit.</p>
+      </div>
+    {/if}
   {:else}
     <ol bind:this={list}>
       {#each session.thread as m (m.id)}

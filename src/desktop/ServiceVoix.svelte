@@ -209,7 +209,7 @@
           label="Relancer le service"
           hint={waiting === 'restart'
             ? 'Des réglages attendent : il tourne encore avec les réglages précédents.'
-            : 'L’arrête, puis le relance avec les champs ci-dessous.'}
+            : 'L’arrête, puis le relance avec les champs des réglages avancés.'}
         >
           <Button
             variant={waiting === 'restart' ? 'principal' : 'secondaire'}
@@ -236,7 +236,11 @@
   </SettingsCard>
 {:else if inWindow}
   <SettingsCard title="Lancement" description="Avec l’appli, ou à la main.">
-    <SettingsRow label="Lancer le service voix avec l’appli" hint="Seulement s’il ne répond pas déjà.">
+    <SettingsRow
+      label="Lancer le service voix avec l’appli"
+      hint="Seulement s’il ne répond pas déjà."
+      error={lack}
+    >
       {#snippet children({ labelId })}
         <Switch
           checked={v.launch}

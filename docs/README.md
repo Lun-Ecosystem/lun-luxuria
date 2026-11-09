@@ -144,6 +144,8 @@ L'essai chronométré du 07/11 sur le poste réel : [`essai-2026-11-07.md`](essa
 - Sous WebView2, la liste des micros peut rendre des noms vides tant que l'accès n'a pas été donné une fois.
 - La vignette au premier plan ne passe pas devant un jeu en plein écran exclusif.
 - L'absence ne voit que le clavier et la souris : une manette ne compte pas comme une saisie (lun-luxuria#43).
+- Filtre coupé, toute phrase lui est adressée et compte comme une saisie : une vidéo ou une autre personne gardent la
+  présence. Le filtre du nom est ce qui les distingue.
 - Les réglages de `tauri dev` et ceux de l'exe ne sont pas les mêmes (origines différentes) : à refaire une fois.
 - Sans bord, la fenêtre se ferme par Alt+F4 ; la présence part alors comme à la fermeture d'un onglet.
 - La clé du modèle reste dans le stockage de la page : le trousseau du système viendra plus tard.

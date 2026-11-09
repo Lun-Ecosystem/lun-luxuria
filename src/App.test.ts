@@ -84,6 +84,8 @@ describe('the door', () => {
     expect(screen.getByRole('button', { name: 'Entrer' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Entrer sans attendre' })).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
+    // Nothing to ask: no empty box where the fields would be.
+    expect(screen.queryByRole('region', { name: 'Le serveur' })).toBeNull();
   });
 
   it('with a token, nothing runs before the click: no microphone, no presence', () => {

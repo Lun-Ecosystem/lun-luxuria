@@ -83,66 +83,68 @@
       {/each}
     </div>
 
-    <section class="champs" aria-label={s.brain === 'alone' ? 'Le modèle' : 'Le serveur'}>
-      {#if s.brain === 'alone'}
-        <div class="bloc">
-          <Field
-            label="Adresse du modèle"
-            hint="Compatible OpenAI, souvent terminée par /v1."
-            error={urlMissing ? undefined : unsafeAddress(s.model.url, s.model.key)}
-          >
-            <TextInput value={s.model.url} oninput={(e) => set((d) => (d.model.url = typed(e).trim()))} />
-          </Field>
-          {#if urlMissing}<p class="manque" id="{uid}-missing">{missing}</p>{/if}
-        </div>
-        <div class="bloc">
-          <Field label="Nom du modèle">
-            <TextInput
-              value={s.model.name}
-              placeholder="par exemple llama3.1:8b"
-              oninput={(e) => set((d) => (d.model.name = typed(e).trim()))}
-            />
-          </Field>
-          {#if missing && !urlMissing}<p class="manque" id="{uid}-missing">{missing}</p>{/if}
-        </div>
-        <Field label="Clé (facultative)" hint="Elle reste sur ce poste.">
-          <TextInput
-            type="password"
-            value={s.model.key}
-            placeholder="Seulement pour un service en ligne"
-            autocomplete="off"
-            oninput={(e) => set((d) => (d.model.key = typed(e).trim()))}
-          />
-        </Field>
-      {:else}
-        {#if inWindow}
-          <Field
-            label="Adresse du serveur"
-            hint="Sur ce poste, l’adresse par défaut convient. Pour un autre poste, son adresse en https."
-            error={serverWarning(s.server)}
-          >
-            <TextInput
-              value={s.server}
-              onchange={(e) => {
-                const url = typed(e).trim();
-                if (url) session.setServer(url);
-              }}
-            />
-          </Field>
-        {/if}
-        {#if needsCode}
+    {#if s.brain === 'alone' || inWindow || needsCode}
+      <section class="champs" aria-label={s.brain === 'alone' ? 'Le modèle' : 'Le serveur'}>
+        {#if s.brain === 'alone'}
           <div class="bloc">
             <Field
-              label="Code d’appairage"
-              hint="Le code s’affiche sur le serveur, là où on ajoute un appareil. Un seul usage, quelques minutes."
+              label="Adresse du modèle"
+              hint="Compatible OpenAI, souvent terminée par /v1."
+              error={urlMissing ? undefined : unsafeAddress(s.model.url, s.model.key)}
             >
-              <CodeInput class="code-ici" bind:value={code} error={Boolean(refused)} oncomplete={pair} />
+              <TextInput value={s.model.url} oninput={(e) => set((d) => (d.model.url = typed(e).trim()))} />
             </Field>
-            {#if refused}<p class="manque" role="alert">{refused}</p>{/if}
+            {#if urlMissing}<p class="manque" id="{uid}-missing">{missing}</p>{/if}
           </div>
+          <div class="bloc">
+            <Field label="Nom du modèle">
+              <TextInput
+                value={s.model.name}
+                placeholder="par exemple llama3.1:8b"
+                oninput={(e) => set((d) => (d.model.name = typed(e).trim()))}
+              />
+            </Field>
+            {#if missing && !urlMissing}<p class="manque" id="{uid}-missing">{missing}</p>{/if}
+          </div>
+          <Field label="Clé (facultative)" hint="Elle reste sur ce poste.">
+            <TextInput
+              type="password"
+              value={s.model.key}
+              placeholder="Seulement pour un service en ligne"
+              autocomplete="off"
+              oninput={(e) => set((d) => (d.model.key = typed(e).trim()))}
+            />
+          </Field>
+        {:else}
+          {#if inWindow}
+            <Field
+              label="Adresse du serveur"
+              hint="Sur ce poste, l’adresse par défaut convient. Pour un autre poste, son adresse en https."
+              error={serverWarning(s.server)}
+            >
+              <TextInput
+                value={s.server}
+                onchange={(e) => {
+                  const url = typed(e).trim();
+                  if (url) session.setServer(url);
+                }}
+              />
+            </Field>
+          {/if}
+          {#if needsCode}
+            <div class="bloc">
+              <Field
+                label="Code d’appairage"
+                hint="Le code s’affiche sur le serveur, là où on ajoute un appareil. Un seul usage, quelques minutes."
+              >
+                <CodeInput class="code-ici" bind:value={code} error={Boolean(refused)} oncomplete={pair} />
+              </Field>
+              {#if refused}<p class="manque" role="alert">{refused}</p>{/if}
+            </div>
+          {/if}
         {/if}
-      {/if}
-    </section>
+      </section>
+    {/if}
 
     <footer class="pied">
       {#if needsCode}

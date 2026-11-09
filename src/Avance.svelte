@@ -6,9 +6,21 @@
   /* What the kit has not: the rest of a theme, folded under its everyday settings and always there. */
 
   let { what, children }: { what: string; children: Snippet } = $props();
+  let block: HTMLDetailsElement;
+
+  // Folded never hides what blocks: an error shown inside opens it; it never closes by itself.
+  $effect(() => {
+    const look = () => {
+      if (block.querySelector('[role="alert"]')) block.open = true;
+    };
+    look();
+    const watch = new MutationObserver(look);
+    watch.observe(block, { childList: true, subtree: true });
+    return () => watch.disconnect();
+  });
 </script>
 
-<details class="avance">
+<details class="avance" bind:this={block}>
   <summary>
     Réglages avancés : {what}
     <ChevronRight size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />

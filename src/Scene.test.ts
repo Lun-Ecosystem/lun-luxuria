@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
-import { flushSync } from 'svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
+import { flushSync, tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Scene from './Scene.svelte';
 import { Session } from './session.svelte.ts';
@@ -95,9 +95,13 @@ describe('the instruction under the body', () => {
     expect(said()).toHaveTextContent('Dis son nom, ou parle juste après sa réponse.');
   });
 
-  it('the key: the one set', () => {
+  it('the key: the one set, as it is written on it', () => {
     const { said } = scene({ talk: { scene: 'key', small: 'open' }, key: { on: true, code: 'F8' } });
     expect(said()).toHaveTextContent('Tiens F8 pour lui parler.');
+    cleanup();
+    expect(
+      scene({ talk: { scene: 'key', small: 'open' }, key: { on: true, code: 'KeyF' } }).said(),
+    ).toHaveTextContent('Tiens F pour lui parler.');
   });
 
   it('the microphone off: write, or turn it back on, with its button', async () => {
@@ -110,6 +114,27 @@ describe('the instruction under the body', () => {
   it('nothing heard in this mode: only writing', () => {
     const { said } = scene({ talk: { scene: 'key', small: 'open' }, key: { on: false, code: 'F9' } });
     expect(said()).toHaveTextContent('Écris-lui, depuis le fil.');
+  });
+
+  it('nothing heard in this mode, the microphone off too: writing, not the microphone', () => {
+    const { said } = scene({ talk: { scene: 'muted', small: 'open' } }, (s) => (s.micOn = false));
+    expect(said()).toHaveTextContent('Écris-lui, depuis le fil.');
+  });
+
+  it('the microphone held by another app, or the voice down: writing', () => {
+    const { session, said } = scene({}, (s) => (s.busy = true));
+    expect(said()).toHaveTextContent('Écris-lui, depuis le fil.');
+    session.busy = false;
+    session.voiceStatus = 'down';
+    flushSync();
+    expect(said()).toHaveTextContent('Écris-lui, depuis le fil.');
+  });
+
+  it('its button gone with what it did, the focus goes to the same control, at the top', async () => {
+    scene({}, (s) => (s.micOn = false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Rallumer le micro' }));
+    await tick();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Couper le micro' }));
   });
 
   it('muted: nothing reaches it, writing neither, with the way out', async () => {
@@ -138,7 +163,7 @@ describe('the instruction under the body', () => {
   });
 
   it('the open thread says what is written there instead', () => {
-    const { said } = scene({}, (s) => (s.threadOpen = true));
+    const { said } = scene({}, (s) => ((s.threadOpen = true), (s.threadRead = true)));
     expect(said()).toBeNull();
     expect(screen.getByText('Rien encore aujourd’hui.')).toBeInTheDocument();
     expect(
@@ -147,8 +172,13 @@ describe('the instruction under the body', () => {
   });
 
   it('linked, the thread is not the day’s: nothing yet, without the day', () => {
-    scene({ brain: 'linked' }, (s) => (s.threadOpen = true));
+    scene({ brain: 'linked' }, (s) => ((s.threadOpen = true), (s.threadRead = true)));
     expect(screen.getByText('Rien encore.')).toBeInTheDocument();
+  });
+
+  it('a thread not read yet, or not reached: it does not say it is empty', () => {
+    scene({ brain: 'linked' }, (s) => (s.threadOpen = true));
+    expect(screen.queryByText('Rien encore.')).toBeNull();
   });
 });
 

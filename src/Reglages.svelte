@@ -22,7 +22,7 @@
   } from './lib/ui/index.ts';
   import NavGroup from './lib/ui/NavGroup.svelte';
   import Avance from './Avance.svelte';
-  import { presetOf, withPreset, type Preset } from './listen/presets.ts';
+  import { PRESETS, presetOf, withPreset, type Preset } from './listen/presets.ts';
   import Switch from './lib/ui/Switch.svelte';
   import DossierCorps from './desktop/DossierCorps.svelte';
   import Fenetre from './desktop/Fenetre.svelte';
@@ -127,8 +127,9 @@
     const n = Number(text.replace(',', '.'));
     return text.trim() !== '' && Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
   }
+  const comma = (n: number) => String(n).replace('.', ',');
   /** Milliseconds kept, seconds read and typed: « 0,5 ». */
-  const secs = (ms: number) => String(ms / 1000).replace('.', ',');
+  const secs = (ms: number) => comma(ms / 1000);
   const ms = (text: string, min: number, max: number, fallback: number) =>
     Math.round(number(text, min / 1000, max / 1000, fallback / 1000) * 1000);
   const list = (text: string) =>
@@ -398,7 +399,7 @@
             <Segmented
               options={ROOMS}
               value={room ?? ''}
-              label="Autour de toi"
+              label={room ? 'Autour de toi' : 'Autour de toi, personnalisé'}
               size="petit"
               onchange={(v) => set((d) => (d.endOfSpeech = withPreset(d.endOfSpeech, v as Preset)))}
             />
@@ -409,7 +410,7 @@
           <SettingsCard title="Fin de phrase">
             {@render field(
               'Silence de fin de phrase',
-              'Conseillé : 0,5 s.',
+              `Conseillé : ${secs(PRESETS.normal.silenceMs)} s, de 0,2 à 3 s.`,
               secs(s.endOfSpeech.silenceMs),
               's',
               (v) => set((d) => (d.endOfSpeech.silenceMs = ms(v, 200, 3000, d.endOfSpeech.silenceMs))),
@@ -425,7 +426,8 @@
             )}
             {@render field(
               'Seuil du silence',
-              'Plus bas, le micro entend tout ; plus haut, il faut parler plus fort. Conseillé : -50 dB.',
+              'Plus bas, le micro entend tout ; plus haut, il faut parler plus fort. ' +
+                `Conseillé : ${PRESETS.normal.floorDb} dB.`,
               String(s.endOfSpeech.floorDb),
               'dB',
               (v) => set((d) => (d.endOfSpeech.floorDb = number(v, -90, -10, d.endOfSpeech.floorDb))),
@@ -456,7 +458,7 @@
               s.window.on,
               (v) => set((d) => (d.window.on = v)),
             )}
-            {@render field('Durée de la fenêtre', undefined, String(s.window.seconds), 's', (v) =>
+            {@render field('Durée de la fenêtre', undefined, comma(s.window.seconds), 's', (v) =>
               set((d) => (d.window.seconds = number(v, 1, 300, d.window.seconds))),
             )}
             {@render toggle(
@@ -503,7 +505,7 @@
               undefined,
               (v) => set((d) => (d.busy.ignored = list(v))),
             )}
-            {@render field('Délai de retour', undefined, String(s.busy.returnSeconds), 's', (v) =>
+            {@render field('Délai de retour', undefined, comma(s.busy.returnSeconds), 's', (v) =>
               set((d) => (d.busy.returnSeconds = number(v, 0, 120, d.busy.returnSeconds))),
             )}
           </SettingsCard>
@@ -619,7 +621,7 @@
     max-width: 720px;
     margin: 0 auto;
   }
-  /* A row whose field needs the whole width: the label above it. */
+  /* A row whose field needs the whole width: the label above it. `.ligne` is the kit's row, generated. */
   .contenu :global(.ligne.pleine) {
     flex-direction: column;
     align-items: stretch;

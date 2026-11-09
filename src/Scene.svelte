@@ -7,6 +7,7 @@
   import Moon from '@lucide/svelte/icons/moon';
   import Settings2 from '@lucide/svelte/icons/settings-2';
   import VolumeX from '@lucide/svelte/icons/volume-x';
+  import { tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { Mouth, STATE_LABELS, type BodyState } from './body/body.ts';
   import { inWindow } from './desktop/net.ts';
@@ -45,12 +46,20 @@
   const talk = $derived(s.talk[session.layout]);
   const instruction = $derived.by(() => {
     if (session.silenced) return 'muted';
+    const unheard = talk === 'muted' || (talk === 'key' && !s.key.on);
+    if (unheard || session.voiceStatus === 'down' || session.state === 'busy') return 'write';
     if (!session.micOn) return 'mic';
-    if (talk === 'muted' || (talk === 'key' && !s.key.on) || session.voiceStatus === 'down') return 'write';
     if (talk === 'key') return 'key';
     return s.filter[session.layout] ? 'name' : 'open';
   });
   const showInstruction = $derived(!session.spoke && !session.threadOpen);
+  let controls: HTMLDivElement;
+  /** The instruction's button goes with what it did: the focus goes to the same control, at the top. */
+  async function thenFocus(act: () => void, label: string) {
+    act();
+    await tick();
+    controls.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.focus();
+  }
   // The shortcuts exist in the window only.
   const keyOf = (shortcut: string) => (inWindow && shortcut ? shortcut : undefined);
 </script>
@@ -88,14 +97,19 @@
     <section class="consigne" aria-label="Pour lui parler">
       {#if instruction === 'muted'}
         <p>En sourdine : rien ne lui parvient, l’écrit non plus.</p>
-        <Button size="petit" onclick={() => session.toggleMute()}>Sortir de la sourdine</Button>
+        <Button size="petit" onclick={() => thenFocus(() => session.toggleMute(), 'Mettre en sourdine')}>
+          Sortir de la sourdine
+        </Button>
       {:else if instruction === 'mic'}
         <p>Écris-lui, ou rallume le micro.</p>
-        <Button size="petit" onclick={() => session.toggleMic()}>Rallumer le micro</Button>
+        <Button size="petit" onclick={() => thenFocus(() => session.toggleMic(), 'Couper le micro')}>
+          Rallumer le micro
+        </Button>
       {:else if instruction === 'write'}
         <p>Écris-lui, depuis le fil.</p>
       {:else if instruction === 'key'}
-        <p>Tiens <Kbd>{s.key.code}</Kbd> pour lui parler.</p>
+        <!-- The key is kept as the keyboard names it: « KeyF » reads « F ». -->
+        <p>Tiens <Kbd>{s.key.code.replace(/^(Key|Digit)/, '')}</Kbd> pour lui parler.</p>
         <small>Lâche la touche quand tu as fini.</small>
       {:else}
         <p>{instruction === 'name' ? 'Dis son nom, ou parle juste après sa réponse.' : 'Parle-lui.'}</p>
@@ -124,7 +138,7 @@
     {/if}
   </div>
 
-  <div class="controles">
+  <div class="controles" bind:this={controls}>
     {#if session.speaking || session.reading}
       <IconButton icon={VolumeX} label="Faire taire" onclick={() => session.silence()} />
     {/if}

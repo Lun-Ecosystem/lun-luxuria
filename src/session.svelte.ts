@@ -78,6 +78,8 @@ export class Session {
   level = $state(0);
   latencies = $state<{ ms: number; speculated: boolean }[]>([]);
   thread = $state<Message[]>([]);
+  /** Read once at least: before, or unreachable since, an empty thread says nothing of what it holds. */
+  threadRead = $state(false);
   entered = $state(false);
   /** In the window: no input for the set delay (`desktop/away.ts`). */
   away = $state(false);
@@ -448,7 +450,12 @@ export class Session {
   }
 
   async #refreshThread(): Promise<void> {
-    this.thread = await this.brain.thread().catch(() => this.thread);
+    try {
+      this.thread = await this.brain.thread();
+      this.threadRead = true;
+    } catch {
+      // Keeps what it had.
+    }
   }
 
   toggleMic(): void {
