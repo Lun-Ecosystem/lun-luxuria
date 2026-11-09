@@ -48,6 +48,8 @@ export interface Settings {
    * shortcuts between scene and small mode, and for the mute.
    */
   display: { screen: string; shortcut: string; muteShortcut: string; startWithWindows: boolean };
+  /** In the window: no key or mouse input for this long, the presence stops; the first input brings it back. */
+  away: { on: boolean; minutes: number };
 }
 
 /**
@@ -121,6 +123,7 @@ export const DEFAULTS: Settings = {
     muteShortcut: 'Control+Shift+M',
     startWithWindows: false,
   },
+  away: { on: true, minutes: 15 },
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>

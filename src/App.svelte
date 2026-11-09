@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button, CodeInput, Segmented, Toaster } from './lib/ui/index.ts';
+  import { awayFollows } from './desktop/away.ts';
   import { inWindow } from './desktop/net.ts';
   import { bodyFollows } from './desktop/corps.svelte.ts';
   import { keysFollow } from './desktop/keys.svelte.ts';
@@ -17,6 +18,7 @@
     bodyFollows(session);
     trayFollows(session);
     autostartFollows(session);
+    awayFollows(session);
     void startAll(session);
   } else {
     // A browser tab never launches it: once entered, it only says whether it answers. Nothing runs before.

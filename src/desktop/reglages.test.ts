@@ -100,6 +100,21 @@ describe('the desk mute', () => {
   });
 });
 
+describe('the absence', () => {
+  it('its switch and its delay are in the window’s theme, and saved as typed', async () => {
+    const session = new Session();
+    render(Reglages, { session, close: () => {} });
+    await fireEvent.click(screen.getByRole('link', { name: 'Fenêtre' }));
+    expect(screen.getByRole('switch', { name: 'Absence' })).toBeChecked();
+    const delay = screen.getByRole('textbox', { name: 'Délai d’absence' });
+    expect(delay).toHaveValue('15');
+    await fireEvent.change(delay, { target: { value: '30' } });
+    expect(session.settings.away.minutes).toBe(30);
+    await fireEvent.click(screen.getByRole('switch', { name: 'Absence' }));
+    expect(session.settings.away.on).toBe(false);
+  });
+});
+
 describe('the themes', () => {
   it('one page at a time, from the kit’s navigation; the window’s theme only in the window', async () => {
     render(Reglages, { session: new Session(), close: () => {}, start: 'voix' });

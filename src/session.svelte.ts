@@ -65,6 +65,8 @@ export class Session {
   latencies = $state<{ ms: number; speculated: boolean }[]>([]);
   thread = $state<Message[]>([]);
   entered = $state(false);
+  /** In the window: no input for the set delay (`desktop/away.ts`). */
+  away = $state(false);
   /** The thread over the scene; in the window's small mode, it turns the thumbnail into a panel. */
   threadOpen = $state(false);
   /** In the window: what the global keys could not take, said on the settings screen. */
@@ -271,8 +273,18 @@ export class Session {
       ...(this.settings.speak.p0 ? {} : { silentAnnounce: true }),
     };
   }
-  #announce = this.#presence.announce;
-  #beat = this.#presence.beat;
+  // Away, nothing is announced: a beat would be refused, and its refusal would announce again.
+  #announce = () => (this.away ? Promise.resolve() : this.#presence.announce());
+  #beat = () => (this.away ? Promise.resolve() : this.#presence.beat());
+
+  /** Only what the server is told changes: listening and the mute stay as they are. */
+  setAway(next: boolean): void {
+    if (next === this.away) return;
+    this.away = next;
+    if (!this.entered) return;
+    if (next) void this.brain.presence('stopped').catch(() => {});
+    else void this.#announce();
+  }
 
   #onLive(e: LiveEvent): void {
     this.#convo?.onLive(e);
