@@ -47,6 +47,7 @@ Détails dans [`docs/README.md`](docs/README.md).
 | Le modèle ne répond pas depuis la page | Il doit accepter les appels du navigateur. Ollama accepte 127.0.0.1, un autre peut demander de régler ses origines (CORS). |
 | Le service voix répond 403 | Il n'accepte que les pages de l'application : ajouter l'adresse avec `--origin <url>`. |
 | Rien ne passe au micro | Le micro reste coupé tant que son bouton ne l'a pas ouvert. |
+| La fenêtre ne demande plus le micro après un « Bloquer » | Fermer l'appli et supprimer `EBWebView\Default\Preferences` dans `%LOCALAPPDATA%\io.github.lun-ecosystem.luxuria` : elle redemande, les réglages restent. |
 | L'arrivée revient et redemande le code | Le serveur ne connaît plus le jeton : un nouveau code d'appairage le remplace. |
 
 ## Dans l'écosystème

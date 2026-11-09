@@ -41,6 +41,12 @@ sans clic, une seule fois, après le premier verdict du service voix : en attend
 vu sur la ligne de commande de l'exe. S'il manque quelque chose, l'arrivée le demande. Un jeton que le serveur refuse
 (401) est oublié, et l'arrivée revient avec le code et le dit.
 
+**Le micro.** WebView2 demande l'accès une fois, au premier « Ouvrir le micro », et garde la réponse pour l'origine de
+l'app dans son profil : relancée, la fenêtre ne redemande rien (vu dans l'exe : « Autoriser », relance, accès accordé sans
+boîte). Un « Bloquer » se garde de la même façon. Pour qu'elle redemande, fermer l'appli et supprimer
+`EBWebView\Default\Preferences` dans son dossier de données (`%LOCALAPPDATA%\io.github.lun-ecosystem.luxuria`) : les
+réglages et le fil restent, ils vivent ailleurs dans ce profil.
+
 **L'absence**, relié seulement. Sans saisie au clavier ni à la souris dans toute la session, ni phrase qui passe le
 filtre, depuis le délai réglé (15 minutes par défaut, de 1 à 240, carte « La fenêtre »), la présence s'arrête au
 serveur. Une session verrouillée ne reçoit aucune saisie : elle compte aussi. La première saisie, ou la première
