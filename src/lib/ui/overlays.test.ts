@@ -186,6 +186,16 @@ describe('toast', () => {
     expect(screen.getByText('L’envoi a échoué.')).toBeInTheDocument();
   });
 
+  it('between two waiting errors, the latest wins', async () => {
+    render(Toaster);
+    toast('Rangé dans Administratif', { undo: vi.fn(() => Promise.resolve()) });
+    toast('L’envoi a échoué.', { tone: 'danger' });
+    toast('La copie a échoué.', { tone: 'danger' });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(screen.queryByText('L’envoi a échoué.')).toBeNull();
+    expect(screen.getByText('La copie a échoué.')).toBeInTheDocument();
+  });
+
   it('an error waiting while Annuler runs survives the information that takes the screen', async () => {
     render(Toaster);
     toast('Rangé dans Administratif', { undo: vi.fn(() => new Promise<void>(() => {})) });
