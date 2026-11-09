@@ -13,10 +13,10 @@ import { awayFollows, isAway } from './away.ts';
 const MIN = 60_000;
 
 /** A linked session whose server is a recorder, as in the mute's tests. */
-function linked() {
+function linked(extra: object = {}) {
   localStorage.setItem(
     'luxuria.settings',
-    JSON.stringify({ brain: 'linked', busy: { ...DEFAULTS.busy, on: false } }),
+    JSON.stringify({ brain: 'linked', busy: { ...DEFAULTS.busy, on: false }, ...extra }),
   );
   localStorage.setItem('luxuria.token', 't');
   localStorage.setItem('luxuria.mic', 'on');
@@ -37,7 +37,10 @@ beforeEach(() => {
   mic.open.mockClear();
   vi.stubGlobal('requestAnimationFrame', () => 0);
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe('away, from the time without input', () => {
   it('away from the set delay on, present before it', () => {
@@ -142,6 +145,58 @@ describe('the session, away and back', () => {
     s.setAway(false);
     await flush();
     expect(sent).toEqual(['started']);
+  });
+});
+
+describe('a phrase heard', () => {
+  /** Talks into the microphone: loud frames, then silence, 32 ms each, as the worklet gives them. */
+  function say(loudFrames: number) {
+    const onFrame = (mic.open.mock.calls.at(-1) as unknown as [unknown, (f: Float32Array) => void])[1];
+    const loud = new Float32Array(512).fill(0.3);
+    const quiet = new Float32Array(512);
+    let at = Date.now();
+    for (let i = 0; i < loudFrames + 40; i++) {
+      vi.setSystemTime((at += 32));
+      onFrame(i < loudFrames ? loud : quiet);
+    }
+  }
+  async function heard(text: string, extra: object = {}) {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const stt = vi.fn(async () => Response.json({ text, confidence: 0.9 }));
+    vi.stubGlobal('fetch', stt);
+    const { s, sent } = linked(extra);
+    s.core.send = vi.fn(async () => void sent.push('send'));
+    await s.enter();
+    return { s, sent, stt };
+  }
+
+  it('a phrase sent counts as an input, and brings the presence back', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    say(20);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(s.heardAt).toBeGreaterThan(0);
+    expect(s.away).toBe(false);
+    expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
+  });
+
+  it('a noise does not count', async () => {
+    const { s, stt } = await heard('bonjour');
+    say(3);
+    await flush();
+    expect(stt).not.toHaveBeenCalled();
+    expect(s.heardAt).toBe(0);
+  });
+
+  it('a phrase the filter keeps out does not count: a video, someone else', async () => {
+    const { s, stt, sent } = await heard('on se voit demain', { filter: { scene: true, small: true } });
+    say(20);
+    await vi.waitFor(() => expect(stt).toHaveBeenCalled());
+    await flush();
+    await flush();
+    expect(sent).not.toContain('send');
+    expect(s.heardAt).toBe(0);
+    expect(s.thinking).toBe(false); // the end of the sentence had committed it before the verdict
   });
 });
 

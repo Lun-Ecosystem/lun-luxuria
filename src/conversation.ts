@@ -33,6 +33,8 @@ export interface ConversationDeps {
 
 export type ConversationEvent =
   | { type: 'thinking'; on: boolean }
+  /** A phrase heard passed the filter: it is for her, so the person is there. */
+  | { type: 'addressed' }
   | { type: 'ignored'; text: string }
   | { type: 'failed'; text: string }
   | { type: 'latency'; ms: number; speculated: boolean }
@@ -46,6 +48,8 @@ interface Attempt {
   replyId?: number;
   dropped: boolean;
   committed: boolean;
+  /** Sent at a pause: the end of the sentence commits it, and starts its thinking, before its verdict. */
+  early: boolean;
 }
 
 /**
@@ -137,7 +141,7 @@ export class Conversation {
 
   /** Transcribes, filters, sends; held unless `final`. */
   #try(audio: Float32Array, final: boolean): Attempt {
-    const attempt: Attempt = { dropped: false, committed: final };
+    const attempt: Attempt = { dropped: false, committed: final, early: !final };
     attempt.sent = this.#transcribeAndSend(audio, attempt);
     return attempt;
   }
@@ -167,10 +171,13 @@ export class Conversation {
       if (!verdict.pass) {
         if (verdict.reason === 'filtered' && attempt.committed && d.settings().traceIgnored)
           d.on({ type: 'ignored', text: heard.text });
+        // Committed by the end of the sentence before this verdict: its thinking ends here, nothing will answer.
+        if (attempt.committed && attempt.early) d.on({ type: 'thinking', on: false });
         // Filtered on a fragment: the whole sentence may still say the name.
         if (!attempt.committed) attempt.dropped = true;
         return;
       }
+      d.on({ type: 'addressed' });
       if (attempt.committed) d.on({ type: 'thinking', on: true });
       await d.brain.send(heard.text, { surface: 'voice', confidence: heard.confidence }, (e) =>
         this.#onTurn(e, attempt),

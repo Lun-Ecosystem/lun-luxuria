@@ -141,6 +141,7 @@ describe('the presence', () => {
     );
     await client.live(() => {}, link, new AbortController().signal);
     expect(refused).toHaveBeenCalledOnce();
+    expect(link).not.toHaveBeenCalled(); // the scene does not say it is unreachable
   });
 
   it('names its tab, the same on every call, so closing another tab does not end this one', async () => {

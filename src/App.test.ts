@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./audio.ts', () => ({
   openMicrophone: vi.fn(async () => ({ stop: vi.fn() })),
@@ -16,6 +16,8 @@ beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn());
 });
+// A failing test must not leave its stubs to the next ones.
+afterEach(() => vi.unstubAllGlobals());
 
 describe('the door', () => {
   it('alone by default: enters without a code', () => {
@@ -56,7 +58,32 @@ describe('the door', () => {
     render(App);
     expect(screen.getByRole('alert')).toHaveTextContent('Ce poste n’est plus reconnu par le serveur');
     expect(screen.getAllByRole('textbox').length).toBeGreaterThan(0);
-    vi.unstubAllGlobals();
+  });
+
+  it('a token another tab just got is not the one forgotten', async () => {
+    localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
+    localStorage.setItem('luxuria.token', 'ancien');
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...location, reload });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ error: 'Jeton inconnu' }, { status: 401 })),
+    );
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const session = new Session();
+    localStorage.setItem('luxuria.token', 'nouveau'); // paired meanwhile, elsewhere
+    await session.enter();
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(localStorage.getItem('luxuria.token')).toBe('nouveau');
+  });
+
+  it('a tab, linked and paired: its threshold as before, never entering by itself', () => {
+    localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
+    localStorage.setItem('luxuria.token', 't');
+    render(App);
+    expect(screen.getByRole('button', { name: 'Entrer' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Entrer sans attendre' })).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('with a token, nothing runs before the click: no microphone, no presence', () => {

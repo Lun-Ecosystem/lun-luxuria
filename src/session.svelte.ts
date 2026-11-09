@@ -192,8 +192,9 @@ export class Session {
   #forget(): void {
     if (this.#forgotten) return;
     this.#forgotten = true;
+    // Another tab may have paired meanwhile: only this token goes, the reload takes the new one.
+    if (stored(TOKEN_KEY) === this.token) store(TOKEN_KEY, null);
     this.token = null;
-    store(TOKEN_KEY, null);
     try {
       sessionStorage.setItem(SAID_KEY, FORGOTTEN);
     } catch {
@@ -228,7 +229,10 @@ export class Session {
       now: () => Date.now(),
       on: (e) => {
         if (e.type === 'thinking') this.thinking = e.on;
-        else if (e.type === 'ignored') this.#showTrace(e.text);
+        else if (e.type === 'addressed') {
+          // Only a phrase the filter let through: noise, a video or someone else in the room do not count.
+          void this.#heard();
+        } else if (e.type === 'ignored') this.#showTrace(e.text);
         else if (e.type === 'latency') this.latencies = [e, ...this.latencies].slice(0, 20);
         else if (e.type === 'failed') {
           this.failure = e.text;
@@ -325,7 +329,7 @@ export class Session {
     else await this.#announce();
   }
 
-  /** A phrase heard or written: the person is there, as with a key. Away, the presence comes back first. */
+  /** A phrase sent, heard or written: the person is there, as with a key. Away, the presence comes back first. */
   #heard(): Promise<void> {
     this.heardAt = Date.now();
     return this.setAway(false);
@@ -429,7 +433,6 @@ export class Session {
     for (const e of this.#endpointer.push(frame, voice, Date.now())) {
       if (e.type === 'start') this.hearing = true;
       if (e.type === 'end' || e.type === 'noise') this.hearing = false;
-      if (e.type === 'end') void this.#heard();
       this.#convo?.onEndpoint(e);
     }
   }
