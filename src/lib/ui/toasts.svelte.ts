@@ -4,7 +4,9 @@
  * can be undone gives its `undo` and stays 5 s, run by « Annuler » or Ctrl Z; a new toast replaces
  * the one on screen (the replaced undo is dropped: that gesture becomes final). Information stays 3 s
  * and, while an undoable toast counts down, waits for it to leave (the latest one wins; a new
- * undoable toast does not drop it). An undo that
+ * undoable toast does not drop it). The wait keeps the gravest: an error waiting there is only
+ * replaced by another error, never by an information, even one that takes the screen meanwhile.
+ * An error on screen is still replaced by any newer toast. An undo that
  * fails replaces its toast by the error, in the danger tone.
  */
 
@@ -67,12 +69,15 @@ export function toasts(): readonly Toast[] {
 
 export function toast(message: string, options: ToastOptions = {}): void {
   const current = shown[0];
+  // shortcut: a run of undoable toasts keeps an error waiting without limit; bound it if that is ever seen.
+  const errorWaits = waiting?.options.tone === 'danger' && options.tone !== 'danger';
   if (!options.undo && current?.undo && !current.undoing) {
-    waiting = { message, options };
+    if (!errorWaits) waiting = { message, options };
     return;
   }
-  // A notice kept for later survives a new undoable toast; a plain toast replacing the screen is newer.
-  if (!options.undo) waiting = undefined;
+  // A notice kept for later survives a new undoable toast; a plain toast replacing the screen is newer,
+  // unless an error waits: it shows after this one.
+  if (!options.undo && !errorWaits) waiting = undefined;
   show(message, options);
 }
 

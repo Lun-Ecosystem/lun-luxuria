@@ -165,6 +165,40 @@ describe('toast', () => {
     expect(screen.getByText('Ctrl Z').closest('[aria-hidden="true"]')).not.toBeNull();
   });
 
+  it('an error waiting behind an undoable toast is not replaced by an information', async () => {
+    render(Toaster);
+    toast('Rangé dans Administratif', { undo: vi.fn(() => Promise.resolve()) });
+    toast('L’envoi a échoué.', { tone: 'danger' });
+    toast('Brouillon enregistré.');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(screen.queryByText('Brouillon enregistré.')).toBeNull();
+    const message = screen.getByText('L’envoi a échoué.');
+    expect(message.closest('[data-ton]')).toHaveAttribute('data-ton', 'danger');
+  });
+
+  it('an error arriving after a waiting information takes its place', async () => {
+    render(Toaster);
+    toast('Rangé dans Administratif', { undo: vi.fn(() => Promise.resolve()) });
+    toast('Brouillon enregistré.');
+    toast('L’envoi a échoué.', { tone: 'danger' });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(screen.queryByText('Brouillon enregistré.')).toBeNull();
+    expect(screen.getByText('L’envoi a échoué.')).toBeInTheDocument();
+  });
+
+  it('an error waiting while Annuler runs survives the information that takes the screen', async () => {
+    render(Toaster);
+    toast('Rangé dans Administratif', { undo: vi.fn(() => new Promise<void>(() => {})) });
+    toast('L’envoi a échoué.', { tone: 'danger' });
+    await tick();
+    await user().click(screen.getByRole('button', { name: 'Annuler' }));
+    toast('Brouillon enregistré.');
+    await tick();
+    expect(screen.getByText('Brouillon enregistré.')).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(screen.getByText('L’envoi a échoué.')).toBeInTheDocument();
+  });
+
   it('contained changes the placement', async () => {
     const { container } = render(Toaster, { contained: true });
     expect(container.querySelector('.toaster')).toHaveClass('contained');
