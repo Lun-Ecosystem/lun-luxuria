@@ -18,6 +18,9 @@ const MIC_KEY = 'luxuria.mic';
 const MUTE_KEY = 'luxuria.mute';
 const TOKEN_KEY = 'luxuria.token';
 const LAYOUT_KEY = 'luxuria.layout';
+/** Why the arrival is back, kept across one reload of this page. */
+const SAID_KEY = 'luxuria.said';
+const FORGOTTEN = 'Ce poste n’est plus reconnu par le serveur : entre un nouveau code d’appairage.';
 const BEAT_MS = 30_000;
 const BUSY_POLL_MS = 3000;
 const SUBTITLE_STAYS_MS = 4000;
@@ -28,6 +31,16 @@ function stored(key: string): string | null {
     return localStorage.getItem(key);
   } catch {
     return null;
+  }
+}
+/** Read once: the next load no longer sees it. */
+function takeSaid(): string {
+  try {
+    const said = sessionStorage.getItem(SAID_KEY) ?? '';
+    sessionStorage.removeItem(SAID_KEY);
+    return said;
+  } catch {
+    return '';
   }
 }
 function store(key: string, value: string | null): void {
@@ -93,10 +106,13 @@ export class Session {
   /** In the window: why starting with Windows could not be read or changed. */
   startSaid = $state('');
   token = $state<string | null>(stored(TOKEN_KEY));
+  /** Why the arrival is shown again, said on it. */
+  arrivalSaid = $state(takeSaid());
 
   /** In the window, the page's paths go where the browser's proxy sent them. */
   #net = pageNet(() => this.settings.server);
-  core = new CoreClient(this.token, this.#net.server);
+  #forgotten = false;
+  core = new CoreClient(this.token, this.#net.server, () => this.#forget());
   /** Chosen when entering: a change of brain goes through a reload. */
   brain: Brain = this.core;
   #keyHeld = false;
@@ -166,11 +182,28 @@ export class Session {
     this.saveSettings({ ...($state.snapshot(this.settings) as Settings), server: url });
     this.token = null;
     store(TOKEN_KEY, null);
-    this.core = new CoreClient(null, this.#net.server);
+    this.core = new CoreClient(null, this.#net.server, () => this.#forget());
     if (this.entered) location.reload();
   }
 
-  /** A click starts it: a browser plays no sound without one. */
+  /** The server no longer knows this device: its token goes, and the arrival comes back asking for a code. */
+  #forget(): void {
+    if (this.#forgotten) return;
+    this.#forgotten = true;
+    this.token = null;
+    store(TOKEN_KEY, null);
+    try {
+      sessionStorage.setItem(SAID_KEY, FORGOTTEN);
+    } catch {
+      // A private window: the arrival comes back without its reason.
+    }
+    location.reload();
+  }
+
+  /**
+   * In a browser tab, a click starts it: a tab plays no sound without one. The window plays it without a click and
+   * enters by itself (`desktop/enter.svelte.ts`).
+   */
   async enter(): Promise<void> {
     this.entered = true;
     this.brain =

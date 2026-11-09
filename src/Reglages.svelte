@@ -452,8 +452,11 @@
 
         {#if s.brain === 'linked'}
           <SettingsCard title="Ce qui est dit à voix haute" description="Le fil les garde dans tous les cas.">
-            {@render toggle('L’accueil, à ton arrivée', undefined, s.speak.ritual, (v) =>
-              set((d) => (d.speak.ritual = v)),
+            {@render toggle(
+              'L’accueil, au lancement et au retour',
+              'Après une absence, une phrase courte si elle a été brève.',
+              s.speak.ritual,
+              (v) => set((d) => (d.speak.ritual = v)),
             )}
             {@render toggle('Les urgences', 'Vaut aussi en sourdine.', s.speak.p0, (v) =>
               set((d) => (d.speak.p0 = v)),

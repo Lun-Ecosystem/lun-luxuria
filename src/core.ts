@@ -30,10 +30,17 @@ export class CoreError extends Error {
 export class CoreClient implements Brain {
   #token: string | null;
   #fetch: typeof fetch;
+  #refused: () => void;
 
-  constructor(token: string | null, f: typeof fetch = (...a) => fetch(...a)) {
+  /** `refused`: the server no longer knows this device's token. A code refused at pairing carries none. */
+  constructor(token: string | null, f: typeof fetch = (...a) => fetch(...a), refused: () => void = () => {}) {
     this.#token = token;
     this.#fetch = f;
+    this.#refused = refused;
+  }
+
+  #check(res: Response): void {
+    if (res.status === 401 && this.#token) this.#refused();
   }
 
   get token(): string | null {
@@ -49,6 +56,7 @@ export class CoreClient implements Brain {
       },
     });
     if (!res.ok) {
+      this.#check(res);
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       throw new CoreError(res.status, body.error ?? `Le serveur a répondu ${res.status}.`);
     }
@@ -112,7 +120,7 @@ export class CoreClient implements Brain {
     return ((await res.json()) as { items: Message[] }).items;
   }
 
-  /** A lost connection comes back after a pause. */
+  /** A lost connection comes back after a pause; a refused token ends it, retrying would never be let in. */
   async live(on: (e: LiveEvent) => void, link: (up: boolean) => void, signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
@@ -120,6 +128,7 @@ export class CoreClient implements Brain {
           signal,
           headers: this.#token ? { authorization: `Bearer ${this.#token}` } : {},
         });
+        if (res.status === 401 && this.#token) return this.#check(res);
         if (!res.ok || !res.body) throw new CoreError(res.status, 'live');
         link(true);
         for await (const { data } of frames(res.body)) on(JSON.parse(data) as LiveEvent);

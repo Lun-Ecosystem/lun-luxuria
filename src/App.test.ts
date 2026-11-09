@@ -1,6 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./audio.ts', () => ({
+  openMicrophone: vi.fn(async () => ({ stop: vi.fn() })),
+  webOutput: () => ({ play: () => ({ stop() {}, heard: () => 0 }), level: () => 0 }),
+}));
+
 import App from './App.svelte';
 import Reglages from './Reglages.svelte';
 import { Session } from './session.svelte.ts';
@@ -30,6 +36,27 @@ describe('the door', () => {
     await userEvent.click(first);
     await userEvent.keyboard('123456');
     expect(await screen.findByRole('alert')).toHaveTextContent('Code refusé');
+  });
+
+  it('a token the server no longer knows is forgotten, and the arrival asks for a code and says why', async () => {
+    localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
+    localStorage.setItem('luxuria.token', 't');
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...location, reload });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ error: 'Jeton inconnu' }, { status: 401 })),
+    );
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const session = new Session();
+    await session.enter();
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(localStorage.getItem('luxuria.token')).toBeNull();
+    // What the reload shows: the code again, and the reason.
+    render(App);
+    expect(screen.getByRole('alert')).toHaveTextContent('Ce poste n’est plus reconnu par le serveur');
+    expect(screen.getAllByRole('textbox').length).toBeGreaterThan(0);
+    vi.unstubAllGlobals();
   });
 
   it('with a token, nothing runs before the click: no microphone, no presence', () => {

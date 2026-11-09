@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button, CodeInput, Segmented, Toaster } from './lib/ui/index.ts';
   import { awayFollows } from './desktop/away.ts';
+  import { enterFollows } from './desktop/enter.svelte.ts';
   import { inWindow } from './desktop/net.ts';
   import { bodyFollows } from './desktop/corps.svelte.ts';
   import { keysFollow } from './desktop/keys.svelte.ts';
@@ -19,6 +20,7 @@
     trayFollows(session);
     autostartFollows(session);
     awayFollows(session);
+    enterFollows(session);
     void startAll(session);
   } else {
     // A browser tab never launches it: once entered, it only says whether it answers. Nothing runs before.
@@ -28,7 +30,8 @@
     });
   }
   let code = $state('');
-  let refused = $state('');
+  // A token the server forgot comes back here, with its reason.
+  let refused = $state(session.arrivalSaid);
   let settingsOpen = $state<'agent' | 'voix' | null>(null);
   const BRAINS = [
     { value: 'alone', label: 'Seul' },
