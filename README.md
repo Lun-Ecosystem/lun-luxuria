@@ -36,16 +36,18 @@ npm install && npm run dev                                          # http://127
 uv run voix/service.py --stt faster:small --tts piper:<voix.onnx>   # dans un autre terminal
 ```
 
-Clique sur « Entrer », puis les Réglages : l'adresse du modèle et son nom. Détails dans [`docs/README.md`](docs/README.md).
+L'arrivée demande ce qui manque : seul, l'adresse du modèle et son nom ; relié, le code d'appairage. Puis « Entrer ».
+Détails dans [`docs/README.md`](docs/README.md).
 
 ## Si ça coince
 
 | Ce que tu vois | Quoi faire |
 |---|---|
-| Tu n'entends rien | Un navigateur ne joue aucun son sans un clic : passer par « Entrer ». |
+| Tu n'entends rien | Dans un onglet, aucun son ne part sans un clic : passer par « Entrer ». La fenêtre n'en a pas besoin. |
 | Le modèle ne répond pas depuis la page | Il doit accepter les appels du navigateur. Ollama accepte 127.0.0.1, un autre peut demander de régler ses origines (CORS). |
 | Le service voix répond 403 | Il n'accepte que les pages de l'application : ajouter l'adresse avec `--origin <url>`. |
-| Il ne t'entend pas | Le micro reste coupé tant que son bouton ne l'a pas ouvert. |
+| Rien ne passe au micro | Le micro reste coupé tant que son bouton ne l'a pas ouvert. |
+| L'arrivée revient et redemande le code | Le serveur ne connaît plus le jeton : un nouveau code d'appairage le remplace. |
 
 ## Dans l'écosystème
 
