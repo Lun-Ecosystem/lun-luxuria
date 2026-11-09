@@ -13,6 +13,8 @@
   import { Session } from './session.svelte.ts';
 
   const session = new Session();
+  /** In the window, nothing missing at launch: a short wait for the voice, then the scene. */
+  let entersByItself = false;
   if (inWindow) {
     windowFollows(session);
     keysFollow(session);
@@ -20,7 +22,7 @@
     trayFollows(session);
     autostartFollows(session);
     awayFollows(session);
-    enterFollows(session);
+    entersByItself = enterFollows(session);
     void startAll(session);
   } else {
     // A browser tab never launches it: once entered, it only says whether it answers. Nothing runs before.
@@ -51,7 +53,13 @@
 </script>
 
 <div class="monde" data-monde="luxuria">
-  {#if !session.entered}
+  {#if !session.entered && entersByItself}
+    <main class="seuil">
+      <h1>{session.settings.agent.name}</h1>
+      <p role="status">Sa voix se prépare…</p>
+      <Button variant="fantome" onclick={() => session.enter()}>Entrer sans attendre</Button>
+    </main>
+  {:else if !session.entered}
     <main class="seuil">
       <h1>{session.settings.agent.name}</h1>
       <Segmented

@@ -45,15 +45,25 @@ describe('the window enters by itself', () => {
     stop();
   });
 
-  it('something missing: it waits on the arrival, then enters when it is given', () => {
-    const { s, enter } = ready({ brain: 'linked' });
+  it('something missing at launch: never by itself, not even once it is filled in on the arrival', () => {
+    const { s, enter } = ready({ model: { name: '' } });
+    let will: boolean | undefined;
+    const stop = $effect.root(() => void (will = enterFollows(s)));
+    expect(will).toBe(false);
+    s.voiceStatus = 'up';
+    s.saveSettings({ ...s.settings, model: { ...s.settings.model, name: 'q' } }); // the first letter typed
+    flushSync();
+    expect(enter).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('entered meanwhile by the person: not a second time', () => {
+    const { s, enter } = ready();
     const stop = $effect.root(() => enterFollows(s));
+    s.entered = true;
     s.voiceStatus = 'up';
     flushSync();
     expect(enter).not.toHaveBeenCalled();
-    s.token = 'jeton'; // the code was paired
-    flushSync();
-    expect(enter).toHaveBeenCalledOnce();
     stop();
   });
 });
