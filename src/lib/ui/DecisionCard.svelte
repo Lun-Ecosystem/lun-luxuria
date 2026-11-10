@@ -3,7 +3,7 @@
   import type { Snippet } from 'svelte';
   import type { HTMLAttributes } from 'svelte/elements';
   import Button from './Button.svelte';
-  import { Check, Clock, ICON_STROKE, TriangleAlert, Undo, X } from './Icon.ts';
+  import { Check, Clock, ICON_STROKE, type IconComponent, TriangleAlert, Undo, X } from './Icon.ts';
   import Kbd from './Kbd.svelte';
 
   /*
@@ -16,13 +16,18 @@
    * card only shows the hint it is given.
    */
   type Props = Omit<HTMLAttributes<HTMLElement>, 'children' | 'title'> & {
-    /** What accepting does: a proposal (`ia`), a question (`attention`), a deletion (`danger`). */
-    tone?: 'ia' | 'attention' | 'danger' | undefined;
+    /**
+     * What accepting does: a proposal (`ia`), a question (`attention`), a deletion (`danger`). `accent`, the color
+     * of the world, is for what is not a proposal of an agent: a permission.
+     */
+    tone?: 'ia' | 'attention' | 'danger' | 'accent' | undefined;
     /** Short label of the kind (« Rangement »), first in the eyebrow. */
     kind?: string | undefined;
     /** The rest of the eyebrow: the post, the time. */
     meta?: string[] | undefined;
     title: string;
+    /** Before the title. */
+    icon?: IconComponent | undefined;
     /** Heading level of the title, to fit where the card stands. */
     level?: 2 | 3 | 4 | 5 | undefined;
     /** The lines of the card, as the contract of the posts gives them. */
@@ -35,6 +40,8 @@
     status?: 'pending' | 'done' | 'refused' | 'failed' | 'expired' | undefined;
     /** What the line says once done; the title by default. */
     doneText?: string | undefined;
+    /** What the folded line says, whatever the final status, in place of the card's own words. */
+    lineText?: string | undefined;
     /** Pending: the last gesture did not go through. Failed: why. */
     error?: string | undefined;
     /** A gesture is on its way: the main one spins, the others wait. */
@@ -71,12 +78,14 @@
     kind,
     meta = [],
     title,
+    icon: Icon,
     level = 4,
     lines = [],
     reason,
     note,
     status = 'pending',
     doneText,
+    lineText,
     error,
     busy = false,
     off,
@@ -109,7 +118,9 @@
         {#each meta as m (m)}<span>{m}</span>{/each}
       </p>
     {/if}
-    <svelte:element this={`h${level}`} class="title">{title}</svelte:element>
+    <svelte:element this={`h${level}`} class="title">
+      {#if Icon}<Icon size={16} strokeWidth={ICON_STROKE} aria-hidden="true" />{/if}{title}
+    </svelte:element>
     {#if children}
       {@render children()}
     {:else if lines.length}
@@ -171,18 +182,16 @@
   <div {...rest} class={['line', status, className]}>
     {#if status === 'done'}
       <Check size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
-      <span>{doneText ?? title}</span>
+      <span>{lineText ?? doneText ?? title}</span>
     {:else if status === 'refused'}
       <X size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
-      <span>Refusée : {title}</span>
+      <span>{lineText ?? `Refusée : ${title}`}</span>
     {:else if status === 'failed'}
       <TriangleAlert size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
-      <span
-        >N’a pas abouti : {title}{#if error}. {error}{/if}</span
-      >
+      <span>{lineText ?? `N’a pas abouti : ${title}${error ? `. ${error}` : ''}`}</span>
     {:else}
       <Clock size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />
-      <span>Expirée : {title}</span>
+      <span>{lineText ?? `Expirée : ${title}`}</span>
     {/if}
     {#if status === 'done'}{@render doneActions?.()}{/if}
     {#if onundo && (status === 'done' || status === 'refused')}
@@ -211,6 +220,9 @@
   .card.danger {
     --filet: var(--danger);
   }
+  .card.accent {
+    --filet: var(--accent-texte);
+  }
   .card.narrow {
     padding: 12px 14px;
   }
@@ -229,6 +241,9 @@
     color: var(--filet);
   }
   .title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin: 0;
     font: 500 21px/1.2 var(--serif);
   }
