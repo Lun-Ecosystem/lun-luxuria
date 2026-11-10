@@ -8,6 +8,13 @@ import type { Bricks, ProgramName, ProgramState } from './desktop/voix.ts';
 import { inWindow, pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
+import type { SileroVoice } from './listen/vad.ts';
+// Served by the app itself: nothing of the listening is fetched from anywhere else.
+import sileroUrl from './listen/silero/silero_vad.onnx?url';
+import engineUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
+
+/** Five minutes of frames of 32 ms. */
+const MAX_TAPE_FRAMES = (5 * 60 * 1000) / 32;
 import { presenceKeeper, watchPage } from './page.ts';
 import { readSettings, type Layout, type Settings } from './settings.ts';
 import { Speaker, type SpeakerEvent } from './speech/speaker.ts';
@@ -128,6 +135,15 @@ export class Session {
   #stop = new AbortController();
   #mic: { stop(): void } | null = null;
   #endpointer = new Endpointer();
+  /** The model that tells a voice from a noise, once loaded; `false` when it could not be. */
+  #silero: SileroVoice | false | null = null;
+  /** Frames are judged one after the other, in the order they came. */
+  #frames: Promise<void> = Promise.resolve();
+  /** Grows each time the listening starts afresh: a frame from before is dropped. */
+  #epoch = 0;
+  /** What the page hears, kept for a file, while an attempt is recorded. */
+  #tape: Float32Array[] | null = null;
+  recording = $state(false);
   #convo: Conversation | null = null;
   #speaker: Speaker | null = null;
   #subtitleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -421,7 +437,9 @@ export class Session {
     if (!should) {
       this.#mic?.stop();
       this.#mic = null;
+      this.#epoch++;
       this.#endpointer.reset();
+      if (this.#silero) this.#silero.reset();
       // The sentence under way will never end: what waited on it must not wait for ever.
       this.#convo?.stopListening();
       this.capturing = this.hearing = false;
@@ -436,12 +454,63 @@ export class Session {
     }
   }
 
+  /** The model, loaded at the first frame that needs it. It fails once: the level takes over, and the screen says so. */
+  async #model(): Promise<SileroVoice | false> {
+    if (this.#silero !== null) return this.#silero;
+    try {
+      const { loadSilero, SileroVoice } = await import('./listen/vad.ts');
+      const bytes = new Uint8Array(await (await fetch(sileroUrl)).arrayBuffer());
+      this.#silero = new SileroVoice(await loadSilero(bytes, engineUrl));
+    } catch (err) {
+      this.#silero = false;
+      this.failure = `Le modèle qui reconnaît la voix n’a pas pu se charger, le niveau sonore le remplace : ${String(err)}`;
+    }
+    return this.#silero;
+  }
+
   #onFrame(frame: Float32Array): void {
-    const { talk, endOfSpeech, key } = this.settings;
-    const onlyKey = talk[this.layout] === 'key';
-    const voice = onlyKey && (!key.on || !this.#keyHeld) ? 0 : levelToVoice(frame, endOfSpeech.floorDb);
-    if (this.#keyHeld) this.#keyInPhrase = true;
-    for (const e of this.#endpointer.push(frame, voice, Date.now())) {
+    // What it is and when it came are read now; its turn to be judged comes after the frames before it.
+    const at = Date.now();
+    const epoch = this.#epoch;
+    const { talk, key } = this.settings;
+    const silent = talk[this.layout] === 'key' && (!key.on || !this.#keyHeld);
+    const keyHeld = this.#keyHeld;
+    if (this.#tape && this.#tape.length < MAX_TAPE_FRAMES) this.#tape.push(frame);
+    this.#frames = this.#frames
+      .then(async () => {
+        if (epoch !== this.#epoch) return;
+        const voice = silent ? 0 : await this.#voice(frame);
+        // The listening started afresh while the model worked.
+        if (epoch === this.#epoch) this.#judged(frame, voice, at, keyHeld);
+      })
+      .catch((err: unknown) => {
+        this.failure = `L’écoute a échoué : ${String(err)}`;
+      });
+  }
+
+  async #voice(frame: Float32Array): Promise<number> {
+    const { model, floorDb } = this.settings.endOfSpeech;
+    const silero = model ? await this.#model() : false;
+    return silero ? silero.voice(frame, this.#endpointer.listening) : levelToVoice(frame, floorDb);
+  }
+
+  /** Keeps what the page hears until `stopRecording`, five minutes at most. */
+  record(): void {
+    this.#tape = [];
+    this.recording = true;
+  }
+
+  /** The attempt as a WAV file: what the listening received, with the echo and noise settings of the moment. */
+  async stopRecording(): Promise<Uint8Array> {
+    const tape = this.#tape ?? [];
+    this.#tape = null;
+    this.recording = false;
+    return (await import('./listen/replay.ts')).writeWav(tape);
+  }
+
+  #judged(frame: Float32Array, voice: number, at: number, keyHeld: boolean): void {
+    if (keyHeld) this.#keyInPhrase = true;
+    for (const e of this.#endpointer.push(frame, voice, at)) {
       if (e.type === 'start') {
         this.hearing = true;
         this.#keyInPhrase = this.#keyHeld;

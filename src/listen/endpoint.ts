@@ -72,6 +72,11 @@ export class Endpointer {
     this.#frames = null;
   }
 
+  /** A sentence is being heard, from its first voice to its end. */
+  get listening(): boolean {
+    return this.#frames !== null;
+  }
+
   push(frame: Float32Array, voice: number, at: number): EndpointEvent[] {
     const p = this.#p;
     if (!this.#frames) {

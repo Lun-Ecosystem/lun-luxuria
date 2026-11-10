@@ -28,7 +28,9 @@ export interface Settings {
     /** Sends at the first pause, and takes it back if the speaker goes on. Off: waits for the end. */
     speculate: boolean;
     pauseMs: number;
-    /** Below this level (dB), the microphone hears silence. */
+    /** A voice is told from a noise by a model; off, by the level of the sound alone. */
+    model: boolean;
+    /** Below this level (dB), the microphone hears silence. Read only when the model is off. */
     floorDb: number;
     minSpeechMs: number;
   };
@@ -91,7 +93,7 @@ export const DEFAULTS: Settings = {
   busy: { on: true, ignored: ['obs64.exe'], returnSeconds: 5 },
   traceIgnored: true,
   bargeIn: { on: true, mode: 'now', holdMs: 400 },
-  endOfSpeech: { silenceMs: 500, speculate: true, pauseMs: 160, floorDb: -50, minSpeechMs: 250 },
+  endOfSpeech: { silenceMs: 500, speculate: true, pauseMs: 160, model: true, floorDb: -50, minSpeechMs: 250 },
   speak: { ritual: true, p0: true, spontaneous: true },
   voice: {
     volume: 1,
