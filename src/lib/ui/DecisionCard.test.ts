@@ -4,12 +4,20 @@ import userEvent from '@testing-library/user-event';
 import { createRawSnippet } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 import DecisionCard from './DecisionCard.svelte';
+import { X } from './Icon.ts';
 
 const html = (h: string) => createRawSnippet(() => ({ render: () => h }));
 const base = { title: 'Ranger la facture dans Factures', kind: 'Rangement', meta: ['Poste', '09:12'] };
 const bouton = (name: string) => screen.getByRole('button', { name });
 
 describe('DecisionCard, waiting', () => {
+  it('takes the color of the world and an icon before its title, without changing the title’s name', () => {
+    const { container } = render(DecisionCard, { props: { ...base, tone: 'accent', icon: X } });
+    expect(screen.getByRole('article')).toHaveClass('accent');
+    expect(container.querySelector('.title svg')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('heading', { name: base.title })).toBeInTheDocument();
+  });
+
   it('is an article with its eyebrow, its title at the level asked, the lines of the contract and the reason', () => {
     render(DecisionCard, {
       props: { ...base, level: 3, lines: ['De : Opérateur', 'Boîte : Factures'], reason: 'Même expéditeur.' },
@@ -126,6 +134,11 @@ describe('DecisionCard, waiting', () => {
 });
 
 describe('DecisionCard, decided', () => {
+  it.each(['done', 'refused', 'failed', 'expired'] as const)('%s says the line it is given', (status) => {
+    render(DecisionCard, { props: { ...base, status, doneText: 'Rangé', lineText: 'Sans réponse.' } });
+    expect(screen.getByText('Sans réponse.')).toBeInTheDocument();
+  });
+
   it.each([
     ['done', 'Rangé dans Factures'],
     ['refused', `Refusée : ${base.title}`],
