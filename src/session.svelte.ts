@@ -479,12 +479,16 @@ export class Session {
     this.#frames = this.#frames
       .then(async () => {
         if (epoch !== this.#epoch) return;
+        // Frames it does not hear leave a hole: the model starts afresh at the next key press.
+        if (silent && this.#silero) this.#silero.reset();
         const voice = silent ? 0 : await this.#voice(frame);
         // The listening started afresh while the model worked.
         if (epoch === this.#epoch) this.#judged(frame, voice, at, keyHeld);
       })
       .catch((err: unknown) => {
-        this.failure = `L’écoute a échoué : ${String(err)}`;
+        // The model failed while it ran: the level takes over, or every frame would fail the same way.
+        this.#silero = false;
+        this.failure = `Le modèle qui reconnaît la voix a échoué, le niveau sonore le remplace : ${String(err)}`;
       });
   }
 
@@ -513,7 +517,8 @@ export class Session {
     for (const e of this.#endpointer.push(frame, voice, at)) {
       if (e.type === 'start') {
         this.hearing = true;
-        this.#keyInPhrase = this.#keyHeld;
+        // The key as it was when this frame came, not now: its judgment may have waited.
+        this.#keyInPhrase = keyHeld;
       }
       if (e.type === 'end' || e.type === 'noise') this.hearing = false;
       this.#convo?.onEndpoint(e);

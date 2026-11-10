@@ -31,9 +31,12 @@ describe('a file of sound', () => {
     expect(back).toHaveLength(own.length);
     expect(Math.abs(back[100]! - own[100]!)).toBeLessThan(1e-4);
 
-    const at48k = writeWav([new Float32Array(4800)]);
+    // A slope at 48 kHz keeps its slope at 16 kHz: one sample in three.
+    const at48k = writeWav([Float32Array.from({ length: 4800 }, (_, i) => i / 9600)]);
     new DataView(at48k.buffer).setUint32(24, 48000, true);
-    expect(readWav(at48k)).toHaveLength(1600);
+    const slow = readWav(at48k);
+    expect(slow).toHaveLength(1600);
+    expect(Math.abs(slow[800]! - 2400 / 9600)).toBeLessThan(1e-3);
   });
 });
 
@@ -72,6 +75,35 @@ describe('hearing a voice', () => {
     // Two seconds of sound later, quiet all along: its memory starts afresh. Not while a sentence is heard.
     for (let i = 2; i < 80; i++) await silero.voice(new Float32Array(FRAME), i < 70);
     expect(states.filter((s) => s === 0)).toHaveLength(2);
+    expect(inputs.at(-1)![0]).toBe(0);
+  });
+
+  it('does not clear its memory on one quiet window, nor bring the old one back after a reset', async () => {
+    let voice = 0.5;
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const states: number[] = [];
+    const silero = new SileroVoice(async (_, state) => {
+      states.push(state[0]!);
+      calls++;
+      if (release === undefined && calls === 71) await new Promise<void>((r) => (release = r));
+      return { voice, state: new Float32Array(256).fill(7) };
+    });
+    // Two seconds of sound that is never clearly quiet: no reset, even with nobody talking.
+    for (let i = 0; i < 70; i++) {
+      voice = i % 4 === 0 ? 0.05 : 0.5;
+      await silero.voice(new Float32Array(FRAME), false);
+    }
+    expect(states.filter((s) => s === 0)).toHaveLength(1);
+
+    // The listening starts afresh while a window is still being judged: that window does not undo it.
+    const late = silero.voice(new Float32Array(FRAME), false);
+    await new Promise((r) => setTimeout(r));
+    silero.reset();
+    release!();
+    await late;
+    await silero.voice(new Float32Array(FRAME), false);
+    expect(states.at(-1)).toBe(0);
   });
 });
 

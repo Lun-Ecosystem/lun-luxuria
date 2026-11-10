@@ -27,6 +27,8 @@ export class SileroVoice {
   #context = new Float32Array(CONTEXT);
   #sinceReset = 0;
   #quiet = 0;
+  /** Grows at each reset: a window that was being judged meanwhile must not bring the old memory back. */
+  #generation = 0;
 
   constructor(infer: Infer) {
     this.#infer = infer;
@@ -36,6 +38,7 @@ export class SileroVoice {
     this.#state = new Float32Array(STATE);
     this.#context = new Float32Array(CONTEXT);
     this.#sinceReset = this.#quiet = 0;
+    this.#generation++;
   }
 
   /** `listening`: a sentence is being heard, so the memory is left alone. */
@@ -43,7 +46,9 @@ export class SileroVoice {
     const input = new Float32Array(CONTEXT + FRAME);
     input.set(this.#context);
     input.set(frame, CONTEXT);
+    const generation = this.#generation;
     const out = await this.#infer(input, this.#state);
+    if (generation !== this.#generation) return out.voice;
     // A copy: the engine may give its own buffer again.
     this.#state = new Float32Array(out.state);
     this.#context = input.slice(-CONTEXT);

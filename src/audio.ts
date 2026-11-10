@@ -74,6 +74,8 @@ export async function openMicrophone(
   ctx.createMediaStreamSource(stream).connect(node);
   return {
     stop() {
+      // A frame already on its way would be heard with the microphone off.
+      node.port.onmessage = null;
       for (const t of stream.getTracks()) t.stop();
       void ctx.close();
     },

@@ -127,7 +127,8 @@
     link.href = url;
     link.download = `essai-${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}-echo-${echoCancellation ? 'oui' : 'non'}-bruit-${noiseSuppression ? 'oui' : 'non'}.wav`;
     link.click();
-    URL.revokeObjectURL(url);
+    // Not at once: some browsers start the download after this turn.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 
   /** Saves a copy with `change` applied: the session keeps the only state. */
