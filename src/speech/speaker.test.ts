@@ -59,6 +59,29 @@ describe('one sentence after the other', () => {
     expect(t.sounds).toHaveLength(1);
   });
 
+  it('speaking holds between two sentences of a turn already heard, not before its first sound', async () => {
+    const t = setup();
+    expect(t.speaker.speaking).toBe(false);
+    t.speaker.add(1, 'Un.');
+    await tick();
+    t.sounds[0]!.end();
+    expect(t.speaker.speaking).toBe(true);
+    t.speaker.end(1);
+    await tick();
+    expect(t.speaker.speaking).toBe(false);
+  });
+
+  it('a turn held while its sentence was being made stays silent, until released', async () => {
+    const t = setup();
+    t.speaker.add(1, 'Attends.');
+    t.speaker.hold(1);
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    t.speaker.release(1);
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+  });
+
   it('a held turn dropped never sounds', async () => {
     const t = setup();
     t.speaker.hold(1);

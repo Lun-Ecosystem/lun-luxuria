@@ -20,7 +20,8 @@ const message = (id: number): Message => ({
 
 function setup(
   over: Partial<Settings> = {},
-  heard: string | Error = 'Bonjour toi',
+  /** A list is one transcription per sentence, in order. */
+  heard: string | Error | string[] = 'Bonjour toi',
   silenced = () => false,
   refuse?: string,
 ) {
@@ -51,7 +52,7 @@ function setup(
     },
     stt: async () => {
       if (heard instanceof Error) throw heard;
-      return { text: heard, confidence: 0.9 };
+      return { text: typeof heard === 'string' ? heard : (heard.shift() ?? ''), confidence: 0.9 };
     },
     speaker: new Speaker(
       async () => CLIP,
@@ -251,6 +252,104 @@ describe('cutting it off', () => {
     silent.convo.onEndpoint({ type: 'held' });
     await tick();
     expect(silent.calls).toEqual([]);
+  });
+
+  const NO_TRY = { endOfSpeech: { ...DEFAULTS.endOfSpeech, speculate: false } };
+  const end = (at: number) => ({ type: 'end', audio: AUDIO, lastVoiceAt: at }) as const;
+
+  it('he talks again before its reply was heard: that reply is never said, the server forgets it', async () => {
+    const t = setup(NO_TRY);
+    t.convo.onEndpoint(end(1000));
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.say(110, 'Trop tard.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+
+    t.convo.onEndpoint(end(4000));
+    await tick();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    t.say(110, 'Encore elle.');
+    t.say(111, 'La bonne.');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.sends).toHaveLength(2);
+  });
+
+  it('a cough, or a sentence that was not for her, costs the reply nothing', async () => {
+    const cough = setup(NO_TRY);
+    cough.convo.onEndpoint(end(1000));
+    await tick();
+    cough.convo.onEndpoint({ type: 'held' });
+    cough.say(110, 'Je réponds.');
+    await tick();
+    expect(cough.sounds).toHaveLength(0);
+    cough.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(cough.sounds).toHaveLength(1);
+    expect(cough.calls).toEqual([]);
+
+    const aside = setup(NO_TRY, ['Bonjour toi', 'Sous-titres par Amara.org']);
+    aside.convo.onEndpoint(end(1000));
+    await tick();
+    aside.convo.onEndpoint({ type: 'held' });
+    aside.say(110, 'Je réponds.');
+    aside.convo.onEndpoint(end(4000));
+    await tick();
+    expect(aside.sounds).toHaveLength(1);
+    expect(aside.calls).toEqual([]);
+    // The sentence that asked nothing does not time the reply.
+    expect(aside.events.filter((e) => e.type === 'latency')).toEqual([]);
+  });
+
+  it('he talks again before the reply even has a number: it is forgotten when it comes', async () => {
+    const t = setup(NO_TRY);
+    t.convo.onEndpoint(end(1000));
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(4000));
+    await tick();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    t.say(110, 'Jamais dite.');
+    t.say(111, 'La bonne.');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+  });
+
+  it('a reply already heard is never taken back afterwards', async () => {
+    const t = setup(NO_TRY);
+    t.convo.onEndpoint(end(1000));
+    await tick();
+    t.say(110, 'Entendue.');
+    t.convo.onLive({ type: 'speech-end', id: 110, why: 'reply' });
+    await tick();
+    t.sounds[0]!.end();
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(9000));
+    await tick();
+    expect(t.calls).toEqual([]);
+  });
+
+  it('barge-in off: a reply on its way is left alone', async () => {
+    const t = setup({ ...NO_TRY, bargeIn: { ...DEFAULTS.bargeIn, on: false } });
+    t.convo.onEndpoint(end(1000));
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual([]);
+  });
+
+  it('held voice cuts between two sentences of a long reply too', async () => {
+    const t = setup();
+    t.say(50, 'Première phrase.');
+    await tick();
+    t.sounds[0]!.end();
+    // The next sentence has not come yet: nothing plays, and it is still her turn.
+    t.convo.onEndpoint({ type: 'held' });
+    await tick();
+    expect(t.calls).toEqual(['cut 50 "Première phrase."']);
   });
 
   it('the button says the same', async () => {

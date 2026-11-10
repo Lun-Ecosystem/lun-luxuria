@@ -68,8 +68,10 @@ export class Speaker {
     this.#on = on;
   }
 
+  /** True between two sentences of a turn already heard: the next one is only being made. */
   get speaking(): boolean {
-    return this.#playing !== null || this.#reading !== null;
+    const turn = this.#turns[0];
+    return this.#playing !== null || this.#reading !== null || (!!turn && turn.sounded && !turn.held);
   }
 
   #turn(id: number): Turn {
@@ -144,8 +146,8 @@ export class Speaker {
     this.#waiting = true;
     void piece.clip.then((clip) => {
       this.#waiting = false;
-      // Stopped while it was being made.
-      if (this.#turns[0] !== turn || turn.pieces[turn.next] !== piece) return this.#pump();
+      // Stopped, or held, while it was being made.
+      if (this.#turns[0] !== turn || turn.pieces[turn.next] !== piece || turn.held) return this.#pump();
       turn.next++;
       if (!clip) {
         // Its voice failed, its words are still paid for: said on screen, and nobody heard them.
