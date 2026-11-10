@@ -55,6 +55,12 @@ interface Attempt {
   keyHeld: boolean;
   /** Passed the filter as a fragment: it is for her only once the sentence ends on it. */
   passed?: boolean;
+  /** The speaker talks again before its reply was heard: the reply waits for what that new sentence is. */
+  heldBack?: boolean;
+  /** That new sentence was for her: its reply is never said. The message itself stays. */
+  superseded?: boolean;
+  /** The one whose reply was still unheard when this sentence ended: it is again, if this one asks nothing. */
+  before?: Attempt | null;
 }
 
 /**
@@ -67,6 +73,10 @@ export class Conversation {
   #lastSpokeAt: number | null = null;
   #clockFrom: { at: number; speculated: boolean } | null = null;
   #waitingReply: number | null = null;
+  /** The sentence whose reply nobody has heard yet. */
+  #unheard: Attempt | null = null;
+  /** The one held back by the sentence being said now. */
+  #heldBack: Attempt | null = null;
 
   constructor(deps: ConversationDeps) {
     this.#d = deps;
@@ -80,7 +90,11 @@ export class Conversation {
   onLive(e: LiveEvent): void {
     if (e.type === 'speech') {
       const speak = this.#d.settings().speak;
-      if (this.#d.silenced?.() && e.why !== 'p0') return;
+      if (this.#d.silenced?.() && e.why !== 'p0') {
+        // Its words will not sound: nothing of it is left to take back.
+        this.#heard(e.id);
+        return;
+      }
       if (e.why !== 'reply' && !speak[e.why]) return;
       this.#d.speaker.add(e.id, e.text);
     } else if (e.type === 'speech-end') {
@@ -92,6 +106,7 @@ export class Conversation {
     if (e.type === 'first-sound') {
       this.#lastSpokeAt = this.#d.now();
       this.#d.on({ type: 'thinking', on: false });
+      this.#heard(e.id);
       if (this.#clockFrom && e.id === this.#waitingReply) {
         this.#d.on({
           type: 'latency',
@@ -104,6 +119,7 @@ export class Conversation {
       // Its reply came, without a voice: no first sound will end the thinking, nor stop the clock.
       this.#d.on({ type: 'thinking', on: false });
       this.#clockFrom = null;
+      this.#heard(e.id);
     } else if (e.type === 'silent') {
       this.#lastSpokeAt = this.#d.now();
       this.#d.on({ type: 'said' });
@@ -116,7 +132,9 @@ export class Conversation {
     const s = this.#d.settings();
     switch (e.type) {
       case 'held':
-        if (s.bargeIn.on && this.#d.speaker.speaking) this.#cutOff(s.bargeIn.mode);
+        if (!s.bargeIn.on) return;
+        if (this.#d.speaker.speaking) this.#cutOff(s.bargeIn.mode);
+        else this.#holdBack();
         return;
       case 'pause':
         if (s.endOfSpeech.speculate && !this.#attempt) this.#attempt = this.#try(e.audio, false);
@@ -126,11 +144,16 @@ export class Conversation {
         return;
       case 'noise':
         this.#dropAttempt();
+        // No sentence ended, so the chronometer was not restarted.
+        this.#letGo(undefined, false);
         return;
       case 'end':
         this.#clockFrom = { at: e.lastVoiceAt, speculated: this.#attempt !== null };
-        if (this.#attempt) this.#commit(this.#attempt);
-        else this.#try(e.audio, true);
+        if (this.#attempt) {
+          this.#commit(this.#attempt);
+          // Its fragment was filtered out: nothing of this sentence will answer.
+          if (this.#attempt.dropped) this.#noAnswer(this.#attempt);
+        } else this.#try(e.audio, true);
         this.#attempt = null;
         return;
       case 'start':
@@ -144,9 +167,68 @@ export class Conversation {
       void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
   }
 
+  /** Its reply sounded, or was shown: it is no longer one to take back. */
+  #heard(replyId: number): void {
+    if (this.#unheard?.replyId === replyId) this.#unheard = null;
+    else if (this.#unheard?.before?.replyId === replyId) this.#unheard.before = null;
+  }
+
+  /** A sentence that ended becomes the one whose reply nobody heard; the one before is kept in case it asks nothing. */
+  #awaits(attempt: Attempt): void {
+    attempt.before = this.#unheard;
+    this.#unheard = attempt;
+  }
+
+  /** Nothing will answer this sentence: the reply before it is the unheard one again, and comes out if held back. */
+  #noAnswer(attempt: Attempt): void {
+    if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
+    this.#letGo(attempt);
+  }
+
+  /** He talks again while a reply is on its way: it waits, silent, for what he is saying. A cough must not cost it. */
+  #holdBack(): void {
+    const waiting = this.#unheard;
+    if (!waiting || waiting.dropped || this.#heldBack) return;
+    this.#heldBack = waiting;
+    waiting.heldBack = true;
+    if (waiting.replyId !== undefined) this.#d.speaker.hold(waiting.replyId);
+  }
+
+  /** What he said (`by`) was not for her: the reply held back comes out. */
+  #letGo(by?: Attempt, restarted = true): void {
+    const waiting = this.#heldBack;
+    this.#heldBack = null;
+    if (!waiting) return;
+    waiting.heldBack = false;
+    // The sound that held it back came while its own sentence was still being transcribed: it had no reply to hold.
+    if (waiting === by) return;
+    // The chronometer was restarted by a sentence that asked nothing.
+    if (restarted) this.#clockFrom = null;
+    // It is still on its way.
+    this.#d.on({ type: 'thinking', on: true });
+    if (waiting.replyId !== undefined) this.#d.speaker.release(waiting.replyId);
+  }
+
+  /** What he said (`by`) was for her: the reply held back is never said, and the server forgets it. His message stays. */
+  #supersede(by: Attempt): void {
+    const waiting = this.#heldBack;
+    // Held back while its own sentence was transcribed: the sentence said since will tell.
+    if (!waiting || waiting === by) return;
+    this.#heldBack = null;
+    waiting.superseded = true;
+    if (by.before === waiting) by.before = null;
+    if (waiting.replyId !== undefined) this.#forget(waiting.replyId);
+  }
+
+  #forget(replyId: number): void {
+    this.#d.speaker.drop(replyId);
+    void this.#d.brain.cut(replyId, '').catch((err) => this.#fail('Coupure non transmise', err));
+  }
+
   /** Transcribes, filters, sends; held unless `final`. */
   #try(audio: Float32Array, final: boolean): Attempt {
     const attempt: Attempt = { dropped: false, committed: final, early: !final, keyHeld: this.#d.keyHeld() };
+    if (final) this.#awaits(attempt);
     attempt.sent = this.#transcribeAndSend(audio, attempt);
     return attempt;
   }
@@ -160,14 +242,20 @@ export class Conversation {
       if (attempt.dropped) return;
       // Nothing will come of it: the end of the sentence must not wait for a reply.
       attempt.dropped = true;
-      if (attempt.committed) d.on({ type: 'thinking', on: false });
+      if (attempt.committed) {
+        d.on({ type: 'thinking', on: false });
+        this.#noAnswer(attempt);
+      }
       this.#fail('Ta phrase n’a pas pu être transcrite', err);
       return;
     }
     try {
       // Muted while it was transcribed: nothing leaves, nothing is paid.
       if (d.silenced?.()) attempt.dropped = true;
-      if (attempt.dropped) return;
+      if (attempt.dropped) {
+        if (attempt.committed) this.#noAnswer(attempt);
+        return;
+      }
       const verdict = decide(
         heard.text,
         { layout: d.layout(), keyHeld: attempt.keyHeld, lastSpokeAt: this.#lastSpokeAt, now: d.now() },
@@ -180,11 +268,13 @@ export class Conversation {
         if (attempt.committed && attempt.early) d.on({ type: 'thinking', on: false });
         // Filtered on a fragment: the whole sentence may still say the name.
         if (!attempt.committed) attempt.dropped = true;
+        else this.#noAnswer(attempt);
         return;
       }
       if (attempt.committed) {
         d.on({ type: 'addressed' });
         d.on({ type: 'thinking', on: true });
+        this.#supersede(attempt);
       } else attempt.passed = true;
       await d.brain.send(heard.text, { surface: 'voice', confidence: heard.confidence }, (e) =>
         this.#onTurn(e, attempt),
@@ -202,9 +292,16 @@ export class Conversation {
     } else if (e.type === 'reply') {
       attempt.replyId = e.id;
       if (attempt.dropped) this.#d.speaker.drop(e.id);
-      else if (attempt.committed) this.#waitingReply = e.id;
-      else this.#d.speaker.hold(e.id);
+      else if (attempt.superseded) this.#forget(e.id);
+      else if (attempt.committed) {
+        this.#waitingReply = e.id;
+        if (attempt.heldBack) this.#d.speaker.hold(e.id);
+      } else this.#d.speaker.hold(e.id);
     } else if (e.type === 'done' && e.message.status === 'error') {
+      // No word will come: a turn held back for it must not block the next ones.
+      if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
+      if (this.#heldBack === attempt) this.#heldBack = null;
+      if (attempt.heldBack && attempt.replyId !== undefined) this.#d.speaker.drop(attempt.replyId);
       this.#d.on({ type: 'thinking', on: false });
       this.#d.on({ type: 'failed', text: e.message.error ?? 'Sa réponse a échoué.' });
     }
@@ -229,7 +326,11 @@ export class Conversation {
   #commit(attempt: Attempt): void {
     if (attempt.dropped) return;
     attempt.committed = true;
-    if (attempt.passed) this.#d.on({ type: 'addressed' });
+    this.#awaits(attempt);
+    if (attempt.passed) {
+      this.#d.on({ type: 'addressed' });
+      this.#supersede(attempt);
+    }
     this.#d.on({ type: 'thinking', on: true });
     if (attempt.replyId !== undefined) {
       this.#waitingReply = attempt.replyId;
@@ -247,9 +348,16 @@ export class Conversation {
     if (refused !== undefined) throw new Error(refused);
   }
 
-  /** The mute comes: a fragment held for the end of the sentence is withdrawn. */
+  /** The mute comes: a fragment held for the end of the sentence is withdrawn, and no reply is left to take back. */
   mute(): void {
+    this.stopListening();
+    this.#unheard = null;
+  }
+
+  /** The microphone stops in the middle of a sentence: it will never end, so nothing waits on it any more. */
+  stopListening(): void {
     this.#dropAttempt();
+    this.#letGo(undefined, false);
   }
 
   /** The button that exists only while it speaks. */
