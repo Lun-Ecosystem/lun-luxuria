@@ -422,6 +422,8 @@ export class Session {
       this.#mic?.stop();
       this.#mic = null;
       this.#endpointer.reset();
+      // The sentence under way will never end: what waited on it must not wait for ever.
+      this.#convo?.stopListening();
       this.capturing = this.hearing = false;
       return;
     }

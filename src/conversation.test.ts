@@ -315,6 +315,59 @@ describe('cutting it off', () => {
     expect(t.sounds).toHaveLength(1);
   });
 
+  it('a sound while his sentence is still transcribed does not make that sentence forget itself', async () => {
+    const t = setup(NO_TRY, ['Bonjour toi', 'Sous-titres par Amara.org']);
+    t.convo.onEndpoint(end(1000));
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(4000));
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.calls).toEqual([]);
+    expect(t.sounds).toHaveLength(1);
+  });
+
+  it('the microphone stops in the middle of his sentence: the reply held back comes out', async () => {
+    const t = setup(NO_TRY);
+    t.convo.onEndpoint(end(1000));
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    t.convo.stopListening();
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual([]);
+  });
+
+  it('a reply the mute kept silent is not one to take back later', async () => {
+    let muted = false;
+    const t = setup(NO_TRY, 'Bonjour toi', () => muted);
+    t.convo.onEndpoint(end(1000));
+    await tick();
+    muted = true;
+    t.convo.mute();
+    t.say(110, 'Personne ne l’entend.');
+    muted = false;
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(9000));
+    await tick();
+    expect(t.calls).toEqual([]);
+  });
+
+  it('a sentence that was not for her does not hide the reply still on its way from the next one', async () => {
+    const t = setup(NO_TRY, ['Bonjour toi', 'Sous-titres par Amara.org', 'Bonjour toi']);
+    t.convo.onEndpoint(end(1000));
+    await tick();
+    t.convo.onEndpoint(end(2000));
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(4000));
+    await tick();
+    expect(t.calls).toEqual(['cut 110 ""']);
+  });
+
   it('a reply already heard is never taken back afterwards', async () => {
     const t = setup(NO_TRY);
     t.convo.onEndpoint(end(1000));
