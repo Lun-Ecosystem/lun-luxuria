@@ -31,7 +31,8 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
 - Côté Rust, le moins possible : lire le dossier du corps (borné à ce dossier), lancer le service voix (programme fixe,
   jamais de shell) et, à la demande, whisper-server et RVC (un .exe existant, choisi dans la boîte de dialogue du
   système et gardé côté Rust, sans shell, arrêté avec l'appli), dessiner l'icône de la barre selon l'état que dit la
-  page. Chaque permission de `src-tauri/capabilities/` est nommée ; aucune `:default` de plus sans raison.
+  page, lire depuis quand la session n'a reçu ni touche ni souris (l'absence). Chaque permission de
+  `src-tauri/capabilities/` est nommée ; aucune `:default` de plus sans raison.
 - Le réseau dans la fenêtre : serveur et modèle par plugin-http, service voix par la page (CORS de `voix/service.py`).
   La CSP de `tauri.conf.json` suit tout nouvel appel ; `blob:` y sert au worklet du micro et aux images du corps.
 - L'audio ne quitte jamais le PC : seuls du texte et des signaux en sortent.

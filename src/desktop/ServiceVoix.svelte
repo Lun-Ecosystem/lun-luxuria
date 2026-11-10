@@ -36,7 +36,13 @@
    * In the window, set by named fields and launched with the app; in a browser tab, launched by hand.
    */
 
-  let { session, set }: { session: Session; set: (change: (draft: Settings) => void) => void } = $props();
+  // The everyday part says its state and acts; the advanced part sets how it launches and its programs.
+  let {
+    session,
+    set,
+    part,
+  }: { session: Session; set: (change: (draft: Settings) => void) => void; part: 'courant' | 'avance' } =
+    $props();
   const v = $derived(session.settings.voice.service);
   const lack = $derived(v.launch ? missing(v) : null);
   const busy = $derived(session.voiceBusy);
@@ -182,13 +188,59 @@
   {/if}
 {/snippet}
 
-<SettingsCard
-  title="Le service voix"
-  description="Il transcrit ce que tu dis et fabrique sa voix, sur ce poste seulement."
->
-  <SettingsRow label="État" hint={session.voiceSaid || undefined}>{@render state(service)}</SettingsRow>
-  {#if inWindow}
-    <SettingsRow label="Lancer le service voix avec l’appli" hint="Seulement s’il ne répond pas déjà.">
+{#if part === 'courant'}
+  <SettingsCard
+    title="Le service voix"
+    description="Il transcrit ce que tu dis et fabrique sa voix, sur ce poste seulement."
+  >
+    <SettingsRow label="État" hint={session.voiceSaid || undefined}>{@render state(service)}</SettingsRow>
+    {#if inWindow}
+      <SettingsRow label="Maintenant" hint="Le lance s’il le faut, sinon vérifie qu’il répond." error={lack}>
+        <Button
+          variant="secondaire"
+          size="petit"
+          disabled={blocked || busy === 'restart'}
+          loading={busy === 'check'}
+          onclick={check}>{busy === 'check' ? 'Vérification en cours' : 'Lancer ou vérifier'}</Button
+        >
+      </SettingsRow>
+      {#if session.voiceArgs}
+        <SettingsRow
+          label="Relancer le service"
+          hint={waiting === 'restart'
+            ? 'Des réglages attendent : il tourne encore avec les réglages précédents.'
+            : 'L’arrête, puis le relance avec les champs des réglages avancés.'}
+        >
+          <Button
+            variant={waiting === 'restart' ? 'principal' : 'secondaire'}
+            size="petit"
+            disabled={lack !== null || busy === 'check'}
+            loading={busy === 'restart'}
+            onclick={restart}>Relancer le service</Button
+          >
+        </SettingsRow>
+      {:else if waiting === 'manual'}
+        <SettingsRow
+          label="Des réglages attendent"
+          hint="Il a été lancé hors de l’appli, avec d’autres réglages : relance-le toi-même pour les prendre."
+        />
+      {/if}
+    {:else}
+      <SettingsRow
+        label="Dans le navigateur"
+        hint="Dans un onglet, il se lance à la main, hors de cette page : le README dit comment."
+      >
+        <Button variant="secondaire" size="petit" onclick={() => void checkVoice(session)}>Vérifier</Button>
+      </SettingsRow>
+    {/if}
+  </SettingsCard>
+{:else if inWindow}
+  <SettingsCard title="Lancement" description="Avec l’appli, ou à la main.">
+    <SettingsRow
+      label="Lancer le service voix avec l’appli"
+      hint="Seulement s’il ne répond pas déjà."
+      error={lack}
+    >
       {#snippet children({ labelId })}
         <Switch
           checked={v.launch}
@@ -207,47 +259,8 @@
         />
       </SettingsRow>
     {/if}
-    <SettingsRow label="Maintenant" hint="Le lance s’il le faut, sinon vérifie qu’il répond." error={lack}>
-      <Button
-        variant="secondaire"
-        size="petit"
-        disabled={blocked || busy === 'restart'}
-        loading={busy === 'check'}
-        onclick={check}>{busy === 'check' ? 'Vérification en cours' : 'Lancer ou vérifier'}</Button
-      >
-    </SettingsRow>
-    {#if session.voiceArgs}
-      <SettingsRow
-        label="Relancer le service"
-        hint={waiting === 'restart'
-          ? 'Des réglages attendent : il tourne encore avec les réglages précédents.'
-          : 'L’arrête, puis le relance avec les champs ci-dessous.'}
-      >
-        <Button
-          variant={waiting === 'restart' ? 'principal' : 'secondaire'}
-          size="petit"
-          disabled={lack !== null || busy === 'check'}
-          loading={busy === 'restart'}
-          onclick={restart}>Relancer le service</Button
-        >
-      </SettingsRow>
-    {:else if waiting === 'manual'}
-      <SettingsRow
-        label="Des réglages attendent"
-        hint="Il a été lancé hors de l’appli, avec d’autres réglages : relance-le toi-même pour les prendre."
-      />
-    {/if}
-  {:else}
-    <SettingsRow
-      label="Dans le navigateur"
-      hint="Il se lance à la main, dans un terminal : uv run voix/service.py, avec sa transcription et sa voix."
-    >
-      <Button variant="secondaire" size="petit" onclick={() => void checkVoice(session)}>Vérifier</Button>
-    </SettingsRow>
-  {/if}
-</SettingsCard>
+  </SettingsCard>
 
-{#if inWindow}
   <SettingsCard
     title="Transcription"
     description="Ce qui écrit ce que tu dis. Au prochain lancement du service."

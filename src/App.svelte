@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { Button, CodeInput, Segmented, Toaster } from './lib/ui/index.ts';
+  import { Button, Toaster } from './lib/ui/index.ts';
+  import Arrivee from './Arrivee.svelte';
+  import { awayFollows } from './desktop/away.ts';
+  import { enterFollows } from './desktop/enter.svelte.ts';
   import { inWindow } from './desktop/net.ts';
   import { bodyFollows } from './desktop/corps.svelte.ts';
   import { keysFollow } from './desktop/keys.svelte.ts';
@@ -17,6 +20,7 @@
     bodyFollows(session);
     trayFollows(session);
     autostartFollows(session);
+    awayFollows(session);
     void startAll(session);
   } else {
     // A browser tab never launches it: once entered, it only says whether it answers. Nothing runs before.
@@ -25,44 +29,20 @@
       void checkVoice(session);
     });
   }
-  let code = $state('');
-  let refused = $state('');
+  /** In the window, nothing missing at launch: a short wait for the voice, then the scene. */
+  const entersByItself = inWindow && enterFollows(session);
   let settingsOpen = $state<'agent' | 'voix' | null>(null);
-  const BRAINS = [
-    { value: 'alone', label: 'Seul' },
-    { value: 'linked', label: 'Relié à un serveur' },
-  ];
-  const needsCode = $derived(session.settings.brain === 'linked' && !session.token);
-
-  async function pair(value: string) {
-    refused = '';
-    try {
-      await session.pair(value);
-    } catch (err) {
-      refused = err instanceof Error ? err.message : String(err);
-      code = '';
-    }
-  }
 </script>
 
 <div class="monde" data-monde="luxuria">
-  {#if !session.entered}
+  {#if !session.entered && entersByItself}
     <main class="seuil">
       <h1>{session.settings.agent.name}</h1>
-      <Segmented
-        options={BRAINS}
-        value={session.settings.brain}
-        label="Ce qui le fait répondre"
-        onchange={(v) => session.switchBrain(v as 'alone' | 'linked')}
-      />
-      {#if needsCode}
-        <p>Le code d’appairage se demande au serveur à relier.</p>
-        <CodeInput bind:value={code} aria-label="Code d’appairage" oncomplete={pair} />
-        {#if refused}<p class="refus" role="alert">{refused}</p>{/if}
-      {:else}
-        <Button onclick={() => session.enter()}>Entrer</Button>
-      {/if}
+      <p role="status">Sa voix se prépare…</p>
+      <Button variant="fantome" onclick={() => session.enter()}>Entrer sans attendre</Button>
     </main>
+  {:else if !session.entered}
+    <Arrivee {session} />
   {:else}
     <Scene {session} openSettings={(theme) => (settingsOpen = theme ?? 'agent')} />
     {#if settingsOpen}
@@ -103,8 +83,5 @@
     margin: 0;
     color: var(--texte-2);
     font-size: 14px;
-  }
-  .refus {
-    color: var(--attention);
   }
 </style>

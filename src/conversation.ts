@@ -24,6 +24,7 @@ export interface ConversationDeps {
   };
   settings(): Settings;
   layout(): Layout;
+  /** Held at some point of the phrase being heard, not only now. */
   keyHeld(): boolean;
   /** The desk mute: only a P0 may still be said. */
   silenced?(): boolean;
@@ -33,6 +34,8 @@ export interface ConversationDeps {
 
 export type ConversationEvent =
   | { type: 'thinking'; on: boolean }
+  /** A phrase heard passed the filter: it is for her, so the person is there. */
+  | { type: 'addressed' }
   | { type: 'ignored'; text: string }
   | { type: 'failed'; text: string }
   | { type: 'latency'; ms: number; speculated: boolean }
@@ -46,6 +49,12 @@ interface Attempt {
   replyId?: number;
   dropped: boolean;
   committed: boolean;
+  /** Sent at a pause: the end of the sentence commits it, and starts its thinking, before its verdict. */
+  early: boolean;
+  /** Read when it is made: its verdict comes after the transcription, once the key is let go. */
+  keyHeld: boolean;
+  /** Passed the filter as a fragment: it is for her only once the sentence ends on it. */
+  passed?: boolean;
 }
 
 /**
@@ -137,7 +146,7 @@ export class Conversation {
 
   /** Transcribes, filters, sends; held unless `final`. */
   #try(audio: Float32Array, final: boolean): Attempt {
-    const attempt: Attempt = { dropped: false, committed: final };
+    const attempt: Attempt = { dropped: false, committed: final, early: !final, keyHeld: this.#d.keyHeld() };
     attempt.sent = this.#transcribeAndSend(audio, attempt);
     return attempt;
   }
@@ -161,17 +170,22 @@ export class Conversation {
       if (attempt.dropped) return;
       const verdict = decide(
         heard.text,
-        { layout: d.layout(), keyHeld: d.keyHeld(), lastSpokeAt: this.#lastSpokeAt, now: d.now() },
+        { layout: d.layout(), keyHeld: attempt.keyHeld, lastSpokeAt: this.#lastSpokeAt, now: d.now() },
         d.settings(),
       );
       if (!verdict.pass) {
         if (verdict.reason === 'filtered' && attempt.committed && d.settings().traceIgnored)
           d.on({ type: 'ignored', text: heard.text });
+        // Committed by the end of the sentence before this verdict: its thinking ends here, nothing will answer.
+        if (attempt.committed && attempt.early) d.on({ type: 'thinking', on: false });
         // Filtered on a fragment: the whole sentence may still say the name.
         if (!attempt.committed) attempt.dropped = true;
         return;
       }
-      if (attempt.committed) d.on({ type: 'thinking', on: true });
+      if (attempt.committed) {
+        d.on({ type: 'addressed' });
+        d.on({ type: 'thinking', on: true });
+      } else attempt.passed = true;
       await d.brain.send(heard.text, { surface: 'voice', confidence: heard.confidence }, (e) =>
         this.#onTurn(e, attempt),
       );
@@ -215,6 +229,7 @@ export class Conversation {
   #commit(attempt: Attempt): void {
     if (attempt.dropped) return;
     attempt.committed = true;
+    if (attempt.passed) this.#d.on({ type: 'addressed' });
     this.#d.on({ type: 'thinking', on: true });
     if (attempt.replyId !== undefined) {
       this.#waitingReply = attempt.replyId;

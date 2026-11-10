@@ -50,6 +50,32 @@
       />
     {/snippet}
   </SettingsRow>
+  {#if s.brain === 'linked'}
+    <SettingsRow
+      label="Absence"
+      hint="Sans clavier, souris ni parole pendant ce délai, les urgences partent au téléphone jusqu’à ton retour."
+    >
+      {#snippet children({ labelId })}
+        <Switch checked={s.away.on} aria-labelledby={labelId} onchange={(v) => set((d) => (d.away.on = v))} />
+      {/snippet}
+    </SettingsRow>
+    {#if s.away.on}
+      <SettingsRow label="Délai d’absence" hint="De 1 à 240 minutes.">
+        <TextInput
+          value={String(s.away.minutes)}
+          suffix="min"
+          size="petit"
+          aria-label="Délai d’absence"
+          onchange={(e) => {
+            const text = (e.currentTarget as HTMLInputElement).value;
+            const n = Math.round(Number(text.replace(',', '.')));
+            if (text.trim() !== '' && Number.isFinite(n))
+              set((d) => (d.away.minutes = Math.min(240, Math.max(1, n))));
+          }}
+        />
+      </SettingsRow>
+    {/if}
+  {/if}
   <SettingsRow
     label="Raccourci scène, petit mode"
     hint="Depuis n’importe quelle fenêtre, sans couper sa voix. Exemple : Control+Shift+L."

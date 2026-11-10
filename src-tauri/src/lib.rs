@@ -2,6 +2,7 @@
 //! what a browser tab cannot: a window of its own, global keys, requests without CORS.
 
 mod body;
+mod idle;
 mod job;
 mod programs;
 mod tray;
@@ -30,6 +31,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             body::body_config,
             body::body_image,
+            idle::idle_ms,
             voice::voice_start,
             voice::voice_restart,
             voice::voice_running,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { frames, type LiveEvent } from './brain.ts';
 import { CoreClient, CoreError } from './core.ts';
 
@@ -110,6 +110,38 @@ describe('the presence', () => {
     await expect(client.presence('beat', { busy: false })).rejects.toThrow();
     status = 410;
     await expect(client.presence('started')).rejects.toThrow();
+  });
+
+  it('a token the server refuses is reported; a refused code, sent without a token, is not', async () => {
+    const refused = vi.fn();
+    const client = new CoreClient(
+      't',
+      (async () => Response.json({ error: 'Jeton inconnu' }, { status: 401 })) as typeof fetch,
+      refused,
+    );
+    await expect(client.presence('started')).rejects.toThrow('Jeton inconnu');
+    expect(refused).toHaveBeenCalledOnce();
+    const fresh = vi.fn();
+    const pairing = new CoreClient(
+      null,
+      (async () => Response.json({ error: 'Code refusé' }, { status: 401 })) as typeof fetch,
+      fresh,
+    );
+    await expect(pairing.pair('123456')).rejects.toThrow('Code refusé');
+    expect(fresh).not.toHaveBeenCalled();
+  });
+
+  it('the live stream stops on a refused token instead of retrying for ever', async () => {
+    const refused = vi.fn();
+    const link = vi.fn();
+    const client = new CoreClient(
+      't',
+      (async () => new Response(null, { status: 401 })) as typeof fetch,
+      refused,
+    );
+    await client.live(() => {}, link, new AbortController().signal);
+    expect(refused).toHaveBeenCalledOnce();
+    expect(link).not.toHaveBeenCalled(); // the scene does not say it is unreachable
   });
 
   it('names its tab, the same on every call, so closing another tab does not end this one', async () => {

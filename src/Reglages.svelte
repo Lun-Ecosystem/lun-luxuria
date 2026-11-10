@@ -15,11 +15,14 @@
     Segmented,
     SettingsCard,
     SettingsRow,
+    Slider,
     TextArea,
     TextInput,
     type IconComponent,
   } from './lib/ui/index.ts';
   import NavGroup from './lib/ui/NavGroup.svelte';
+  import Avance from './Avance.svelte';
+  import { PRESETS, presetOf, withPreset, type Preset } from './listen/presets.ts';
   import Switch from './lib/ui/Switch.svelte';
   import DossierCorps from './desktop/DossierCorps.svelte';
   import Fenetre from './desktop/Fenetre.svelte';
@@ -50,29 +53,29 @@
       id: 'agent',
       label: 'L’agent',
       icon: Sparkles,
-      group: 'Lui',
-      description: 'Qui il est, et ce qui le fait répondre.',
+      group: 'Identité',
+      description: 'Son nom, son ton, et ce qui produit ses réponses.',
     },
     {
       id: 'corps',
       label: 'Corps',
       icon: PersonStanding,
-      group: 'Lui',
-      description: 'Ce que la scène montre de lui.',
+      group: 'Identité',
+      description: 'Ce que la scène montre.',
     },
     {
       id: 'ecoute',
       label: 'Écoute',
       icon: Ear,
       group: 'La conversation',
-      description: 'Comment lui parler, ce qui part, et quand il se tait.',
+      description: 'Comment lui parler, et ce qui part.',
     },
     {
       id: 'voix',
       label: 'Voix',
       icon: AudioLines,
       group: 'La conversation',
-      description: 'Le service qui transcrit et parle, ses programmes, et ce qui est dit à voix haute.',
+      description: 'Ce qu’on entend, ce qui est dit à voix haute, et le service qui transcrit et parle.',
     },
     ...(inWindow
       ? [
@@ -124,6 +127,11 @@
     const n = Number(text.replace(',', '.'));
     return text.trim() !== '' && Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
   }
+  const comma = (n: number) => String(n).replace('.', ',');
+  /** Milliseconds kept, seconds read and typed: « 0,5 ». */
+  const secs = (ms: number) => comma(ms / 1000);
+  const ms = (text: string, min: number, max: number, fallback: number) =>
+    Math.round(number(text, min / 1000, max / 1000, fallback / 1000) * 1000);
   const list = (text: string) =>
     text
       .split(',')
@@ -140,9 +148,22 @@
     { value: 'muted', label: 'Coupé' },
   ];
   const BARGE = [
-    { value: 'now', label: 'Immédiate' },
-    { value: 'soft', label: 'À la fin de la phrase' },
+    { value: 'soft', label: 'Doucement' },
+    { value: 'now', label: 'Tout de suite' },
   ];
+  const FILTER = 'Seules les phrases qui lui sont adressées partent.';
+  const ROOMS = [
+    { value: 'calme', label: 'Pièce calme' },
+    { value: 'normal', label: 'Normal' },
+    { value: 'bruit', label: 'Bruit autour' },
+  ];
+  const ROOM_SAID: Record<Preset, string> = {
+    calme: 'Pièce calme : la fin de phrase vient plus tôt, et une voix basse compte.',
+    normal: 'Normal : les valeurs conseillées.',
+    bruit: 'Bruit autour : la fin de phrase attend un peu, et le bruit de fond ne compte pas.',
+  };
+  const CUSTOM = 'Personnalisé : une valeur avancée a été changée à la main.';
+  const room = $derived(presetOf(s.endOfSpeech));
   const BODY = [
     { value: 'breath', label: 'Le souffle' },
     { value: 'images', label: 'Les images' },
@@ -171,9 +192,45 @@
       {value}
       {suffix}
       size="petit"
+      class={suffix ? 'court' : undefined}
       aria-label={label}
       onchange={(e) => on((e.currentTarget as HTMLInputElement).value)}
     />
+  </SettingsRow>
+{/snippet}
+
+{#snippet micro(hint: string | undefined)}
+  {@render toggle('Annulation d’écho du micro', hint, s.voice.echoCancellation, (v) =>
+    set((d) => (d.voice.echoCancellation = v)),
+  )}
+  {@render toggle('Suppression de bruit du micro', hint, s.voice.noiseSuppression, (v) =>
+    set((d) => (d.voice.noiseSuppression = v)),
+  )}
+{/snippet}
+
+<!-- A value and the switch that turns it on, on one row: the row's label names the switch. -->
+{#snippet paired(
+  label: string,
+  hint: string,
+  checked: boolean,
+  on: (v: boolean) => void,
+  valueLabel: string,
+  value: string,
+  suffix: string | undefined,
+  onValue: (v: string) => void,
+)}
+  <SettingsRow {label} {hint}>
+    {#snippet children({ labelId })}
+      <TextInput
+        {value}
+        {suffix}
+        size="petit"
+        class={suffix ? 'court' : undefined}
+        aria-label={valueLabel}
+        onchange={(e) => onValue((e.currentTarget as HTMLInputElement).value)}
+      />
+      <Switch {checked} aria-labelledby={labelId} onchange={on} />
+    {/snippet}
   </SettingsRow>
 {/snippet}
 
@@ -212,26 +269,34 @@
         <p>{page.description}</p>
       </header>
       {#if page.id === 'agent'}
-        <SettingsCard title="L’agent" description="Son nom est aussi le mot qui l’appelle.">
-          {@render field('Nom', undefined, s.agent.name, undefined, (v) =>
+        <SettingsCard title="Nom et ton">
+          {@render field('Nom', 'C’est aussi le mot qui l’appelle.', s.agent.name, undefined, (v) =>
             set((d) => (d.agent.name = v.trim() || d.agent.name)),
           )}
-          {#if s.brain === 'alone'}
-            <SettingsRow label="Ton et contexte" hint="Ce qu’il sait de lui et de toi, à chaque réponse.">
-              <TextArea
-                value={s.agent.context}
-                rows={3}
-                aria-label="Ton et contexte"
-                onchange={(e) => {
-                  const value = (e.currentTarget as HTMLTextAreaElement).value;
-                  set((d) => (d.agent.context = value));
-                }}
-              />
-            </SettingsRow>
-          {/if}
+          <SettingsRow
+            label="Ton et contexte"
+            class="pleine"
+            hint={s.brain === 'alone'
+              ? 'Son rôle, et ce qu’il faut savoir de toi. Relu à chaque réponse.'
+              : 'Relié, le serveur décide du ton : cette zone ne sert qu’en fonctionnement seul.'}
+          >
+            <TextArea
+              value={s.agent.context}
+              rows={8}
+              disabled={s.brain === 'linked'}
+              aria-label="Ton et contexte"
+              onchange={(e) => {
+                const value = (e.currentTarget as HTMLTextAreaElement).value;
+                set((d) => (d.agent.context = value));
+              }}
+            />
+          </SettingsRow>
         </SettingsCard>
 
-        <SettingsCard title="Ce qui le fait répondre">
+        <SettingsCard
+          title="Ses réponses"
+          description="Seul, d’un modèle que tu choisis ; relié, d’un serveur."
+        >
           <SettingsRow label="Fonctionnement" hint="Changer recharge la page.">
             <Segmented
               options={BRAINS}
@@ -250,15 +315,18 @@
               (v) => v.trim() && session.setServer(v.trim()),
             )}
           {/if}
-          {#if s.brain === 'alone'}
+        </SettingsCard>
+
+        {#if s.brain === 'alone'}
+          <Avance what="le modèle, la clé, le plafond">
             {@render field(
               'Adresse du modèle',
-              'Un service compatible OpenAI, sur ce poste ou en ligne.',
+              'Compatible OpenAI, souvent terminée par /v1.',
               s.model.url,
               undefined,
               (v) => set((d) => (d.model.url = v.trim() || DEFAULTS.model.url)),
             )}
-            {@render field('Modèle', undefined, s.model.name, undefined, (v) =>
+            {@render field('Nom du modèle', undefined, s.model.name, undefined, (v) =>
               set((d) => (d.model.name = v.trim())),
             )}
             <SettingsRow label="Clé" hint="Facultative. Gardée dans ce navigateur, sur ce poste seulement.">
@@ -276,13 +344,13 @@
             </SettingsRow>
             {@render field(
               'Plafond par jour',
-              'Vérifié avant chaque appel. 0 : pas de plafond.',
+              'Au-delà, plus de réponse jusqu’au lendemain. 0 : sans plafond.',
               String(s.model.tokensPerDay),
               'jetons',
               (v) => set((d) => (d.model.tokensPerDay = number(v, 0, 100_000_000, d.model.tokensPerDay))),
             )}
-          {/if}
-        </SettingsCard>
+          </Avance>
+        {/if}
       {:else if page.id === 'corps'}
         {#if inWindow}
           <DossierCorps {session} {set} />
@@ -310,11 +378,8 @@
           </SettingsCard>
         {/if}
       {:else if page.id === 'ecoute'}
-        <SettingsCard
-          title="Lui parler"
-          description="Tout agit tout de suite. Rien ne reste figé dans le code."
-        >
-          <SettingsRow label="Dans la scène">
+        <SettingsCard title="Comment lui parler" description="Pour chaque mode d’affichage.">
+          <SettingsRow label="Sur la scène">
             <Segmented
               options={TALK}
               value={s.talk.scene}
@@ -323,6 +388,9 @@
               onchange={(v) => set((d) => (d.talk.scene = v as TalkMode))}
             />
           </SettingsRow>
+          {@render toggle('Filtre dans la scène', FILTER, s.filter.scene, (v) =>
+            set((d) => (d.filter.scene = v)),
+          )}
           <SettingsRow label="En petit mode">
             <Segmented
               options={TALK}
@@ -332,7 +400,10 @@
               onchange={(v) => set((d) => (d.talk.small = v as TalkMode))}
             />
           </SettingsRow>
-          {@render toggle('Touche à maintenir', undefined, s.key.on, (v) => set((d) => (d.key.on = v)))}
+          {@render toggle('Filtre en petit mode', FILTER, s.filter.small, (v) =>
+            set((d) => (d.filter.small = v)),
+          )}
+          {@render toggle('Touche à tenir', undefined, s.key.on, (v) => set((d) => (d.key.on = v)))}
           {@render field(
             'Code de la touche',
             inWindow
@@ -342,19 +413,12 @@
             undefined,
             (v) => set((d) => (d.key.code = v.trim() || DEFAULTS.key.code)),
           )}
-        </SettingsCard>
-
-        <SettingsCard
-          title="Ce qui est écouté"
-          description="Le filtre ne laisse partir qu’une phrase qui passe l’une des règles activées."
-        >
-          {@render toggle('Filtre dans la scène', undefined, s.filter.scene, (v) =>
-            set((d) => (d.filter.scene = v)),
+          {@render toggle(
+            'Son nom l’appelle',
+            'Son nom et les mots que tu ajoutes ; une transcription proche compte aussi.',
+            s.name.on,
+            (v) => set((d) => (d.name.on = v)),
           )}
-          {@render toggle('Filtre en petit mode', undefined, s.filter.small, (v) =>
-            set((d) => (d.filter.small = v)),
-          )}
-          {@render toggle('Mention du nom', undefined, s.name.on, (v) => set((d) => (d.name.on = v)))}
           {@render field(
             'Autres mots reconnus',
             'Séparés par des virgules.',
@@ -362,18 +426,68 @@
             undefined,
             (v) => set((d) => (d.name.words = list(v))),
           )}
+        </SettingsCard>
+
+        <SettingsCard title="La pièce" description="Règle d’un coup la fin de phrase et le seuil du silence.">
+          <SettingsRow label="Autour de toi" hint={room ? ROOM_SAID[room] : CUSTOM}>
+            <Segmented
+              options={ROOMS}
+              value={room ?? ''}
+              label={room ? 'Autour de toi' : 'Autour de toi, personnalisé'}
+              size="petit"
+              onchange={(v) => set((d) => (d.endOfSpeech = withPreset(d.endOfSpeech, v as Preset)))}
+            />
+          </SettingsRow>
+        </SettingsCard>
+
+        <Avance what="fin de phrase, filtre, interruption, applis ignorées, mesures">
           {@render field(
-            'Tolérance',
+            'Silence de fin de phrase',
+            `Conseillé : ${secs(PRESETS.normal.silenceMs)} s, de 0,2 à 3 s.`,
+            secs(s.endOfSpeech.silenceMs),
+            's',
+            (v) => set((d) => (d.endOfSpeech.silenceMs = ms(v, 200, 3000, d.endOfSpeech.silenceMs))),
+          )}
+          {@render paired(
+            'Répondre dès une courte pause',
+            'La réponse préparée est retirée si tu continues. Chaque essai coûte un appel.',
+            s.endOfSpeech.speculate,
+            (v) => set((d) => (d.endOfSpeech.speculate = v)),
+            'Courte pause',
+            secs(s.endOfSpeech.pauseMs),
+            's',
+            (v) => set((d) => (d.endOfSpeech.pauseMs = ms(v, 64, 2000, d.endOfSpeech.pauseMs))),
+          )}
+          {@render field(
+            'Seuil du silence',
+            `En dessous, le micro entend le silence. Conseillé : ${PRESETS.normal.floorDb} dB.`,
+            String(s.endOfSpeech.floorDb),
+            'dB',
+            (v) => set((d) => (d.endOfSpeech.floorDb = number(v, -90, -10, d.endOfSpeech.floorDb))),
+          )}
+          {@render field(
+            'Parole la plus courte',
+            'Plus court, c’est un bruit.',
+            secs(s.endOfSpeech.minSpeechMs),
+            's',
+            (v) => set((d) => (d.endOfSpeech.minSpeechMs = ms(v, 32, 3000, d.endOfSpeech.minSpeechMs))),
+          )}
+          {@render paired(
+            'L’écouter après sa phrase',
+            'Sans dire son nom, pendant ce temps.',
+            s.window.on,
+            (v) => set((d) => (d.window.on = v)),
+            'Durée de l’écoute après sa phrase',
+            comma(s.window.seconds),
+            's',
+            (v) => set((d) => (d.window.seconds = number(v, 1, 300, d.window.seconds))),
+          )}
+          {@render field(
+            'Tolérance sur son nom',
             'Lettres d’écart admises avec ce que la transcription a écrit.',
             String(s.name.tolerance),
-            undefined,
+            'lettres',
             (v) => set((d) => (d.name.tolerance = number(v, 0, 4, d.name.tolerance))),
-          )}
-          {@render toggle('Fenêtre après sa parole', undefined, s.window.on, (v) =>
-            set((d) => (d.window.on = v)),
-          )}
-          {@render field('Durée de la fenêtre', undefined, String(s.window.seconds), 's', (v) =>
-            set((d) => (d.window.seconds = number(v, 1, 300, d.window.seconds))),
           )}
           {@render toggle(
             'Trace d’une phrase ignorée',
@@ -381,78 +495,73 @@
             s.traceIgnored,
             (v) => set((d) => (d.traceIgnored = v)),
           )}
-        </SettingsCard>
-
-        <SettingsCard title="Fin de phrase et coupure">
-          {@render field('Silence de fin de phrase', undefined, String(s.endOfSpeech.silenceMs), 'ms', (v) =>
-            set((d) => (d.endOfSpeech.silenceMs = number(v, 200, 3000, d.endOfSpeech.silenceMs))),
-          )}
-          {@render toggle(
-            'Répondre dès une courte pause',
-            'Sa réponse se prépare sans se dire, et se retire si tu continues. Chaque essai coûte un appel.',
-            s.endOfSpeech.speculate,
-            (v) => set((d) => (d.endOfSpeech.speculate = v)),
-          )}
-          {@render field('Courte pause', undefined, String(s.endOfSpeech.pauseMs), 'ms', (v) =>
-            set((d) => (d.endOfSpeech.pauseMs = number(v, 64, 2000, d.endOfSpeech.pauseMs))),
-          )}
-          {@render field(
-            'Seuil du silence',
-            'Plus bas, le micro entend tout ; plus haut, il faut parler plus fort.',
-            String(s.endOfSpeech.floorDb),
-            'dB',
-            (v) => set((d) => (d.endOfSpeech.floorDb = number(v, -90, -10, d.endOfSpeech.floorDb))),
-          )}
-          {@render field(
-            'Durée minimale de phrase',
-            undefined,
-            String(s.endOfSpeech.minSpeechMs),
-            'ms',
-            (v) => set((d) => (d.endOfSpeech.minSpeechMs = number(v, 32, 3000, d.endOfSpeech.minSpeechMs))),
-          )}
-          {@render toggle('Couper à la voix', undefined, s.bargeIn.on, (v) => set((d) => (d.bargeIn.on = v)))}
-          <SettingsRow label="Façon de couper">
-            <Segmented
-              options={BARGE}
-              value={s.bargeIn.mode}
-              label="Façon de couper"
-              size="petit"
-              onchange={(v) => set((d) => (d.bargeIn.mode = v as 'soft' | 'now'))}
-            />
+          <SettingsRow label="L’interrompre à la voix">
+            {#snippet children({ labelId })}
+              <Segmented
+                options={BARGE}
+                value={s.bargeIn.mode}
+                label="Façon de l’interrompre"
+                size="petit"
+                onchange={(v) => set((d) => (d.bargeIn.mode = v as 'soft' | 'now'))}
+              />
+              <Switch
+                checked={s.bargeIn.on}
+                aria-labelledby={labelId}
+                onchange={(v) => set((d) => (d.bargeIn.on = v))}
+              />
+            {/snippet}
           </SettingsRow>
           {@render field(
-            'Voix tenue avant de couper',
+            'Voix tenue avant de l’interrompre',
             'Une toux plus courte ne coupe rien.',
-            String(s.bargeIn.holdMs),
-            'ms',
-            (v) => set((d) => (d.bargeIn.holdMs = number(v, 32, 3000, d.bargeIn.holdMs))),
+            secs(s.bargeIn.holdMs),
+            's',
+            (v) => set((d) => (d.bargeIn.holdMs = ms(v, 32, 3000, d.bargeIn.holdMs))),
           )}
-        </SettingsCard>
-
-        <SettingsCard title="Une autre appli sur le micro">
-          {@render toggle(
-            'Détection',
-            'L’écoute s’arrête et la voix se tait. Un serveur relié reçoit « occupé », jamais le nom de l’appli.',
+          {@render paired(
+            'Applis qui prennent le micro',
+            'Une appli en appel met l’écoute en pause ; un serveur relié ne reçoit que « occupé ». ' +
+              'Celles écrites ici sont ignorées.',
             s.busy.on,
             (v) => set((d) => (d.busy.on = v)),
-          )}
-          {@render field(
             'Applis ignorées',
-            'Séparées par des virgules.',
             s.busy.ignored.join(', '),
             undefined,
             (v) => set((d) => (d.busy.ignored = list(v))),
           )}
-          {@render field('Délai de retour', undefined, String(s.busy.returnSeconds), 's', (v) =>
-            set((d) => (d.busy.returnSeconds = number(v, 0, 120, d.busy.returnSeconds))),
+          {@render field(
+            'Délai de retour',
+            'Après la fin de leur appel, avant de réécouter.',
+            comma(s.busy.returnSeconds),
+            's',
+            (v) => set((d) => (d.busy.returnSeconds = number(v, 0, 120, d.busy.returnSeconds))),
           )}
-        </SettingsCard>
+          <SettingsRow
+            label="Mesures de cette session"
+            hint={direct.length
+              ? `De ta dernière syllabe à son premier son : médiane ${secs(median(direct)!)} s sur ` +
+                `${direct.length} tours, dernier ${secs(direct[0]!)} s.`
+              : 'Latence par tour, pour régler la fin de phrase. Pas encore de tour à la voix.'}
+          />
+        </Avance>
       {:else if page.id === 'voix'}
-        <ServiceVoix {session} {set} />
+        <SettingsCard title="Ce qu’on entend">
+          <SettingsRow label="Volume">
+            <Slider
+              value={Math.round(s.voice.volume * 100)}
+              min={0}
+              max={100}
+              step={5}
+              label="Volume"
+              class="volume"
+              onchange={(v) => set((d) => (d.voice.volume = v / 100))}
+            />
+          </SettingsRow>
+        </SettingsCard>
 
         {#if s.brain === 'linked'}
           <SettingsCard title="Ce qui est dit à voix haute" description="Le fil les garde dans tous les cas.">
-            {@render toggle('L’accueil, à ton arrivée', undefined, s.speak.ritual, (v) =>
+            {@render toggle('L’accueil, au lancement et au retour', undefined, s.speak.ritual, (v) =>
               set((d) => (d.speak.ritual = v)),
             )}
             {@render toggle('Les urgences', 'Vaut aussi en sourdine.', s.speak.p0, (v) =>
@@ -467,32 +576,21 @@
           </SettingsCard>
         {/if}
 
-        <SettingsCard title="Ce qu’on entend">
-          {@render field('Volume', 'De 0 à 1.', String(s.voice.volume), undefined, (v) =>
-            set((d) => (d.voice.volume = number(v, 0, 1, d.voice.volume))),
-          )}
-          {@render toggle(
-            'Annulation d’écho du micro',
-            'À la prochaine ouverture.',
-            s.voice.echoCancellation,
-            (v) => set((d) => (d.voice.echoCancellation = v)),
-          )}
-          {@render toggle(
-            'Suppression de bruit du micro',
-            'À la prochaine ouverture.',
-            s.voice.noiseSuppression,
-            (v) => set((d) => (d.voice.noiseSuppression = v)),
-          )}
-        </SettingsCard>
+        <ServiceVoix {session} {set} part="courant" />
 
-        <SettingsCard title="Mesures de cette session">
-          <SettingsRow
-            label="De ta dernière syllabe à son premier son"
-            hint={direct.length
-              ? `Médiane ${median(direct)} ms sur ${direct.length} tours, dernier ${direct[0]} ms.`
-              : 'Pas encore de tour à la voix.'}
-          />
-        </SettingsCard>
+        <Avance
+          cards={inWindow}
+          what={inWindow ? 'le service et ses programmes, l’écho et le bruit' : 'l’écho et le bruit'}
+        >
+          <ServiceVoix {session} {set} part="avance" />
+          {#if inWindow}
+            <SettingsCard title="Le micro" description="À sa prochaine ouverture.">
+              {@render micro(undefined)}
+            </SettingsCard>
+          {:else}
+            {@render micro('À sa prochaine ouverture.')}
+          {/if}
+        </Avance>
       {:else if page.id === 'fenetre'}
         <Fenetre {session} {set} />
       {/if}
@@ -506,9 +604,10 @@
     inset: 0;
     z-index: 10;
     display: grid;
-    grid-template-columns: 236px minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
     background: var(--fond);
     color: var(--texte);
+    font-size: 14px;
   }
   .themes {
     display: flex;
@@ -547,8 +646,24 @@
     display: flex;
     flex-direction: column;
     gap: 18px;
-    max-width: 780px;
+    max-width: 720px;
     margin: 0 auto;
+  }
+  /* A number and its unit: as wide as a value, right-aligned. The input is inside the kit's field. */
+  .contenu :global(.court input) {
+    flex: none;
+    width: 7ch;
+    text-align: right;
+  }
+  .contenu :global(.volume) {
+    width: 280px;
+    max-width: 100%;
+  }
+  /* A row whose field needs the whole width: the label above it. `.ligne` is the kit's row, generated. */
+  .contenu :global(.ligne.pleine) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
   }
   /* Narrow only: the column of themes, and its close button, are not there. */
   .haut {

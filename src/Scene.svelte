@@ -7,11 +7,12 @@
   import Moon from '@lucide/svelte/icons/moon';
   import Settings2 from '@lucide/svelte/icons/settings-2';
   import VolumeX from '@lucide/svelte/icons/volume-x';
+  import { tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import { Mouth, STATE_LABELS } from './body/body.ts';
+  import { Mouth, STATE_LABELS, type BodyState } from './body/body.ts';
   import { inWindow } from './desktop/net.ts';
   import Fil from './Fil.svelte';
-  import { IconButton } from './lib/ui/index.ts';
+  import { Badge, Button, IconButton, Kbd, type Tone } from './lib/ui/index.ts';
   import type { Session } from './session.svelte.ts';
 
   let { session, openSettings }: { session: Session; openSettings: (theme?: 'voix') => void } = $props();
@@ -27,11 +28,45 @@
   const images = $derived(body.level === 'images' && body.rest !== '' && !broken.has(body.rest));
   // The breath follows the sound really played: stopped, it is at rest at once.
   const scale = $derived(1 + Math.min(session.level * 2.2, 0.35));
+
+  const TONES: Record<BodyState, Tone> = {
+    present: 'accent',
+    listening: 'accent',
+    thinking: 'accent',
+    speaking: 'accent',
+    busy: 'attention',
+    muted: 'attention',
+    silenced: 'neutre',
+    unreachable: 'danger',
+    capped: 'attention',
+  };
+
+  // How to reach it in the mode shown, until the person's first phrase: only what really reaches it.
+  const s = $derived(session.settings);
+  const talk = $derived(s.talk[session.layout]);
+  const instruction = $derived.by(() => {
+    if (session.silenced) return 'muted';
+    const unheard = talk === 'muted' || (talk === 'key' && !s.key.on);
+    if (unheard || session.voiceStatus === 'down' || session.state === 'busy') return 'write';
+    if (!session.micOn) return 'mic';
+    if (talk === 'key') return 'key';
+    return s.filter[session.layout] ? 'name' : 'open';
+  });
+  const showInstruction = $derived(!session.spoke && !session.threadOpen);
+  let controls: HTMLDivElement;
+  /** The instruction's button goes with what it did: the focus goes to the same control, at the top. */
+  async function thenFocus(act: () => void, label: string) {
+    act();
+    await tick();
+    controls.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.focus();
+  }
+  // The shortcuts exist in the window only.
+  const keyOf = (shortcut: string) => (inWindow && shortcut ? shortcut : undefined);
 </script>
 
 <!-- In the window, the thumbnail moves by its background. -->
 <div
-  class={['scene', { small }]}
+  class={['scene', { small, images, 'fil-ouvert': session.threadOpen }]}
   data-etat={session.state}
   data-tauri-drag-region={small && inWindow ? '' : undefined}
 >
@@ -58,19 +93,44 @@
     {#if session.subtitle}<p>{session.subtitle}</p>{/if}
   </div>
 
+  {#if showInstruction}
+    <section class="consigne" aria-label="Pour lui parler">
+      {#if instruction === 'muted'}
+        <p>En sourdine : rien ne lui parvient, l’écrit non plus.</p>
+        <Button size="petit" onclick={() => thenFocus(() => session.toggleMute(), 'Mettre en sourdine')}>
+          Sortir de la sourdine
+        </Button>
+      {:else if instruction === 'mic'}
+        <p>Écris-lui, ou rallume le micro.</p>
+        <Button size="petit" onclick={() => thenFocus(() => session.toggleMic(), 'Couper le micro')}>
+          Rallumer le micro
+        </Button>
+      {:else if instruction === 'write'}
+        <p>Écris-lui, depuis le fil.</p>
+      {:else if instruction === 'key'}
+        <!-- The key is kept as the keyboard names it: « KeyF » reads « F ». -->
+        <p>Tiens <Kbd>{s.key.code.replace(/^(Key|Digit)/, '')}</Kbd> pour lui parler.</p>
+        <small>Lâche la touche quand tu as fini.</small>
+      {:else}
+        <p>{instruction === 'name' ? 'Dis son nom, ou parle juste après sa réponse.' : 'Parle-lui.'}</p>
+        <small>Tu peux aussi lui écrire, depuis le fil.</small>
+      {/if}
+    </section>
+  {/if}
+
   <div class="etat">
     {#if session.state === 'busy' || session.busyOverride}
       <button class="etiquette reprise" onclick={() => session.takeBackMic()}>
         {session.busyOverride ? 'Micro repris, rendre à la détection' : 'Micro occupé, le reprendre'}
       </button>
     {:else}
-      <span class="etiquette">{STATE_LABELS[session.state]}</span>
+      <Badge tone={TONES[session.state]} dot>{STATE_LABELS[session.state]}</Badge>
     {/if}
     {#if session.trace}<span class="trace">Filtré : {session.trace}</span>{/if}
     {#if session.failure}<span class="echec" role="alert">{session.failure}</span>{/if}
     {#if session.voiceStatus === 'down'}
       <span class="echec" role="status">
-        Sa voix ne répond pas : il ne t’entend pas et ne parle pas.
+        Sa voix ne répond pas : ni écoute ni parole pour l’instant.
         <button class="reprise" onclick={() => openSettings('voix')}>Régler la voix</button>
       </span>
     {:else if session.voiceStatus === 'starting'}
@@ -78,13 +138,14 @@
     {/if}
   </div>
 
-  <div class="controles">
+  <div class="controles" bind:this={controls}>
     {#if session.speaking || session.reading}
       <IconButton icon={VolumeX} label="Faire taire" onclick={() => session.silence()} />
     {/if}
     <IconButton
       icon={Moon}
       label={session.silenced ? 'Sortir de la sourdine' : 'Mettre en sourdine'}
+      shortcut={keyOf(s.display.muteShortcut)}
       aria-pressed={session.silenced}
       onclick={() => session.toggleMute()}
     />
@@ -100,11 +161,14 @@
       aria-pressed={session.threadOpen}
       onclick={() => (session.threadOpen = !session.threadOpen)}
     />
-    <IconButton
-      icon={small ? Maximize2 : Minimize2}
-      label={small ? 'Revenir à la scène' : 'Passer en petit mode'}
-      onclick={() => session.setLayout(small ? 'scene' : 'small')}
-    />
+    {#if inWindow}
+      <IconButton
+        icon={small ? Maximize2 : Minimize2}
+        label={small ? 'Revenir à la scène' : 'Passer en petit mode'}
+        shortcut={keyOf(s.display.shortcut)}
+        onclick={() => session.setLayout(small ? 'scene' : 'small')}
+      />
+    {/if}
     <IconButton icon={Settings2} label="Réglages" onclick={() => openSettings()} />
   </div>
 
@@ -197,6 +261,32 @@
     color: var(--texte-2);
     letter-spacing: 0.02em;
   }
+  /* Under the breath, as on the maquette; under the subtitles when a picture takes the middle. */
+  .consigne {
+    position: absolute;
+    left: 50%;
+    top: calc(50% + 9vh);
+    width: min(520px, calc(100% - 32px));
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    text-align: center;
+  }
+  .consigne p {
+    margin: 0;
+    font: 500 22px/1.35 var(--serif);
+    text-wrap: balance;
+  }
+  .consigne small {
+    font-size: 13px;
+    color: var(--texte-3);
+  }
+  .images .consigne {
+    top: auto;
+    bottom: 3vh;
+  }
   .reprise {
     background: none;
     border: 0;
@@ -221,6 +311,12 @@
     gap: 2px;
     z-index: 2;
   }
+  /* The open thread pushes the controls aside instead of covering its title; too narrow, they stay above it. */
+  @media (min-width: 760px) {
+    .fil-ouvert:not(.small) .controles {
+      right: calc(420px + 14px);
+    }
+  }
 
   /* The small mode: a thumbnail with its last sentence. Always-on-top comes with the desktop window. */
   .small .corps {
@@ -243,6 +339,17 @@
   }
   .small .sous-titres p {
     font-size: 19px;
+  }
+  .small .consigne {
+    top: auto;
+    bottom: 12px;
+    gap: 8px;
+  }
+  .small .consigne p {
+    font-size: 16px;
+  }
+  .small .consigne small {
+    display: none;
   }
   .small .etat {
     right: 14px;

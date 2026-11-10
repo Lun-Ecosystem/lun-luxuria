@@ -5,7 +5,7 @@ import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
 import { CoreClient } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
 import type { Bricks, ProgramName, ProgramState } from './desktop/voix.ts';
-import { pageNet } from './desktop/net.ts';
+import { inWindow, pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
 import { Endpointer, ENDPOINT_DEFAULTS, levelToVoice, type EndpointParams } from './listen/endpoint.ts';
 import { presenceKeeper, watchPage } from './page.ts';
@@ -18,6 +18,9 @@ const MIC_KEY = 'luxuria.mic';
 const MUTE_KEY = 'luxuria.mute';
 const TOKEN_KEY = 'luxuria.token';
 const LAYOUT_KEY = 'luxuria.layout';
+/** Why the arrival is back, kept across one reload of this page. */
+const SAID_KEY = 'luxuria.said';
+const FORGOTTEN = 'Ce poste n’est plus reconnu par le serveur : entre un nouveau code d’appairage.';
 const BEAT_MS = 30_000;
 const BUSY_POLL_MS = 3000;
 const SUBTITLE_STAYS_MS = 4000;
@@ -28,6 +31,16 @@ function stored(key: string): string | null {
     return localStorage.getItem(key);
   } catch {
     return null;
+  }
+}
+/** Read once: the next load no longer sees it. */
+function takeSaid(): string {
+  try {
+    const said = sessionStorage.getItem(SAID_KEY) ?? '';
+    sessionStorage.removeItem(SAID_KEY);
+    return said;
+  } catch {
+    return '';
   }
 }
 function store(key: string, value: string | null): void {
@@ -42,7 +55,8 @@ function store(key: string, value: string | null): void {
 /** Ties the pure parts to the browser. Nothing is decided here that a test should see. */
 export class Session {
   settings = $state<Settings>(readSettings(stored(SETTINGS_KEY)));
-  layout = $state<Layout>(stored(LAYOUT_KEY) === 'small' ? 'small' : 'scene');
+  // The small mode only has a meaning in the window: a tab shows the scene, whatever was saved.
+  layout = $state<Layout>(inWindow && stored(LAYOUT_KEY) === 'small' ? 'small' : 'scene');
   /** A cut microphone never comes back on by itself: only the button changes this. */
   micOn = $state(stored(MIC_KEY) === 'on');
   /** The desk mute: no capture, nothing said of herself, nothing sent. Never lifted by itself either. */
@@ -64,7 +78,15 @@ export class Session {
   level = $state(0);
   latencies = $state<{ ms: number; speculated: boolean }[]>([]);
   thread = $state<Message[]>([]);
+  /** Read once at least: before, or unreachable since, an empty thread says nothing of what it holds. */
+  threadRead = $state(false);
   entered = $state(false);
+  /** In the window: no input for the set delay (`desktop/away.ts`). */
+  away = $state(false);
+  /** When a phrase was last heard or written: talking without keys is being there too. */
+  heardAt = 0;
+  /** A phrase of the person left in this session, heard or written: the scene's instruction has done its job. */
+  spoke = $state(false);
   /** The thread over the scene; in the window's small mode, it turns the thumbnail into a panel. */
   threadOpen = $state(false);
   /** In the window: what the global keys could not take, said on the settings screen. */
@@ -91,13 +113,18 @@ export class Session {
   /** In the window: why starting with Windows could not be read or changed. */
   startSaid = $state('');
   token = $state<string | null>(stored(TOKEN_KEY));
+  /** Why the arrival is shown again, said on it. */
+  arrivalSaid = $state(takeSaid());
 
   /** In the window, the page's paths go where the browser's proxy sent them. */
   #net = pageNet(() => this.settings.server);
-  core = new CoreClient(this.token, this.#net.server);
+  #forgotten = false;
+  core = new CoreClient(this.token, this.#net.server, () => this.#forget());
   /** Chosen when entering: a change of brain goes through a reload. */
   brain: Brain = this.core;
   #keyHeld = false;
+  /** The key was held during the phrase being heard: let go before its end, it still counts. */
+  #keyInPhrase = false;
   #stop = new AbortController();
   #mic: { stop(): void } | null = null;
   #endpointer = new Endpointer();
@@ -164,11 +191,29 @@ export class Session {
     this.saveSettings({ ...($state.snapshot(this.settings) as Settings), server: url });
     this.token = null;
     store(TOKEN_KEY, null);
-    this.core = new CoreClient(null, this.#net.server);
+    this.core = new CoreClient(null, this.#net.server, () => this.#forget());
     if (this.entered) location.reload();
   }
 
-  /** A click starts it: a browser plays no sound without one. */
+  /** The server no longer knows this device: its token goes, and the arrival comes back asking for a code. */
+  #forget(): void {
+    if (this.#forgotten) return;
+    this.#forgotten = true;
+    // Another tab may have paired meanwhile: only this token goes, the reload takes the new one.
+    if (stored(TOKEN_KEY) === this.token) store(TOKEN_KEY, null);
+    this.token = null;
+    try {
+      sessionStorage.setItem(SAID_KEY, FORGOTTEN);
+    } catch {
+      // A private window: the arrival comes back without its reason.
+    }
+    location.reload();
+  }
+
+  /**
+   * In a browser tab, a click starts it: a tab plays no sound without one. The window plays it without a click and
+   * enters by itself (`desktop/enter.svelte.ts`).
+   */
   async enter(): Promise<void> {
     this.entered = true;
     this.brain =
@@ -186,12 +231,16 @@ export class Session {
       )),
       settings: () => this.settings,
       layout: () => this.layout,
-      keyHeld: () => this.#keyHeld,
+      keyHeld: () => this.#keyHeld || this.#keyInPhrase,
       silenced: () => this.silenced,
       now: () => Date.now(),
       on: (e) => {
         if (e.type === 'thinking') this.thinking = e.on;
-        else if (e.type === 'ignored') this.#showTrace(e.text);
+        else if (e.type === 'addressed') {
+          // Only a phrase the filter let through: noise, a video or someone else in the room do not count.
+          this.spoke = true;
+          void this.#heard();
+        } else if (e.type === 'ignored') this.#showTrace(e.text);
         else if (e.type === 'latency') this.latencies = [e, ...this.latencies].slice(0, 20);
         else if (e.type === 'failed') {
           this.failure = e.text;
@@ -250,12 +299,16 @@ export class Session {
   // A refused beat, the page shown again and the stream coming back may fall together: one start.
   #presence = presenceKeeper(
     async () => {
+      // Also reached from a beat refused while away: it must not reopen the presence.
+      if (this.away) return;
       try {
         await this.brain.presence('started', {
           ...this.#flags(),
           ritual: this.settings.speak.ritual && !this.silenced,
         });
         this.linked = true;
+        // Gone while the start was on its way: it closes again.
+        if (this.away) void this.brain.presence('stopped').catch(() => {});
       } catch {
         this.linked = false;
       }
@@ -271,8 +324,24 @@ export class Session {
       ...(this.settings.speak.p0 ? {} : { silentAnnounce: true }),
     };
   }
-  #announce = this.#presence.announce;
-  #beat = this.#presence.beat;
+  // Away, nothing is announced: a beat would be refused, and its refusal would announce again.
+  #announce = () => (this.away ? Promise.resolve() : this.#presence.announce());
+  #beat = () => (this.away ? Promise.resolve() : this.#presence.beat());
+
+  /** Only what the server is told changes: listening and the mute stay as they are. */
+  async setAway(next: boolean): Promise<void> {
+    if (next === this.away) return;
+    this.away = next;
+    if (!this.entered) return;
+    if (next) await this.brain.presence('stopped').catch(() => {});
+    else await this.#announce();
+  }
+
+  /** A phrase sent, heard or written: the person is there, as with a key. Away, the presence comes back first. */
+  #heard(): Promise<void> {
+    this.heardAt = Date.now();
+    return this.setAway(false);
+  }
 
   #onLive(e: LiveEvent): void {
     this.#convo?.onLive(e);
@@ -369,15 +438,24 @@ export class Session {
     const { talk, endOfSpeech, key } = this.settings;
     const onlyKey = talk[this.layout] === 'key';
     const voice = onlyKey && (!key.on || !this.#keyHeld) ? 0 : levelToVoice(frame, endOfSpeech.floorDb);
+    if (this.#keyHeld) this.#keyInPhrase = true;
     for (const e of this.#endpointer.push(frame, voice, Date.now())) {
-      if (e.type === 'start') this.hearing = true;
+      if (e.type === 'start') {
+        this.hearing = true;
+        this.#keyInPhrase = this.#keyHeld;
+      }
       if (e.type === 'end' || e.type === 'noise') this.hearing = false;
       this.#convo?.onEndpoint(e);
     }
   }
 
   async #refreshThread(): Promise<void> {
-    this.thread = await this.brain.thread().catch(() => this.thread);
+    try {
+      this.thread = await this.brain.thread();
+      this.threadRead = true;
+    } catch {
+      // Keeps what it had.
+    }
   }
 
   toggleMic(): void {
@@ -417,6 +495,8 @@ export class Session {
 
   async write(text: string): Promise<void> {
     if (this.silenced) return;
+    this.spoke = true;
+    await this.#heard();
     try {
       await this.#convo?.write(text);
       // It went through: an older failure no longer holds.

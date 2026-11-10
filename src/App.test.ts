@@ -1,6 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./audio.ts', () => ({
+  openMicrophone: vi.fn(async () => ({ stop: vi.fn() })),
+  webOutput: () => ({ play: () => ({ stop() {}, heard: () => 0 }), level: () => 0 }),
+}));
+
 import App from './App.svelte';
 import Reglages from './Reglages.svelte';
 import { Session } from './session.svelte.ts';
@@ -10,6 +16,8 @@ beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn());
 });
+// A failing test must not leave its stubs to the next ones.
+afterEach(() => vi.unstubAllGlobals());
 
 describe('the door', () => {
   it('alone by default: enters without a code', () => {
@@ -30,6 +38,54 @@ describe('the door', () => {
     await userEvent.click(first);
     await userEvent.keyboard('123456');
     expect(await screen.findByRole('alert')).toHaveTextContent('Code refusé');
+  });
+
+  it('a token the server no longer knows is forgotten, and the arrival asks for a code and says why', async () => {
+    localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
+    localStorage.setItem('luxuria.token', 't');
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...location, reload });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ error: 'Jeton inconnu' }, { status: 401 })),
+    );
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const session = new Session();
+    await session.enter();
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(localStorage.getItem('luxuria.token')).toBeNull();
+    // What the reload shows: the code again, and the reason.
+    render(App);
+    expect(screen.getByRole('alert')).toHaveTextContent('Ce poste n’est plus reconnu par le serveur');
+    expect(screen.getAllByRole('textbox').length).toBeGreaterThan(0);
+  });
+
+  it('a token another tab just got is not the one forgotten', async () => {
+    localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
+    localStorage.setItem('luxuria.token', 'ancien');
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...location, reload });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ error: 'Jeton inconnu' }, { status: 401 })),
+    );
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const session = new Session();
+    localStorage.setItem('luxuria.token', 'nouveau'); // paired meanwhile, elsewhere
+    await session.enter();
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(localStorage.getItem('luxuria.token')).toBe('nouveau');
+  });
+
+  it('a tab, linked and paired: its threshold as before, never entering by itself', () => {
+    localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
+    localStorage.setItem('luxuria.token', 't');
+    render(App);
+    expect(screen.getByRole('button', { name: 'Entrer' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Entrer sans attendre' })).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    // Nothing to ask: no empty box where the fields would be.
+    expect(screen.queryByRole('region', { name: 'Le serveur' })).toBeNull();
   });
 
   it('with a token, nothing runs before the click: no microphone, no presence', () => {
@@ -55,13 +111,13 @@ describe('the settings', () => {
     localStorage.setItem('luxuria.settings', JSON.stringify({ brain: 'linked' }));
     render(Reglages, { session: new Session(), close: () => {}, start: 'ecoute' });
     for (const name of [
-      'Touche à maintenir',
-      'Mention du nom',
-      'Fenêtre après sa parole',
+      'Touche à tenir',
+      'Son nom l’appelle',
+      'L’écouter après sa phrase',
       'Trace d’une phrase ignorée',
-      'Détection',
+      'Applis qui prennent le micro',
       'Répondre dès une courte pause',
-      'Couper à la voix',
+      'L’interrompre à la voix',
     ])
       expect(screen.getByRole('switch', { name })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('link', { name: 'Voix' }));
@@ -84,12 +140,12 @@ describe('the settings', () => {
   it('a value out of range is brought back in range, garbage leaves it unchanged', async () => {
     const session = new Session();
     render(Reglages, { session, close: () => {}, start: 'ecoute' });
-    const box = screen.getByRole('textbox', { name: 'Durée de la fenêtre' });
+    const box = screen.getByRole('textbox', { name: 'Durée de l’écoute après sa phrase' });
     await userEvent.clear(box);
     await userEvent.type(box, '9999');
     await userEvent.tab();
     await waitFor(() => expect(session.settings.window.seconds).toBe(300));
-    const again = screen.getByRole('textbox', { name: 'Durée de la fenêtre' });
+    const again = screen.getByRole('textbox', { name: 'Durée de l’écoute après sa phrase' });
     await userEvent.clear(again);
     await userEvent.type(again, 'abc');
     await userEvent.tab();
