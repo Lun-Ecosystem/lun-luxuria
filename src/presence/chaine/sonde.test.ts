@@ -1,0 +1,285 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ancreLocale, installerSonde, type Banc, type PlanDePartie } from './sonde.ts';
+
+// Web Audio by hand: jsdom has none. Time is the false clock of vitest, read by `performance.now()` of the window.
+
+class Node_ {
+  connect(n: unknown) {
+    return n;
+  }
+}
+class Source extends Node_ {
+  buffer: { duration: number; getChannelData(c: number): Float32Array } | null = null;
+  context!: Ctx;
+  debut?: number;
+  #ecoute: (() => void)[] = [];
+  start(t: number) {
+    this.debut = t;
+  }
+  addEventListener(_: 'ended', f: () => void) {
+    this.#ecoute.push(f);
+  }
+  finir() {
+    for (const f of this.#ecoute) f();
+  }
+}
+interface Tap {
+  connect(): void;
+  onaudioprocess:
+    ((e: { playbackTime: number; inputBuffer: { getChannelData(): Float32Array } }) => void) | null;
+  disconnect(): void;
+}
+class Ctx {
+  static tous: Ctx[] = [];
+  /** A class per test: the probe patches its prototype. */
+  static Source = class extends Source {};
+  currentTime = 0;
+  outputLatency = 0.05;
+  destination = {};
+  sampleRate: number;
+  taps: Tap[] = [];
+  sources: Source[] = [];
+  constructor(o?: { sampleRate?: number }) {
+    this.sampleRate = o?.sampleRate ?? 48000;
+    Ctx.tous.push(this);
+  }
+  createMediaStreamDestination() {
+    return { stream: { micro: this }, channelCount: 2 };
+  }
+  createBufferSource() {
+    const s = new Ctx.Source();
+    s.context = this;
+    this.sources.push(s);
+    return s;
+  }
+  createScriptProcessor() {
+    const t: Tap = { connect: () => {}, onaudioprocess: null, disconnect: vi.fn() };
+    this.taps.push(t);
+    return t;
+  }
+  async resume() {}
+  async decodeAudioData() {
+    return { duration: 0.5, getChannelData: () => new Float32Array(1) };
+  }
+}
+class Worklet {
+  port = new EventTarget();
+}
+
+const sse = (blocs: [string, unknown][]) =>
+  new Response(blocs.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join(''), {
+    headers: { 'content-type': 'text/event-stream' },
+  });
+
+let tts: Float32Array;
+let win: Window & typeof globalThis;
+let banc: Banc;
+const page = () => Ctx.tous[1]!;
+const micro = () => Ctx.tous[0]!;
+
+function installer(plan: PlanDePartie) {
+  win = {
+    performance: { now: () => Date.now() },
+    setTimeout: (f: () => void, ms: number) => setTimeout(f, ms),
+    navigator: { mediaDevices: {} },
+    document,
+    AudioContext: Ctx,
+    AudioWorkletNode: Worklet,
+    AudioBufferSourceNode: Ctx.Source,
+    fetch: async (url: string) => {
+      if (url.startsWith('/banc/sons/')) return new Response(new ArrayBuffer(4));
+      if (url === '/voix/tts')
+        return new Response(tts.slice().buffer, { headers: { 'x-sample-rate': '1000' } });
+      return sse([
+        ['user', { id: 6 }],
+        ['reply', { id: 7 }],
+        ['delta', { text: 'Bonjour. ' }],
+        ['delta', { text: 'Il fait beau.' }],
+      ]);
+    },
+  } as unknown as Window & typeof globalThis;
+  banc = installerSonde(win, plan, ancreLocale);
+}
+
+/** The page opens its microphone and its frames, as `openMicrophone` does. */
+async function ouvrir() {
+  await win.navigator.mediaDevices.getUserMedia({ audio: true });
+  new Ctx({ sampleRate: 16000 });
+  return new win.AudioWorkletNode(page() as unknown as BaseAudioContext, 'frames');
+}
+const trames = (n: Worklet, combien: number, ecart: number) => {
+  for (let i = 0; i < combien; i++) {
+    vi.advanceTimersByTime(ecart);
+    n.port.dispatchEvent(new Event('message'));
+  }
+};
+const finirJouer = async (n: Worklet) => {
+  const t0 = banc.jouer();
+  await vi.advanceTimersByTimeAsync(0);
+  trames(n, 10, 32);
+  return t0;
+};
+
+/** What the page does with a reply: send, synthesize, play in a context of its own. */
+async function synthetiser(texte: string, samples: Float32Array) {
+  tts = samples;
+  await win.fetch('/voix/tts', { method: 'POST', body: JSON.stringify({ text: texte }) });
+}
+async function parler(texte: string, sortie: Ctx, samples = tts, avant?: () => Promise<void>) {
+  await synthetiser(texte, samples);
+  await avant?.();
+  const src = sortie.createBufferSource();
+  src.buffer = { duration: samples.length / 1000, getChannelData: () => samples };
+  src.connect(sortie.destination);
+  src.start(sortie.currentTime);
+  return { src, tap: sortie.taps.at(-1)! };
+}
+const son = (tete: number, n = 300) => {
+  const x = new Float32Array(tete + n);
+  for (let i = tete; i < tete + n; i++) x[i] = 0.2 + (i % 7) / 100;
+  return x;
+};
+const traiter = (tap: Tap, x: Float32Array, playbackTime: number) =>
+  tap.onaudioprocess!({ playbackTime, inputBuffer: { getChannelData: () => x } });
+
+beforeEach(() => {
+  vi.useFakeTimers({ now: 10_000 });
+  Ctx.tous = [];
+  Ctx.Source = class extends Source {};
+});
+afterEach(() => vi.useRealTimers());
+
+describe('installerSonde', () => {
+  it('gives the page a stream of a 48 kHz context, silent until jouer', async () => {
+    installer({ paroles: [{ son: 'p1', a: 300 }] });
+    const stream = await win.navigator.mediaDevices.getUserMedia({ audio: true });
+    expect(micro().sampleRate).toBe(48000);
+    expect(stream).toEqual({ micro: micro() });
+    expect(micro().sources).toHaveLength(0);
+  });
+
+  it('starts only after ten regular frames of the page, then poses each sound at t0 + a', async () => {
+    installer({ paroles: [{ son: 'p1', a: 300 }] });
+    const n = await ouvrir();
+    let t0: number | undefined;
+    void banc.jouer().then((t) => (t0 = t));
+    await vi.advanceTimersByTimeAsync(0);
+    trames(n, 9, 30);
+    trames(n, 1, 80); // a stall: the count starts again
+    trames(n, 8, 30);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t0).toBeUndefined();
+    trames(n, 1, 30);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t0).toBe(Date.now() + 100);
+    expect(micro().sources[0]!.debut).toBeCloseTo(0.4);
+    expect(banc.journal.filter((e) => e.name === 'parole')).toMatchObject([
+      { at: t0! + 300, parole: 1, etape: 'debut' },
+      { at: t0! + 800, parole: 1, etape: 'fin' },
+    ]);
+  });
+
+  it('poses a speech anchored on the first sentence of reply 1, 1 s after it sounds', async () => {
+    installer({ paroles: [{ son: 'p1', apres: { joue: 1, ms: 1000 } }] });
+    const n = await ouvrir();
+    const sortie = new Ctx({ sampleRate: 1000 });
+    await finirJouer(n);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(micro().sources).toHaveLength(0);
+
+    await win.fetch('/api/threads/main/messages', {
+      method: 'POST',
+      body: JSON.stringify({ text: 'la météo' }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(banc.journal.find((e) => e.name === 'envoi_recu')).toMatchObject({
+      texte: 'la météo',
+      reponse: 7,
+    });
+    const x = son(0);
+    const { tap } = await parler('Bonjour.', sortie, x);
+    sortie.currentTime = 2;
+    traiter(tap, x, 2.05);
+
+    const joue = banc.journal.find((e) => e.name === 'joue')!;
+    expect(joue).toMatchObject({ at: Date.now() + 50, reponse: 7, phrase: 1, texte: 'Bonjour.' });
+    expect(micro().sources[0]!.debut).toBeCloseTo(1.05);
+    expect(banc.journal.find((e) => e.name === 'parole')!.at).toBe(joue.at + 1000);
+  });
+
+  it('dates two sources 100 ms apart each on its own tap', async () => {
+    installer({ paroles: [] });
+    const sortie = new Ctx({ sampleRate: 1000 });
+    await win.fetch('/api/threads/main/messages', { method: 'POST', body: '{"text":"x"}' });
+    await vi.advanceTimersByTimeAsync(0);
+    const [a, b] = [son(0), son(0, 200).map((v) => v + 0.1)];
+    const un = await parler('Bonjour.', sortie, a);
+    const deux = await parler('Il fait beau.', sortie, b);
+    traiter(un.tap, a, 0);
+    traiter(deux.tap, b, 0.1);
+    expect(banc.journal.filter((e) => e.name === 'joue')).toMatchObject([
+      { at: Date.now(), phrase: 1, texte: 'Bonjour.' },
+      { at: Date.now() + 100, phrase: 2, texte: 'Il fait beau.' },
+    ]);
+  });
+
+  it('writes arrete once, at the last sound sample, after the source ends', async () => {
+    installer({ paroles: [] });
+    const sortie = new Ctx({ sampleRate: 1000 });
+    const x = son(0, 100);
+    x.fill(0, 80);
+    const { src, tap } = await parler('Bonjour.', sortie, x);
+    traiter(tap, x, 0);
+    src.finir();
+    src.finir();
+    vi.advanceTimersByTime(200);
+    expect(banc.journal.filter((e) => e.name === 'arrete')).toEqual([
+      expect.objectContaining({ at: Date.now() - 200 + 79 }),
+    ]);
+    expect(tap.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('finds the text of a sound behind its leading silence, and says how long it is', async () => {
+    installer({ paroles: [] });
+    const sortie = new Ctx({ sampleRate: 1000 });
+    const x = son(191);
+    // The page asks for the next sentence before it plays this one: the last synthesis is not always the one heard.
+    const { tap } = await parler('Bonjour.', sortie, x, () =>
+      synthetiser(
+        'Autre chose.',
+        son(0).map((v) => -v),
+      ),
+    );
+    traiter(tap, x, 0);
+    expect(banc.journal.find((e) => e.name === 'joue')).toMatchObject({
+      at: Date.now() + 191,
+      texte: 'Bonjour.',
+      teteMs: 191,
+    });
+    expect(banc.sortieAnnonceeMs).toBe(50);
+  });
+
+  it('clicks « Faire taire » at its instant, and writes each anchor never come at the end', async () => {
+    document.body.innerHTML = '<button aria-label="Faire taire"></button>';
+    const clic = vi.fn();
+    document.querySelector('button')!.addEventListener('click', clic);
+    installer({
+      paroles: [{ son: 'p1', apres: { envoi: 2, ms: 0 } }],
+      gestes: [{ geste: 'silence', a: 500 }],
+    });
+    const n = await ouvrir();
+    const t0 = await (async () => {
+      const p = finirJouer(n);
+      await vi.advanceTimersByTimeAsync(0);
+      return p;
+    })();
+    await vi.advanceTimersByTimeAsync(t0 + 499 - Date.now());
+    expect(clic).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(clic).toHaveBeenCalledOnce();
+    expect(banc.fin().filter((e) => e.name === 'geste' || e.name === 'parole_sautee')).toMatchObject([
+      { name: 'geste', geste: 'silence', trouve: true, at: t0 + 500 },
+      { name: 'parole_sautee', son: 'p1', parole: 1 },
+    ]);
+  });
+});
