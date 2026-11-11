@@ -53,7 +53,7 @@
     "fichier": "src/speech/speaker.ts",
     "motif": "      now.sound.stop();\n",
     "par": "",
-    "maillon": "coupure",
+    "maillon": "voix",
     "attend": "src/presence/scenarios/faire-taire.ts"
   }
 }
