@@ -113,6 +113,11 @@ export class Trace {
     if (gone.startsWith('p')) this.#tries.delete(Number(gone.slice(1)));
   }
 
+  /** The sentence ended not for her: what it said leaves the trace, from each of its tries. */
+  forget(phrase: number): void {
+    for (const e of this.#events) if (e.phrase === phrase) delete e['texte'];
+  }
+
   /** One line per event, after one that says the format. */
   lines(): string {
     return [{ format: TRACE_FORMAT }, ...this.#events].map((e) => JSON.stringify(e)).join('\n') + '\n';

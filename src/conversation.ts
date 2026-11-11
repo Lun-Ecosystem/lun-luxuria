@@ -246,6 +246,8 @@ export class Conversation {
   /** Nothing will answer this sentence: the reply before it is the unheard one again, and comes out if held back. */
   #noAnswer(attempt: Attempt): void {
     this.#write('sans_reponse', this.#ref(attempt), {});
+    // A try at a pause may have passed the filter: the sentence did not, its words go.
+    if (attempt.phrase !== undefined) this.#d.trace?.forget(attempt.phrase);
     if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
     this.#letGo(attempt);
   }

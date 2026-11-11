@@ -187,6 +187,23 @@ describe('the trace of a turn', () => {
     expect(t.trace.lines()).not.toMatch(/beau/);
   });
 
+  it('a try at a pause passed the filter, the whole sentence did not: none of its words stay', async () => {
+    const t = setup([`${DEFAULTS.agent.name} attends`, 'il fait beau dehors'], {
+      filter: { scene: true, small: true },
+    });
+    t.hear({ type: 'start' });
+    t.advance(300);
+    t.hear({ type: 'pause', audio: AUDIO });
+    await tick();
+    expect(find(t, 'transcrite')[0]).toHaveProperty('texte');
+    t.hear({ type: 'resume' });
+    t.advance(1200);
+    t.hear({ type: 'end', audio: AUDIO, lastVoiceAt: 2300 });
+    await tick();
+    expect(find(t, 'verdict').map((e) => e['resultat'])).toEqual(['pour_elle', 'ecartee']);
+    expect(t.trace.lines()).not.toMatch(/"texte"|attends|beau/);
+  });
+
   it('a noise: a sentence numbered, nothing tried', () => {
     const t = setup();
     t.hear({ type: 'start' });
