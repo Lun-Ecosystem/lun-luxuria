@@ -37,6 +37,15 @@ export default {
   },
   attendus: [
     {
+      id: 'verdict-bruit',
+      niveau: 'tous',
+      mecanisme: 'filtre',
+      // La toux est un bruit du scénario, pas une parole : sa phrase n'a pas de tour, le verdict se dit par sa valeur.
+      dit: 'la toux transcrite vide est jugée bruit',
+      evenement: 'verdict',
+      ou: { valeurs: { resultat: 'bruit' } },
+    },
+    {
       id: 'reprise',
       niveau: 'tous',
       mecanisme: 'suspension',

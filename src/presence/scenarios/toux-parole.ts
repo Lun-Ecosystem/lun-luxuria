@@ -42,6 +42,14 @@ export default {
       entre: [384, 416],
     },
     {
+      id: 'verdict-bruit',
+      niveau: 'tous',
+      mecanisme: 'filtre',
+      dit: 'la toux transcrite vide est jugée bruit',
+      evenement: 'verdict',
+      ou: { parole: 2, valeurs: { resultat: 'bruit' } },
+    },
+    {
       id: 'arrete',
       niveau: 'tous',
       mecanisme: 'voix',
