@@ -7,3 +7,5 @@ dist/
 build/
 __pycache__/
 graphify-out/
+# A trace holds what the person said: never in the repository.
+deroule*.jsonl

@@ -9,6 +9,7 @@ import { FRAME, loadSilero, SileroVoice } from './vad.ts';
 import { Conversation } from '../conversation.ts';
 import { DEFAULTS } from '../settings.ts';
 import { Speaker } from '../speech/speaker.ts';
+import { Trace, TRACE_FORMAT } from '../trace.ts';
 
 const MODEL = readFileSync('src/listen/silero/silero_vad.onnx');
 const byLevel = (frame: Float32Array) => levelToVoice(frame, DEFAULTS.endOfSpeech.floorDb);
@@ -269,6 +270,8 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
       nothing: { files: 0, suspended: 0, cut: 0 },
     };
     const missed: string[] = [];
+    // The trace of the chain, file by file, on the time of each sound: beside the report, out of the repository.
+    const turns = [JSON.stringify({ format: TRACE_FORMAT })];
     for (const file of wavs(DIR).sort()) {
       const fiche = { ...json(join(file, '..', 'fiche.json')), ...json(file.replace(/\.wav$/, '.json')) };
       if (fiche.phrases === undefined) continue;
@@ -276,6 +279,7 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
       let stops = 0;
       let cut = false;
       let soundAt = 0;
+      const trace = new Trace(() => soundAt);
       const convo: Conversation = new Conversation({
         brain: {
           send: async (_text, _opts, on) => on({ type: 'reply', id: 99 }),
@@ -287,12 +291,14 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
           async () => ({ samples: new Float32Array(1), rate: 16000 }),
           { play: () => ({ stop: () => void stops++, heard: () => 0.5 }) },
           (e) => convo.onSpeaker(e),
+          trace,
         ),
         settings: () => DEFAULTS,
         layout: () => 'small',
         keyHeld: () => false,
         now: () => soundAt,
         on: () => {},
+        trace,
       });
       convo.onLive({
         type: 'speech',
@@ -314,8 +320,11 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
       t.files++;
       if (stops > 0) t.suspended++;
       if (cut) t.cut++;
-      if (cut !== said) missed.push(relative(DIR, file).replaceAll('\\', '/'));
+      const fichier = relative(DIR, file).replaceAll('\\', '/');
+      if (cut !== said) missed.push(fichier);
+      for (const e of trace.events) turns.push(JSON.stringify({ fichier, ...e }));
     }
+    writeFileSync(join(DIR, 'deroule.jsonl'), `${turns.join('\n')}\n`);
     const lines = [
       '',
       '## Un son pendant qu’elle parle',
@@ -325,6 +334,6 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
       missed.length ? `À côté : ${missed.join(', ')}.` : 'Aucun à côté.',
     ];
     appendFileSync(join(DIR, 'releve.md'), `${lines.join('\n')}\n`);
-    console.log(lines.join('\n'));
+    console.log(lines.join('\n'), `\nDéroulé : ${join(DIR, 'deroule.jsonl')}`);
   }, 600_000);
 });
