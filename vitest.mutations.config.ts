@@ -31,6 +31,12 @@ const muter = (m: Mutation): Plugin => {
 };
 
 // No module cache on disk: its key does not see which mutation the plugin applies, one run would load another's.
+// Each run its own vite cache, in its own folder (BANC_DIR): runs side by side renamed the same files (EPERM).
+const cacheDir = process.env['BANC_DIR'] ? resolve(process.env['BANC_DIR'], 'vite') : undefined;
 export default defineConfig((env) =>
-  mergeConfig(base(env), { plugins: m ? [muter(m)] : [], test: { fsModuleCache: false } }),
+  mergeConfig(base(env), {
+    plugins: m ? [muter(m)] : [],
+    ...(cacheDir ? { cacheDir } : {}),
+    test: { fsModuleCache: false },
+  }),
 );
