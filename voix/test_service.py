@@ -202,7 +202,31 @@ def call(path, headers=None, data=None):
         return e.code, e.read()
 
 
+def check_no_tts():
+    """--tts aucun: the page's own voice is served elsewhere; the service transcribes and says it has no synthesis."""
+    import sys
+
+    assert service.make_tts("aucun") is None
+    for argv in ([], ["--tts", "aucun"]):
+        a, names = service.options(argv)
+        assert a.tts == "aucun" and names["tts"] == "aucun", (argv, names)
+    assert "piper" not in sys.modules and "kokoro_onnx" not in sys.modules, "no synthesis module imported"
+    port = PORT + 2
+    threading.Thread(target=service.serve, args=(lambda a: ("x", 1.0), None, None, {"stt": "x", "tts": "aucun"}, port),
+                     daemon=True).start()
+    time.sleep(0.3)
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/tts", data=json.dumps({"text": "x"}).encode())
+    try:
+        urllib.request.urlopen(req, timeout=5)
+        raise AssertionError("/tts answers without a synthesis")
+    except urllib.error.HTTPError as e:
+        assert e.code == 503, e.code
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/ping", timeout=5) as r:
+        assert json.loads(r.read())["tts"] == "aucun"
+
+
 def main():
+    check_no_tts()  # first: before anything imports a synthesis module
     heard = []
 
     def stt(audio):
