@@ -19,7 +19,8 @@ export default {
   mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'suspension', 'coupure', 'serveur', 'voix'],
   personne: [
     { a: 320, dit: 'Raconte-moi la journée de demain', duree: 1280 },
-    { a: 3136, dit: 'Non', duree: 300 },
+    // 3136 − 2428, le premier son de la réponse 1
+    { apres: { joue: 1, ms: 708 }, dit: 'Non', duree: 300 },
   ],
   modele: {
     reponses: [
@@ -88,7 +89,8 @@ export default {
       dit: 'plus rien de la réponse 1 ne sonne',
       evenement: 'joue',
       ou: { reponse: 1 },
-      depuis: { attendu: 'son-arrete' },
+      // Dès le début de « non », plus tôt que l'arrêt du son : `son-arrete` est exact, une ancre `tous` n'y tient pas.
+      depuis: { parole: 2, bord: 'debut' },
       absent: true,
     },
   ],

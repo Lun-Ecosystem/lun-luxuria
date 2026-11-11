@@ -20,7 +20,8 @@ export default {
   mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'retenue', 'coupure', 'serveur', 'voix'],
   personne: [
     { a: 320, dit: 'Tu peux me rappeler le film de ce soir', duree: 1280 },
-    { a: 4608, dit: 'Et aussi la météo de demain', duree: 2048 },
+    // 4608 − 1878, l'envoi de la parole 1 : pendant qu'elle réfléchit
+    { apres: { envoi: 1, ms: 2730 }, dit: 'Et aussi la météo de demain', duree: 2048 },
   ],
   modele: {
     reponses: [

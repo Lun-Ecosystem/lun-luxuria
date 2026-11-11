@@ -15,7 +15,8 @@ export default {
   mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'serveur', 'voix'],
   personne: [
     { a: 320, dit: 'Raconte-moi la journée de demain', duree: 1280 },
-    { a: 3008, dit: '(toux)', duree: 300, entendu: '' },
+    // 3008 − 2428, le premier son de la réponse 1
+    { apres: { joue: 1, ms: 580 }, dit: '(toux)', duree: 300, entendu: '' },
   ],
   modele: {
     reponses: [

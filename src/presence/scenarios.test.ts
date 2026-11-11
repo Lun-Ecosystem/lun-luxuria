@@ -26,12 +26,15 @@ const deroule = (p: Partie) =>
     .join('\n') + '\n';
 
 describe('les scénarios de départ', () => {
-  it('sont seize', () => {
-    expect(Object.keys(scenarios)).toHaveLength(16);
+  it('sont dix-sept', () => {
+    expect(Object.keys(scenarios)).toHaveLength(17);
   });
 
   it.each(Object.entries(scenarios))("%s : chargé, joué deux fois à l'identique, tenu", async (file, s) => {
     expect(charger(s)).toBe(s);
+    // Petit mode, jamais joué dans la chaîne : son « rien-ne-part » a des bornes sur une ligne du serveur.
+    if (s.nom === 'phrase-ecartee') expect(() => charger(s, 'chaine')).toThrow(/« rien-ne-part »/);
+    else expect(charger(s, 'chaine')).toBe(s);
     expect(JSON.parse(JSON.stringify(s))).toEqual(s);
     expect(`./scenarios/${s.nom}.ts`).toBe(file);
     const partie = await jouer(s);

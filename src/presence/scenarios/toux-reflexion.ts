@@ -19,7 +19,8 @@ export default {
   mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'retenue', 'serveur', 'voix'],
   personne: [
     { a: 320, dit: 'Quel temps fera-t-il demain', duree: 1280 },
-    { a: 2560, dit: '(toux)', duree: 450, entendu: '' },
+    // 2560 − 1878, l'envoi de la parole 1 : pendant qu'elle réfléchit
+    { apres: { envoi: 1, ms: 682 }, dit: '(toux)', duree: 450, entendu: '' },
   ],
   modele: { reponses: [{ premierMotMs: 3000, phrases: ['Demain, il fera doux et sec.'] }] },
   attendus: [
