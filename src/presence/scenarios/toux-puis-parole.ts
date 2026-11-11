@@ -6,7 +6,8 @@
 // chevauchement.
 //
 // Le calcul (trames de 32 ms à partir de 0, DEFAUTS, réglages par défaut : pause 160, silence 700, tenue 400) :
-// - elle parle seule à 1000 (pourquoi : spontaneous), synthèse → son 1150, 83 car. × 60 = 4980 ms.
+// - elle parle seule à 1000 (pourquoi : spontaneous), synthèse → son 1150, la phrase 1 coupée à sa virgule
+//   comme le fait le serveur, « Demain matin il fera frais, », 27 car. × 60 = 1620 ms.
 // - la toux, 2016 → 2466 : tenue 2016 + 384 = 2400 → suspendue, son arrêté ; dernière trame 2464 ; pause 2624 →
 //   essai, transcrite vide 2774 → bruit ; fin 2464 + 704 = 3168 → sans réponse → reprise, la phrase redite à 3168.
 // - parole 1, 3360 → 4960, 192 ms après cette fin (200 à la trame près) : une nouvelle phrase, elle parle par-dessus

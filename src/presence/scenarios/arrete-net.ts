@@ -3,11 +3,11 @@
 //
 // Le calcul (trames de 32 ms à partir de 0, DEFAUTS, réglages par défaut : pause 160, silence 700, tenue 400,
 // coupure « tout de suite ») :
-// - parole 1, 320 → 1600 : envoyée à 1878 (réponse 1), confirmée à 2272 ; phrase 1 reçue 2278, son 2428, 83 car. ×
-//   60 = 4980 ms, 16 mots.
+// - parole 1, 320 → 1600 : envoyée à 1878 (réponse 1), confirmée à 2272 ; phrase 1 coupée à sa virgule comme le
+//   fait le serveur, « Demain matin il fera frais, » reçue 2278, son 2428, 27 car. × 60 = 1620 ms, 5 mots.
 // - « arrête », parole 2, 3136 → 3736 : tenue 3136 + 384 = 3520 → suspendue, son arrêté 1092 ms après son début :
-//   1092 / 4980 = 0,219 → 3 mots sur 16 (de 934 à 1245 ms : ± 150 ms de marge). Dernière trame 3712 ; pause 3872
-//   → essai, transcrite 4022 → pour elle, envoyée (réponse 2) ; fin 3712 + 704 = 4416 → confirmée → coupée,
+//   1092 / 1620 = 0,674 → 3 mots sur 5 (de 972 à 1296 ms : 120 ms de marge avant, 204 après). Dernière trame
+//   3712 ; pause 3872 → essai, transcrite 4022 → pour elle, envoyée (réponse 2) ; fin 3712 + 704 = 4416 → confirmée → coupée,
 //   « Demain matin il » au serveur, silence coupé.
 import type { Scenario } from '../scenario.ts';
 
@@ -54,7 +54,7 @@ export default {
       evenement: 'arrete',
       ou: { reponse: 1 },
       depuis: { parole: 2, bord: 'debut' },
-      // tenue à 384 ms du début, une trame de marge ; laissé à lui-même, le son finirait à 7408 (4972 ms après)
+      // tenue à 384 ms du début, une trame de marge ; laissé à lui-même, le son finirait à 4048 (528 ms après)
       entre: [384, 416],
     },
     {
@@ -71,7 +71,7 @@ export default {
       id: 'coupee',
       niveau: 'exact',
       mecanisme: 'coupure',
-      dit: 'coupée, trois mots entendus sur seize',
+      dit: 'coupée, trois mots entendus sur cinq',
       evenement: 'coupee',
       ou: { reponse: 1, valeurs: { entendu: 'Demain matin il' } },
     },

@@ -4,10 +4,10 @@
 // le son s'arrête sur-le-champ, la suite est jetée, et ce qui a été entendu part au serveur comme coupure.
 //
 // Le calcul (trames de 32 ms à partir de 0, DEFAUTS, réglages par défaut : pause 160, silence 700) :
-// - parole 1, 320 → 1600 : envoyée à 1878 (réponse 1), confirmée à 2272 ; phrase 1 reçue 2278, son 2428, 83 car. ×
-//   60 = 4980 ms, 16 mots.
+// - parole 1, 320 → 1600 : envoyée à 1878 (réponse 1), confirmée à 2272 ; phrase 1 coupée à sa virgule comme le
+//   fait le serveur, « Demain matin il fera frais, » reçue 2278, son 2428, 27 car. × 60 = 1620 ms, 5 mots.
 // - le geste, 1 s après ce premier son : 3428. `stop()` : `silence` coupée, `son` arrêté, la sortie se tait,
-//   `arretee` avec 1000 / 4980 = 0,201 → 3 mots sur 16 ; la coupure part au serveur. Les phrases 2 et 3, déjà
+//   `arretee` avec 1000 / 1620 = 0,617 → 3 mots sur 5 ; la coupure part au serveur. Les phrases 2 et 3, déjà
 //   synthétisées ou en cours, ne sonnent jamais.
 import type { Scenario } from '../scenario.ts';
 
@@ -82,7 +82,7 @@ export default {
       id: 'arretee-entendu',
       niveau: 'exact',
       mecanisme: 'coupure',
-      dit: 'coupée, trois mots entendus sur seize',
+      dit: 'coupée, trois mots entendus sur cinq',
       evenement: 'arretee',
       ou: { reponse: 1, valeurs: { entendu: 'Demain matin il' } },
       depuis: { attendu: 'geste' },
