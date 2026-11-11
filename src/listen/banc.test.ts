@@ -109,6 +109,61 @@ describe('hearing a voice', () => {
   });
 });
 
+describe('the clock of a replay', () => {
+  it('is the place in the sound, for the listening and the conversation alike', async () => {
+    // A breath the level takes for a sentence, from 1 s to 3 s.
+    const sound = Float32Array.from([
+      ...new Float32Array(16000),
+      ...noise(2, 0.2),
+      ...new Float32Array(16000),
+    ]);
+    let soundAt = 0;
+    const latencies: number[] = [];
+    const ends: { at: number; decidedAt: number; lastVoiceAt: number; now: number }[] = [];
+    const convo: Conversation = new Conversation({
+      brain: {
+        send: async (_text, _opts, on) => {
+          on({ type: 'reply', id: 7 });
+          convo.onLive({ type: 'speech', id: 7, n: 1, text: 'Oui.', why: 'reply' });
+        },
+        cut: async () => {},
+        withdraw: async () => {},
+      },
+      stt: async () => ({ text: 'Bonjour', confidence: 0.9 }),
+      speaker: new Speaker(
+        async () => ({ samples: new Float32Array(1), rate: 16000 }),
+        { play: () => ({ stop: () => {}, heard: () => 1 }) },
+        (e) => convo.onSpeaker(e),
+      ),
+      settings: () => DEFAULTS,
+      layout: () => 'scene',
+      keyHeld: () => false,
+      now: () => soundAt,
+      on: (e) => void (e.type === 'latency' && latencies.push(e.ms)),
+    });
+    await replay(
+      sound,
+      byLevel,
+      ENDPOINT_DEFAULTS,
+      (e) => {
+        if (e.type === 'end')
+          ends.push({ at: e.at, decidedAt: e.decidedAt, lastVoiceAt: e.lastVoiceAt, now: soundAt });
+        convo.onEndpoint(e);
+      },
+      (at) => (soundAt = at),
+    );
+    expect(ends).toHaveLength(1);
+    const end = ends[0]!;
+    expect(end.lastVoiceAt).toBeGreaterThan(2900);
+    expect(end.at).toBe(end.now);
+    expect(end.decidedAt).toBe(end.at);
+    expect(end.at - end.lastVoiceAt).toBeGreaterThanOrEqual(ENDPOINT_DEFAULTS.silenceMs);
+    // The reply sounds at once, at the moment the sentence ended: no more a clock stuck at zero.
+    expect(latencies).toHaveLength(1);
+    expect(latencies[0]).toBeGreaterThanOrEqual(ENDPOINT_DEFAULTS.silenceMs);
+  });
+});
+
 /**
  * The bench: `npm run banc`. Every WAV of a folder kept out of the repository, through the listening as it was
  * (the level) and as it is (the model). A `fiche.json` beside the files, or `<name>.json` for one file, says what is
@@ -220,6 +275,7 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
       const said = fiche.phrases > 0;
       let stops = 0;
       let cut = false;
+      let soundAt = 0;
       const convo: Conversation = new Conversation({
         brain: {
           send: async (_text, _opts, on) => on({ type: 'reply', id: 99 }),
@@ -235,7 +291,7 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
         settings: () => DEFAULTS,
         layout: () => 'small',
         keyHeld: () => false,
-        now: () => 0,
+        now: () => soundAt,
         on: () => {},
       });
       convo.onLive({
@@ -246,8 +302,12 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
         why: 'reply',
       });
       await new Promise((r) => setTimeout(r));
-      await replay(readWav(readFileSync(file)), await byModel(), ENDPOINT_DEFAULTS, (e) =>
-        convo.onEndpoint(e),
+      await replay(
+        readWav(readFileSync(file)),
+        await byModel(),
+        ENDPOINT_DEFAULTS,
+        (e) => convo.onEndpoint(e),
+        (at) => (soundAt = at),
       );
       for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r));
       const t = tally[said ? 'sentence' : 'nothing'];

@@ -1,4 +1,4 @@
-import { Endpointer, type EndpointEvent, type EndpointParams } from './endpoint.ts';
+import { Endpointer, type EndpointEvent, type EndpointParams, type Moment } from './endpoint.ts';
 import { FRAME } from './vad.ts';
 
 export const FRAME_MS = 32;
@@ -89,7 +89,9 @@ export async function replay(
   voice: (frame: Float32Array, listening: boolean) => number | Promise<number>,
   params: EndpointParams,
   /** Each moment as it is found, for what listens further down. */
-  on?: (e: EndpointEvent) => void,
+  on?: (e: EndpointEvent & Moment) => void,
+  /** The clock of what listens further down: the place in the sound of the frame being heard. */
+  time?: (at: number) => void,
 ): Promise<Heard> {
   const endpointer = new Endpointer(params);
   const heard: Heard = { events: [], sentences: [], noises: 0, held: 0, resumed: 0 };
@@ -100,6 +102,7 @@ export async function replay(
     const frame = new Float32Array(FRAME);
     frame.set(samples.subarray(i * FRAME, (i + 1) * FRAME));
     const at = i * FRAME_MS;
+    time?.(at);
     for (const e of endpointer.push(frame, await voice(frame, endpointer.listening), at)) {
       on?.(e);
       heard.events.push({ at, type: e.type });

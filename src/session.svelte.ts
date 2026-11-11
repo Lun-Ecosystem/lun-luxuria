@@ -32,6 +32,8 @@ const BEAT_MS = 30_000;
 const BUSY_POLL_MS = 3000;
 const SUBTITLE_STAYS_MS = 4000;
 const TRACE_STAYS_MS = 6000;
+/** The one clock of a turn, for the listening, the conversation and her voice: it never goes back, as `Date.now` may. */
+const clock = () => performance.now();
 
 function stored(key: string): string | null {
   try {
@@ -249,7 +251,7 @@ export class Session {
       layout: () => this.layout,
       keyHeld: () => this.#keyHeld || this.#keyInPhrase,
       silenced: () => this.silenced,
-      now: () => Date.now(),
+      now: clock,
       on: (e) => {
         if (e.type === 'thinking') this.thinking = e.on;
         else if (e.type === 'addressed') {
@@ -470,7 +472,7 @@ export class Session {
 
   #onFrame(frame: Float32Array): void {
     // What it is and when it came are read now; its turn to be judged comes after the frames before it.
-    const at = Date.now();
+    const at = clock();
     const epoch = this.#epoch;
     const { talk, key } = this.settings;
     const silent = talk[this.layout] === 'key' && (!key.on || !this.#keyHeld);
@@ -514,7 +516,7 @@ export class Session {
 
   #judged(frame: Float32Array, voice: number, at: number, keyHeld: boolean): void {
     if (keyHeld) this.#keyInPhrase = true;
-    for (const e of this.#endpointer.push(frame, voice, at)) {
+    for (const e of this.#endpointer.push(frame, voice, at, clock())) {
       if (e.type === 'start') {
         this.hearing = true;
         // The key as it was when this frame came, not now: its judgment may have waited.
