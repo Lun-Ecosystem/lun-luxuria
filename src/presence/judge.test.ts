@@ -696,4 +696,33 @@ describe('the report', () => {
       '',
     ]);
   });
+
+  it('of the chain: a request the false model refused fails the game, with its text and its source', () => {
+    const refus: BancEvent = {
+      de: 'banc',
+      at: 2854,
+      name: 'modele_inattendu',
+      sorte: 'stream',
+      extrait: 'Le jardin est mouillé',
+    };
+    const ligne = (si: string) =>
+      releveChaine([
+        {
+          scenario: scenario([], { modele: { reponses: [{ si, phrases: ['Un.'] }] } }),
+          verdicts: [v({})],
+          chaine: { ...partie, banc: [...banc, refus] },
+          exacte: partie,
+          transcription: 'faster:tiny',
+          synthese: 'piper',
+        },
+      ])
+        .split('\n')
+        .find((l) => l.startsWith('Échec :'));
+    // What was said chose a reply: the text heard is the source.
+    expect(ligne('jardin')).toBe(
+      'Échec : demande au modèle sans réponse prévue (stream), texte reçu « Le jardin est mouillé », extrait « Le jardin est mouillé », source : transcription.',
+    );
+    // What was said chose none either: the scenario's.
+    expect(ligne('film')).toMatch(/source : scenario\.$/);
+  });
 });

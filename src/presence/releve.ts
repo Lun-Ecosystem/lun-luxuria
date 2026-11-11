@@ -1,6 +1,6 @@
 import { delays, type DelayName, type TraceEvent, type TraceValue } from '../trace.ts';
 import { passe, type Verdict } from './judge.ts';
-import type { Mecanisme, Partie, Scenario } from './scenario.ts';
+import { choisir, rattacher, type Mecanisme, type Partie, type Scenario } from './scenario.ts';
 
 /** One scenario judged: what the report is made of. */
 export interface Juge {
@@ -155,7 +155,29 @@ function annexe(p: Jouee): string[] {
   const { scenario: s, chaine: c } = p;
   const banc = (name: string) => c.banc.filter((e) => e.name === name);
   const debuts = banc('parole').filter((e) => e['etape'] === 'debut');
+  const voixDe = (i: number) => {
+    const d = debuts.find((e) => e['parole'] === i + 1);
+    return d && c.page.find((e) => e.name === 'voix' && son(e) >= d.at);
+  };
+  // A request refused fails the game (`chaine.test.ts`) even with every verdict held: said here, its source as `juger`.
+  const appels = c.banc.filter(
+    (e) => e.name === 'modele_appele' || (e.name === 'modele_inattendu' && e['sorte'] === 'stream'),
+  );
+  const envois = rattacher(appels, banc('envoi_recu'));
+  const refus = banc('modele_inattendu').map((e) => {
+    const envoi = envois[appels.indexOf(e)];
+    const phrase = envoi && c.page.find((x) => x.name === 'numero' && x.reponse === envoi.reponse)?.phrase;
+    const dits = s.personne.filter((_, i) => phrase !== undefined && voixDe(i)?.phrase === phrase);
+    const source =
+      dits.length && choisir(s.modele?.reponses ?? [], dits.map((x) => x.dit).join(' ')) >= 0
+        ? 'transcription'
+        : 'scenario';
+    return `Échec : demande au modèle sans réponse prévue (${String(e['sorte'])}), texte reçu « ${String(
+      envoi?.['texte'] ?? '',
+    )} », extrait « ${String(e['extrait'] ?? '')} », source : ${source}.`;
+  });
   const out = [
+    ...refus.flatMap((l) => [l, '']),
     '### La chaîne',
     '',
     `Transcription : ${p.transcription}. Sa voix : ${p.synthese}. Latence de sortie annoncée : ${
@@ -171,7 +193,7 @@ function annexe(p: Jouee): string[] {
       s.personne.map((x, i) => {
         const d = debuts.find((e) => e['parole'] === i + 1);
         if (!d) return [i + 1, x.dit, '(sautée)'];
-        const voix = c.page.find((e) => e.name === 'voix' && son(e) >= d.at);
+        const voix = voixDe(i);
         const t = voix && c.page.filter((e) => e.name === 'transcrite' && e.phrase === voix.phrase).at(-1);
         return [i + 1, x.dit, t?.['texte'], t?.['confiance'], voix && son(voix) - d.at];
       }),
