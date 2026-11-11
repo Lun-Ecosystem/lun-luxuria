@@ -569,7 +569,7 @@ describe('what reads', () => {
   it('seconds with a comma, not milliseconds', async () => {
     const session = opened('ecoute');
     const silence = screen.getByRole('textbox', { name: 'Silence de fin de phrase' });
-    expect(silence).toHaveValue('0,5');
+    expect(silence).toHaveValue('0,7');
     await fireEvent.change(silence, { target: { value: '0,8' } });
     expect(session.settings.endOfSpeech.silenceMs).toBe(800);
     expect(screen.getByRole('textbox', { name: 'Courte pause' })).toHaveValue('0,16');

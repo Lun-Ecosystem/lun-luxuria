@@ -17,20 +17,20 @@ const n = (ms: number) => Math.ceil(ms / F);
 
 describe('the moments of a sentence', () => {
   it('start, hold, pause, end, in that order', () => {
-    expect(types('v'.repeat(n(500)) + 's'.repeat(n(500)))).toEqual(['start', 'held', 'pause', 'end']);
+    expect(types('v'.repeat(n(500)) + 's'.repeat(n(700)))).toEqual(['start', 'held', 'pause', 'end']);
   });
 
   it('a voice that goes on after a pause is a resume, and only one sentence', () => {
-    const p = 'v'.repeat(n(300)) + 's'.repeat(n(200)) + 'v'.repeat(3) + 's'.repeat(n(500));
+    const p = 'v'.repeat(n(300)) + 's'.repeat(n(200)) + 'v'.repeat(3) + 's'.repeat(n(700));
     expect(types(p).filter((t) => t !== 'held')).toEqual(['start', 'pause', 'resume', 'pause', 'end']);
   });
 
   it('a click is noise: nothing leaves, no pause', () => {
-    expect(types('vv' + 's'.repeat(n(500)))).toEqual(['start', 'noise']);
+    expect(types('vv' + 's'.repeat(n(700)))).toEqual(['start', 'noise']);
   });
 
   it('a cough does not reach the hold', () => {
-    expect(types('v'.repeat(n(300)) + 's'.repeat(n(500)))).not.toContain('held');
+    expect(types('v'.repeat(n(300)) + 's'.repeat(n(700)))).not.toContain('held');
   });
 
   it('the level between the thresholds keeps voice going, not starting', () => {
@@ -42,11 +42,11 @@ describe('the moments of a sentence', () => {
 
   it('dates the last voice for the chronometer, and keeps the words before the start', () => {
     const e = new Endpointer({ ...ENDPOINT_DEFAULTS, prePadMs: F * 2 });
-    const events = play('ss' + 'v'.repeat(10) + 's'.repeat(n(500)), e);
+    const events = play('ss' + 'v'.repeat(10) + 's'.repeat(n(700)), e);
     const end = events.at(-1)!;
     if (end.event.type !== 'end') throw new Error(end.event.type);
     expect(end.event.lastVoiceAt).toBe(11 * F);
-    expect(end.event.audio.length).toBe((2 + 10 + n(500)) * frame.length);
+    expect(end.event.audio.length).toBe((2 + 10 + n(700)) * frame.length);
   });
 
   it('cuts a sentence that never ends', () => {

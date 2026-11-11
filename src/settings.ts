@@ -93,7 +93,7 @@ export const DEFAULTS: Settings = {
   busy: { on: true, ignored: ['obs64.exe'], returnSeconds: 5 },
   traceIgnored: true,
   bargeIn: { on: true, mode: 'now', holdMs: 400 },
-  endOfSpeech: { silenceMs: 500, speculate: true, pauseMs: 160, model: true, floorDb: -50, minSpeechMs: 250 },
+  endOfSpeech: { silenceMs: 700, speculate: true, pauseMs: 160, model: true, floorDb: -50, minSpeechMs: 250 },
   speak: { ritual: true, p0: true, spontaneous: true },
   voice: {
     volume: 1,
