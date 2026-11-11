@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ancreLocale, installerSonde, type Banc, type PlanDePartie } from './sonde.ts';
+import type { Apres, Geste } from '../scenario.ts';
+import { installerSonde, type Banc, type Plan } from './sonde.ts';
 
 // Web Audio by hand: jsdom has none. Time is the false clock of vitest, read by `performance.now()` of the window.
 
@@ -77,7 +78,14 @@ let banc: Banc;
 const page = () => Ctx.tous[1]!;
 const micro = () => Ctx.tous[0]!;
 
-function installer(plan: PlanDePartie) {
+/** A plan as `planDePartie` gives it: each speech by its number, of 500 ms, as `decodeAudioData` says. */
+function installer(paroles: ({ a: number } | { apres: Apres })[], gestes: Geste[] = []) {
+  const plan: Plan = {
+    nom: 'essai',
+    poses: paroles.map((at, i) => ({ son: i, de: 'parole', numero: i + 1, duree: 500, ...at })),
+    gestes,
+    reponses: [],
+  };
   win = {
     performance: { now: () => Date.now() },
     setTimeout: (f: () => void, ms: number) => setTimeout(f, ms),
@@ -98,7 +106,7 @@ function installer(plan: PlanDePartie) {
       ]);
     },
   } as unknown as Window & typeof globalThis;
-  banc = installerSonde(win, plan, ancreLocale);
+  banc = installerSonde(win, plan);
 }
 
 /** The page opens its microphone and its frames, as `openMicrophone` does. */
@@ -151,7 +159,7 @@ afterEach(() => vi.useRealTimers());
 
 describe('installerSonde', () => {
   it('gives the page a stream of a 48 kHz context, silent until jouer', async () => {
-    installer({ paroles: [{ son: 'p1', a: 300 }] });
+    installer([{ a: 300 }]);
     const stream = await win.navigator.mediaDevices.getUserMedia({ audio: true });
     expect(micro().sampleRate).toBe(48000);
     expect(stream).toEqual({ micro: micro() });
@@ -159,7 +167,7 @@ describe('installerSonde', () => {
   });
 
   it('starts only after ten regular frames of the page, then poses each sound at t0 + a', async () => {
-    installer({ paroles: [{ son: 'p1', a: 300 }] });
+    installer([{ a: 300 }]);
     const n = await ouvrir();
     let t0: number | undefined;
     void banc.jouer().then((t) => (t0 = t));
@@ -180,7 +188,7 @@ describe('installerSonde', () => {
   });
 
   it('poses a speech anchored on the first sentence of reply 1, 1 s after it sounds', async () => {
-    installer({ paroles: [{ son: 'p1', apres: { joue: 1, ms: 1000 } }] });
+    installer([{ apres: { joue: 1, ms: 1000 } }]);
     const n = await ouvrir();
     const sortie = new Ctx({ sampleRate: 1000 });
     await finirJouer(n);
@@ -208,7 +216,7 @@ describe('installerSonde', () => {
   });
 
   it('dates two sources 100 ms apart each on its own tap', async () => {
-    installer({ paroles: [] });
+    installer([]);
     const sortie = new Ctx({ sampleRate: 1000 });
     await win.fetch('/api/threads/main/messages', { method: 'POST', body: '{"text":"x"}' });
     await vi.advanceTimersByTimeAsync(0);
@@ -224,7 +232,7 @@ describe('installerSonde', () => {
   });
 
   it('writes arrete once, at the last sound sample, after the source ends', async () => {
-    installer({ paroles: [] });
+    installer([]);
     const sortie = new Ctx({ sampleRate: 1000 });
     const x = son(0, 100);
     x.fill(0, 80);
@@ -240,7 +248,7 @@ describe('installerSonde', () => {
   });
 
   it('finds the text of a sound behind its leading silence, and says how long it is', async () => {
-    installer({ paroles: [] });
+    installer([]);
     const sortie = new Ctx({ sampleRate: 1000 });
     const x = son(191);
     // The page asks for the next sentence before it plays this one: the last synthesis is not always the one heard.
@@ -254,7 +262,7 @@ describe('installerSonde', () => {
     expect(banc.journal.find((e) => e.name === 'joue')).toMatchObject({
       at: Date.now() + 191,
       texte: 'Bonjour.',
-      teteMs: 191,
+      tete: 191,
     });
     expect(banc.sortieAnnonceeMs).toBe(50);
   });
@@ -263,10 +271,7 @@ describe('installerSonde', () => {
     document.body.innerHTML = '<button aria-label="Faire taire"></button>';
     const clic = vi.fn();
     document.querySelector('button')!.addEventListener('click', clic);
-    installer({
-      paroles: [{ son: 'p1', apres: { envoi: 2, ms: 0 } }],
-      gestes: [{ geste: 'silence', a: 500 }],
-    });
+    installer([{ apres: { envoi: 2, ms: 0 } }], [{ geste: 'silence', a: 500 }]);
     const n = await ouvrir();
     const t0 = await (async () => {
       const p = finirJouer(n);
@@ -279,7 +284,7 @@ describe('installerSonde', () => {
     expect(clic).toHaveBeenCalledOnce();
     expect(banc.fin().filter((e) => e.name === 'geste' || e.name === 'parole_sautee')).toMatchObject([
       { name: 'geste', geste: 'silence', trouve: true, at: t0 + 500 },
-      { name: 'parole_sautee', son: 'p1', parole: 1 },
+      { name: 'parole_sautee', son: 0, parole: 1 },
     ]);
   });
 });

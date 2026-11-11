@@ -3,19 +3,12 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readWav, writeWav } from '../../listen/replay.ts';
-import { DEFAUTS, type Parole, type Reponse, type Scenario } from '../scenario.ts';
+import { DEFAUTS, type Apres, type Geste, type Parole, type Reponse, type Scenario } from '../scenario.ts';
 
 /**
  * The person's sounds for the chain, and the game plan the probe reads. Nothing here goes in the repository: the
  * sounds live in `dir/sons/` (`CHAINE_DIR`), laid by hand or synthesized by Windows and cached there.
  */
-
-// shortcut: declared here until task 1 adds `Parole.apres` and `Scenario.gestes` to scenario.ts; reconcile at merge.
-export type Apres = { joue: number; phrase?: number; ms: number } | { envoi: number; ms: number };
-export type ParoleChaine = Omit<Parole, 'a'> &
-  ({ a: number; apres?: undefined } | { a?: undefined; apres: Apres });
-export type Geste = { geste: 'silence'; a?: number; apres?: Apres };
-export type ScenarioChaine = Omit<Scenario, 'personne'> & { personne: ParoleChaine[]; gestes?: Geste[] };
 
 /** 16 kHz mono samples from -1 to 1, as `readWav` gives them. */
 export type Synth = (texte: string) => Promise<Float32Array>;
@@ -98,7 +91,7 @@ async function dire(
   return { samples: rogner(samples), cache: false };
 }
 
-async function sonDeParole(p: ParoleChaine, dir: string, synth: Synth): Promise<SonDe> {
+async function sonDeParole(p: Parole, dir: string, synth: Synth): Promise<SonDe> {
   const nom = `${nomDe(p.dit)}.wav`;
   const pose = await lire(join(dir, 'sons', nom));
   if (pose) return pret(rogner(pose), 'pose');
@@ -124,9 +117,9 @@ async function sonDeParole(p: ParoleChaine, dir: string, synth: Synth): Promise<
  * A speech: `dir/sons/<nom>.wav`, then the cache `dir/sons/sapi/`, then `synth`. A noise: `bruit.wav`, cut to its
  * duration. Leading and trailing silences are removed.
  */
-export async function sonsDe(s: Scenario | ScenarioChaine, dir: string, synth: Synth): Promise<Sons> {
+export async function sonsDe(s: Scenario, dir: string, synth: Synth): Promise<Sons> {
   const personne: SonDe[] = [];
-  for (const p of s.personne as ParoleChaine[]) personne.push(await sonDeParole(p, dir, synth));
+  for (const p of s.personne) personne.push(await sonDeParole(p, dir, synth));
   const bruits: SonDe[] = [];
   for (const b of s.bruits ?? []) {
     const son = await lire(join(dir, 'sons', 'bruit.wav'));
@@ -148,13 +141,14 @@ export type PlanDePartie =
 const prets = (sons: Sons) => [...sons.personne, ...sons.bruits];
 
 /** The plan the probe plays, data only; the anchors are left for the probe to resolve. */
-export function planDePartie(s: Scenario | ScenarioChaine, sons: Sons): PlanDePartie {
+export function planDePartie(s: Scenario, sons: Sons): PlanDePartie {
   const manque = prets(sons).flatMap((x) => ('manque' in x ? [x.manque] : []));
   if (manque.length > 0) return { nom: s.nom, manque: [...new Set(manque)] };
   const duree = (n: number) => (prets(sons)[n] as SonPret).duree;
   const poses: Pose[] = [
-    ...(s.personne as ParoleChaine[]).map((p, i): Pose => {
-      const at = p.apres ? { apres: p.apres } : { a: p.a };
+    ...s.personne.map((p, i): Pose => {
+      // `charger` refuses a speech with neither `a` nor `apres`.
+      const at = p.apres ? { apres: p.apres } : { a: p.a! };
       return { son: i, de: 'parole', numero: i + 1, duree: duree(i), ...at };
     }),
     ...(s.bruits ?? []).map((b, j): Pose => {
@@ -165,7 +159,7 @@ export function planDePartie(s: Scenario | ScenarioChaine, sons: Sons): PlanDePa
   return {
     nom: s.nom,
     poses,
-    gestes: (s as ScenarioChaine).gestes ?? [],
+    gestes: s.gestes ?? [],
     reponses: s.modele?.reponses ?? [],
   };
 }
@@ -179,8 +173,8 @@ export function fichiers(sons: Sons): Uint8Array[] {
  * The witness through Chromium's fake device: every sound at `attenteMs + a` in one WAV, `attenteMs` the opening
  * wait the task 0 measured, which the player takes off when it realigns. Absolute instants only.
  */
-export function temoin(s: Scenario | ScenarioChaine, sons: Sons, attenteMs = 8000): Uint8Array {
-  const paroles = s.personne as ParoleChaine[];
+export function temoin(s: Scenario, sons: Sons, attenteMs = 8000): Uint8Array {
+  const paroles = s.personne;
   if (paroles.some((p) => p.apres))
     throw new Error(`${s.nom} : une parole ancrée ne se pose pas dans le témoin`);
   const poses = [

@@ -1,6 +1,7 @@
 import { frames } from '../../brain.ts';
-import type { BancNom } from '../scenario.ts';
+import { ancre, type Apres, type BancEvent, type BancNom } from '../scenario.ts';
 import type { TraceValue } from '../../trace.ts';
+import type { PlanDePartie } from './sons.ts';
 
 /**
  * The probe, posed before the page (`addInitScript`): the page's microphone is a stream it makes, and it dates what
@@ -9,31 +10,11 @@ import type { TraceValue } from '../../trace.ts';
  * latency `getOutputTimestamp` announces (plan 2026-11-11-chaine-laptop, « Les deux horloges »).
  */
 
-// shortcut: declared here until task 1 lands `Parole.apres` and `ancre` in scenario.ts; reconcile at the merge.
-export type Apres = { joue: number; phrase?: number; ms: number } | { envoi: number; ms: number };
-export type Ancrer = (apres: Apres, journal: readonly EvenementSonde[]) => number | undefined;
-
-// shortcut: declared here until task 3 lands `planDePartie` in sons.ts; reconcile at the merge.
-export type Pose = { son: string; a: number } | { son: string; apres: Apres };
-export interface PlanDePartie {
-  paroles: Pose[];
-  bruits?: Pose[];
-  gestes?: ({ geste: 'silence'; a: number } | { geste: 'silence'; apres: Apres })[];
-}
-
-/** The probe's own lines, beyond the player's: task 1 adds `geste` and `parole_sautee` to `BancNom`. */
-export type NomSonde = BancNom | 'geste' | 'parole_sautee';
-/** A `BancEvent` with the probe's names; the same type once task 1 is merged. */
-export interface EvenementSonde {
-  de: 'banc';
-  at: number;
-  name: NomSonde;
-  reponse?: number;
-  [value: string]: TraceValue | undefined;
-}
+/** A plan `planDePartie` gives when no sound is missing: the only one the probe plays. */
+export type Plan = Extract<PlanDePartie, { poses: unknown }>;
 
 export interface Banc {
-  journal: EvenementSonde[];
+  journal: BancEvent[];
   /** The instant the probe's context starts to sound, once `jouer` has started it. */
   t0?: number;
   /** The output latency the page's voice context announces, in ms, read once. */
@@ -41,7 +22,7 @@ export interface Banc {
   /** Waits for regular frames of the page, then starts the sounds; gives `t0`. */
   jouer(): Promise<number>;
   /** The game is over: each anchor never come writes `parole_sautee`. Gives the journal. */
-  fin(): EvenementSonde[];
+  fin(): BancEvent[];
 }
 
 /** Below it, a sample is silence: the threshold task 0 measured Piper with. */
@@ -72,20 +53,21 @@ const reduit = (t: string) => t.replace(/\s+/g, ' ').trim();
 interface Synthese {
   texte: string;
   cle: Float32Array;
-  teteMs: number;
+  /** Ms of silence at the head of the sound. */
+  tete: number;
   reponse?: number;
 }
 
 /** A reply as the page read it in the stream of its sending: its number and the text so far. */
 interface Envoi {
-  evenement: EvenementSonde;
+  evenement: BancEvent;
   texte: string;
   phrases: string[];
 }
 
-export function installerSonde(win: Window & typeof globalThis, plan: PlanDePartie, ancre: Ancrer): Banc {
+export function installerSonde(win: Window & typeof globalThis, plan: Plan): Banc {
   const now = () => win.performance.now();
-  const journal: EvenementSonde[] = [];
+  const journal: BancEvent[] = [];
   let micCtx: AudioContext | undefined;
   let dest: MediaStreamAudioDestinationNode | undefined;
   const syntheses: Synthese[] = [];
@@ -93,8 +75,8 @@ export function installerSonde(win: Window & typeof globalThis, plan: PlanDePart
   const enAttente: { apres: Apres; poser: (at: number) => void; sautee: Record<string, TraceValue> }[] = [];
   let joue = false;
 
-  const log = (name: NomSonde, valeurs: Record<string, TraceValue | undefined> = {}, at = now()) => {
-    const e: EvenementSonde = { de: 'banc', at, name };
+  const log = (name: BancNom, valeurs: Record<string, TraceValue | undefined> = {}, at = now()) => {
+    const e: BancEvent = { de: 'banc', at, name };
     for (const [k, v] of Object.entries(valeurs)) if (v !== undefined) e[k] = v;
     journal.push(e);
     if (joue) resoudre();
@@ -151,7 +133,7 @@ export function installerSonde(win: Window & typeof globalThis, plan: PlanDePart
         syntheses.push({
           texte,
           cle: cleDe(x),
-          teteMs: (premierSon(x) / rate) * 1000,
+          tete: (premierSon(x) / rate) * 1000,
           ...(envoi?.evenement.reponse !== undefined ? { reponse: envoi.evenement.reponse } : {}),
         });
       }
@@ -214,7 +196,7 @@ export function installerSonde(win: Window & typeof globalThis, plan: PlanDePart
         dernier = p + (e.playbackTime + i / sr - ct) * 1000;
         if (premier === undefined) {
           premier = dernier;
-          log('joue', { reponse: s?.reponse, phrase, texte: s?.texte ?? '', teteMs: s?.teteMs }, premier);
+          log('joue', { reponse: s?.reponse, phrase, texte: s?.texte ?? '', tete: s?.tete }, premier);
         }
       }
     };
@@ -242,30 +224,16 @@ export function installerSonde(win: Window & typeof globalThis, plan: PlanDePart
     async jouer() {
       if (!micCtx || !dest) throw new Error('jouer avant que la page ouvre le micro');
       const [ctx, sortie] = [micCtx, dest];
-      const sons = new Map<string, Promise<AudioBuffer>>();
-      const charger = (n: string) => {
-        if (!sons.has(n))
-          sons.set(
-            n,
-            fetchPage(`/banc/sons/${encodeURIComponent(n)}.wav`).then(async (r) => {
-              if (!r.ok) throw new Error(`son ${n} : ${r.status}`);
-              return ctx.decodeAudioData(await r.arrayBuffer());
-            }),
-          );
-        return sons.get(n)!;
+      const charger = async (n: number) => {
+        const r = await fetchPage(`/banc/sons/${n}.wav`);
+        if (!r.ok) throw new Error(`son ${n} : ${r.status}`);
+        return ctx.decodeAudioData(await r.arrayBuffer());
       };
-      const poses = [
-        ...plan.paroles.map((p, i) => ({
-          p,
-          debut: { parole: i + 1, etape: 'debut' } as const,
-          nom: 'parole' as const,
-        })),
-        ...(plan.bruits ?? []).map((p) => ({
-          p,
-          debut: { etape: 'debut' } as const,
-          nom: 'bruit_joue' as const,
-        })),
-      ];
+      const poses = plan.poses.map((p) =>
+        p.de === 'parole'
+          ? { p, debut: { parole: p.numero, etape: 'debut' }, nom: 'parole' as const }
+          : { p, debut: { etape: 'debut' }, nom: 'bruit_joue' as const },
+      );
       const tampons = new Map(
         await Promise.all(poses.map(async ({ p }) => [p.son, await charger(p.son)] as const)),
       );
@@ -277,7 +245,7 @@ export function installerSonde(win: Window & typeof globalThis, plan: PlanDePart
       // The sounds posted from here are the first the stream carries: `t0` is when this context starts to sound.
       const t0 = p0 + MARGE_S * 1000;
       const poser = (
-        son: string,
+        son: number,
         at: number,
         nom: 'parole' | 'bruit_joue',
         debut: Record<string, TraceValue>,
@@ -302,8 +270,8 @@ export function installerSonde(win: Window & typeof globalThis, plan: PlanDePart
             sautee: { son: p.son, ...('parole' in debut ? { parole: debut.parole } : {}) },
           });
       }
-      for (const g of plan.gestes ?? []) {
-        if ('a' in g) plusTard(t0 + g.a, () => cliquer(g.geste));
+      for (const g of plan.gestes) {
+        if (!g.apres) plusTard(t0 + g.a!, () => cliquer(g.geste));
         else
           enAttente.push({
             apres: g.apres,
@@ -324,20 +292,3 @@ export function installerSonde(win: Window & typeof globalThis, plan: PlanDePart
   };
   return banc;
 }
-
-/**
- * shortcut: the minimum of task 1's `ancre`, so the probe builds today; replace by the import from scenario.ts at the
- * merge. `envoi: n` is the n-th `envoi_recu`; `joue: n` the sentence `phrase` (1 by default) of the reply to it.
- */
-export const ancreLocale: Ancrer = (apres, journal) => {
-  const envoi = journal.filter((e) => e.name === 'envoi_recu')[
-    ('envoi' in apres ? apres.envoi : apres.joue) - 1
-  ];
-  if (!envoi) return undefined;
-  if ('envoi' in apres) return envoi.at + apres.ms;
-  if (envoi.reponse === undefined) return undefined;
-  const j = journal.find(
-    (e) => e.name === 'joue' && e.reponse === envoi.reponse && e['phrase'] === (apres.phrase ?? 1),
-  );
-  return j && j.at + apres.ms;
-};

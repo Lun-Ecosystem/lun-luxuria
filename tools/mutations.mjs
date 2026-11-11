@@ -1,6 +1,7 @@
 // The counter-proof of the scenarios: each mutation of tools/mutations.json is applied as the code loads
 // (vitest.mutations.config.ts), the scenarios are played, and the report must fail on the mutation's own link.
 // Fails if a pattern is missing (update the table), a mutation survives, or most failures name another link.
+import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,12 +11,17 @@ const table = JSON.parse(readFileSync('tools/mutations.json', 'utf8'));
 const VITEST = join('node_modules', 'vitest', 'vitest.mjs');
 const debut = Date.now();
 
-/** The report's failures: every row of a scenario's table that is neither held nor a known defect that holds. */
+/**
+ * The report's failures: every row of a scenario's table that is neither held nor a known defect that holds. Only the
+ * table under `## <scénario>`: a `###` after it (its « Mesures », counted nowhere, or a failure's excerpt) is not read.
+ */
 const echecs = (md) => {
   const out = [];
-  let nom = '';
+  let nom;
   for (const l of md.split('\n')) {
     if (l.startsWith('## ')) nom = l.slice(3);
+    else if (l.startsWith('### ')) nom = undefined;
+    if (nom === undefined) continue;
     const c = l.split('|').map((x) => x.trim());
     if (c.length < 8 || c[1] === 'Attendu' || c[1].startsWith('---')) continue;
     if (c[2] === 'tenue' || /^connue \(/.test(c[2])) continue;
@@ -23,6 +29,17 @@ const echecs = (md) => {
   }
   return out;
 };
+
+const exemple = [
+  '## a',
+  '| Attendu | État | Espèce | Source | Trouvé | Borne |',
+  '|---|---|---|---|---|---|',
+  '| x | ratee | absent | voix |  |  |',
+  '| y | tenue |  |  |  |  |',
+  '### Mesures',
+  '| z | ratee | hors_bornes | serveur | 9 | [0, 1] |',
+].join('\n');
+assert.deepEqual(echecs(exemple), [{ nom: 'a', id: 'x', espece: 'absent', source: 'voix' }]);
 
 const jouer = (k) =>
   new Promise((ok) => {

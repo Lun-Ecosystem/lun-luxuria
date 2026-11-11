@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readWav, writeWav } from '../../listen/replay.ts';
 import type { Scenario } from '../scenario.ts';
-import { couper, fichiers, nomDe, planDePartie, sonsDe, temoin, type ScenarioChaine } from './sons.ts';
+import { couper, fichiers, nomDe, planDePartie, sonsDe, temoin } from './sons.ts';
 
 /** A tone, never a voice: `ms` of sound at 0.5, with `blanc` ms of silence on each side. */
 const ton = (ms: number, blanc = 0) => {
@@ -111,11 +111,11 @@ describe('sonsDe', () => {
 });
 
 describe('planDePartie', () => {
-  const s: ScenarioChaine = {
+  const s: Scenario = {
     ...base,
     personne: [
       { a: 320, dit: 'Un', duree: 300 },
-      { apres: { joue: 1, ms: 1000 }, dit: 'Deux', duree: 300 } as ScenarioChaine['personne'][number],
+      { apres: { joue: 1, ms: 1000 }, dit: 'Deux', duree: 300 },
     ],
     bruits: [{ a: 50, duree: 100, voix: 0.9 }],
     gestes: [{ geste: 'silence', apres: { joue: 1, phrase: 1, ms: 1000 } }],
@@ -159,10 +159,7 @@ describe('temoin', () => {
   });
 
   it('refuses an anchored speech: the witness plays absolute instants only', async () => {
-    const s = {
-      ...base,
-      personne: [{ apres: { envoi: 1, ms: 0 }, dit: 'Un', duree: 100 }],
-    } as unknown as ScenarioChaine;
+    const s: Scenario = { ...base, personne: [{ apres: { envoi: 1, ms: 0 }, dit: 'Un', duree: 100 }] };
     expect(() => temoin(s, { personne: [], bruits: [] })).toThrow(/ancr/);
   });
 });
