@@ -71,6 +71,19 @@ describe('sonsDe', () => {
     expect(dits).toEqual([]);
   });
 
+  it('takes a click in the leading silence for silence: the sound starts at the voice', async () => {
+    // A click of a few samples at 33 ms (as loud as a recording's, -34 dB), silence, then 300 ms of tone at 500 ms;
+    // another click after it.
+    const x = new Float32Array(1000 * 16);
+    x.set(ton(300), 500 * 16);
+    x.set([0.02, -0.02, 0.015], 33 * 16);
+    x.set([0.02, -0.02, 0.015], 950 * 16);
+    await writeFile(join(dir, 'sons', 'non.wav'), writeWav([x]));
+    const s = { ...base, personne: [{ a: 0, dit: 'Non.', duree: 300 }] };
+    const [son] = (await sonsDe(s, dir, synth)).personne;
+    expect(son).toMatchObject({ source: 'pose', duree: 300 });
+  });
+
   it('synthesizes, keeps the cache, and reads it the next time', async () => {
     const s = { ...base, personne: [{ a: 0, dit: 'Bonjour', duree: 300 }] };
     const first = (await sonsDe(s, dir, synth)).personne[0]!;

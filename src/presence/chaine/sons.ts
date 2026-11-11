@@ -21,7 +21,10 @@ export interface Sons {
 }
 
 const MS = 16; // samples per ms at 16 kHz
-/** shortcut: a fixed amplitude, about -40 dB; a sound laid by hand with a louder floor keeps its edges. */
+/**
+ * shortcut: a fixed level, about -40 dB, for the RMS over 20 ms and the edge's samples; a sound laid by hand with a
+ * louder floor keeps its edges.
+ */
 const SILENCE = 0.01;
 const VOIX_SAPI = 'sapi-hortense-16k';
 
@@ -52,9 +55,23 @@ export function couper(texte: string, trous: NonNullable<Parole['trous']>, duree
   return pieces;
 }
 
+/** The envelope's step: a click of a few samples is no louder than silence over it. */
+const BLOC = 20 * MS;
+
+/** The sound between the first and the last 20 ms whose RMS reaches `SILENCE`, cut at their samples that reach it. */
 function rogner(x: Float32Array): Float32Array {
-  let a = 0;
-  let b = x.length;
+  const fort = (k: number) => {
+    const [de, a] = [k * BLOC, Math.min(x.length, (k + 1) * BLOC)];
+    let s = 0;
+    for (let i = de; i < a; i++) s += x[i]! ** 2;
+    return Math.sqrt(s / (a - de)) >= SILENCE;
+  };
+  const blocs = Math.ceil(x.length / BLOC);
+  let [p, d] = [0, blocs];
+  while (p < d && !fort(p)) p++;
+  while (d > p && !fort(d - 1)) d--;
+  let a = p * BLOC;
+  let b = Math.min(x.length, d * BLOC);
   while (a < b && Math.abs(x[a]!) < SILENCE) a++;
   while (b > a && Math.abs(x[b - 1]!) < SILENCE) b--;
   return x.subarray(a, b);
