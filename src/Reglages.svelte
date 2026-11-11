@@ -116,6 +116,21 @@
   }
   const s = $derived(session.settings);
 
+  /** Starts an attempt, or ends it and hands the file over; its name keeps the echo and noise settings it was made with. */
+  async function tape(): Promise<void> {
+    if (!session.recording) return session.record();
+    const { echoCancellation, noiseSuppression } = session.settings.voice;
+    const url = URL.createObjectURL(
+      new Blob([(await session.stopRecording()) as BlobPart], { type: 'audio/wav' }),
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `essai-${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}-echo-${echoCancellation ? 'oui' : 'non'}-bruit-${noiseSuppression ? 'oui' : 'non'}.wav`;
+    link.click();
+    // Not at once: some browsers start the download after this turn.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+
   /** Saves a copy with `change` applied: the session keeps the only state. */
   function set(change: (draft: Settings) => void) {
     const draft = $state.snapshot(session.settings) as Settings;
@@ -458,9 +473,15 @@
             's',
             (v) => set((d) => (d.endOfSpeech.pauseMs = ms(v, 64, 2000, d.endOfSpeech.pauseMs))),
           )}
+          {@render toggle(
+            'Reconnaître la voix par un modèle',
+            'Il distingue une voix d’un bruit, sur ce poste. Coupé : le niveau sonore seul décide, avec le seuil ci-dessous.',
+            s.endOfSpeech.model,
+            (v) => set((d) => (d.endOfSpeech.model = v)),
+          )}
           {@render field(
             'Seuil du silence',
-            `En dessous, le micro entend le silence. Conseillé : ${PRESETS.normal.floorDb} dB.`,
+            `Sert quand le modèle est coupé. En dessous, le micro entend le silence. Conseillé : ${PRESETS.normal.floorDb} dB.`,
             String(s.endOfSpeech.floorDb),
             'dB',
             (v) => set((d) => (d.endOfSpeech.floorDb = number(v, -90, -10, d.endOfSpeech.floorDb))),
@@ -489,6 +510,16 @@
             'lettres',
             (v) => set((d) => (d.name.tolerance = number(v, 0, 4, d.name.tolerance))),
           )}
+          {#if !inWindow}
+            <SettingsRow
+              label="Enregistrer un essai"
+              hint="Ce que l’écoute reçoit du micro, en fichier WAV, cinq minutes au plus. Il reste sur ce poste."
+            >
+              <Button variant="fantome" size="petit" onclick={() => void tape()}>
+                {session.recording ? 'Arrêter et télécharger' : 'Enregistrer'}
+              </Button>
+            </SettingsRow>
+          {/if}
           {@render toggle(
             'Trace d’une phrase ignorée',
             'Sur cet écran seulement, rien ne part.',

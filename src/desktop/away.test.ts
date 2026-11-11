@@ -16,7 +16,13 @@ const MIN = 60_000;
 function linked(extra: object = {}) {
   localStorage.setItem(
     'luxuria.settings',
-    JSON.stringify({ brain: 'linked', busy: { ...DEFAULTS.busy, on: false }, ...extra }),
+    JSON.stringify({
+      brain: 'linked',
+      busy: { ...DEFAULTS.busy, on: false },
+      // These frames are a level, not a voice: the model has its own tests, on real sound.
+      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false },
+      ...extra,
+    }),
   );
   localStorage.setItem('luxuria.token', 't');
   localStorage.setItem('luxuria.mic', 'on');
@@ -172,7 +178,10 @@ describe('a phrase heard', () => {
   }
 
   it('a phrase sent counts as an input, and brings the presence back', async () => {
-    const { s, sent } = await heard('bonjour');
+    // Without the attempt on a pause: a fragment sent early leaves before the sentence is known to be for it.
+    const { s, sent } = await heard('bonjour', {
+      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
+    });
     s.setAway(true);
     say(20);
     await vi.waitFor(() => expect(sent).toContain('send'));

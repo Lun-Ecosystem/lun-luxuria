@@ -17,7 +17,8 @@
     "format:check": "prettier --check .",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "voix": "uv run voix/service.py",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "banc": "vitest run src/listen/banc.test.ts --mode banc"
   },
   "dependencies": {
     "@fontsource/cormorant-garamond": "^5.3.0",
@@ -27,7 +28,8 @@
     "@tauri-apps/plugin-autostart": "2.7.0",
     "@tauri-apps/plugin-global-shortcut": "2.4.1",
     "@tauri-apps/plugin-http": "2.8.3",
-    "bits-ui": "^2.20.0"
+    "bits-ui": "^2.20.0",
+    "onnxruntime-web": "^1.31.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
