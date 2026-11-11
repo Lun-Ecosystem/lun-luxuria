@@ -28,8 +28,10 @@ export interface Verdict {
   /** The value found: ms from the anchor, the delay, the overlap, or the reason of a refusal. */
   trouve?: TraceValue;
   borne?: [number, number];
-  /** The first link of the chain silent in the window, or the expectation's own link when all wrote. */
+  /** The first link of the chain a failure of the game names (the rule is on `juger`). */
   source?: Mecanisme;
+  /** The link this failure names on its own: a second defect shows here when the source is another's. */
+  propre?: Mecanisme;
   /** The links that wrote in the window, in the order of the chain. */
   couverture: Mecanisme[];
   /** On a failure, the dated lines of the second around the window. */
@@ -271,7 +273,8 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
   };
 
   const tous = s.attendus.map(juge);
-  // No loop: `charger` refuses anchors in a loop, and an anchor not held has its own link.
+  // Defined for every failure: `charger` refuses an anchor to an expectation without an instant (an `absent`) and
+  // anchors in a loop, so an expectation not played points to one that failed, which has its own link.
   const propre = (id: string): Mecanisme => {
     const p = propres.get(id)!;
     return typeof p === 'string' ? p : propre(p.ancre);
@@ -283,6 +286,7 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
   for (const v of tous) {
     if (v.etat === 'tenue') continue;
     const own = propre(v.id);
+    v.propre = own;
     v.source = premier !== undefined && RANG[premier] < RANG[own] ? premier : own;
   }
   return tous;

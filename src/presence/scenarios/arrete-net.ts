@@ -45,6 +45,18 @@ export default {
       entre: [384, 416],
     },
     {
+      id: 'sortie-arretee',
+      niveau: 'exact',
+      mecanisme: 'suspension',
+      // `son` arrêté se lit dans la trace du Speaker, écrite même si la sortie continue : ici, la sortie elle-même.
+      dit: 'la sortie se tait à la tenue de « arrête »',
+      evenement: 'arrete',
+      ou: { reponse: 1 },
+      depuis: { parole: 2, bord: 'debut' },
+      // tenue à 384 ms du début, une trame de marge ; laissé à lui-même, le son finirait à 7408 (4972 ms après)
+      entre: [384, 416],
+    },
+    {
       id: 'arret-coupure',
       niveau: 'exact',
       mecanisme: 'suspension',

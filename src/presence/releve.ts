@@ -19,6 +19,10 @@ const cellule = (x: unknown) => (x === undefined ? '' : String(x).replaceAll('|'
 const etat = (v: Verdict) =>
   v.connu ? `${v.connu.conforme ? 'connue' : `${v.etat}, connue ailleurs`} (${v.connu.issue})` : v.etat;
 
+// The link it names on its own, when the game's first failure is named instead: a second defect is not hidden.
+const source = (v: Verdict) =>
+  v.propre && v.propre !== v.source ? `${v.source} (propre : ${v.propre})` : v.source;
+
 /** The report in Markdown: counts, failures by species then by source, a table per scenario, each failure's excerpt. */
 export function releve(juges: Juge[]): string {
   const tous = juges.flatMap((j) => j.verdicts);
@@ -49,7 +53,7 @@ export function releve(juges: Juge[]): string {
       '|---|---|---|---|---|---|',
       ...j.verdicts.map(
         (v) =>
-          `| ${[v.id, etat(v), v.espece, v.source, v.trouve, v.borne && `[${v.borne.join(', ')}]`]
+          `| ${[v.id, etat(v), v.espece, source(v), v.trouve, v.borne && `[${v.borne.join(', ')}]`]
             .map(cellule)
             .join(' | ')} |`,
       ),

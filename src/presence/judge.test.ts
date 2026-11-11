@@ -242,6 +242,9 @@ describe('judging a game', () => {
       };
       const [v, j] = juger(scenario([nom, joue], chaine), partie);
       expect([v!.source, j!.source]).toEqual(['filtre', 'filtre']);
+      // Its own link stays beside it: a second defect is not hidden.
+      expect(j!.propre).toBe('voix');
+      expect(releve([{ nom: 'n', verdicts: [j!] }])).toContain('| filtre (propre : voix) |');
       // A known defect as known names nothing for the others.
       const connu = { connus: [{ issue: 'lun-luxuria#0', attendu: 'n', espece: 'absent' as const }] };
       expect(juger(scenario([nom, joue], { ...chaine, ...connu }), partie)[1]!.source).toBe('voix');
@@ -268,6 +271,29 @@ describe('judging a game', () => {
         ou: { reponse: 9 },
       };
       expect(un(reponse9, chaine).source).toBe('serveur');
+      // A word of her own that never came: the server too.
+      expect(un({ ...reponse9, ou: { parle: 3 } }, chaine).source).toBe('serveur');
+    });
+
+    it('of one not played on an anchor not played is the first anchor that failed, through both', () => {
+      const coupee: Attendu = { ...commun, id: 'coupee', mecanisme: 'coupure', evenement: 'coupee' };
+      const un1: Attendu = {
+        ...commun,
+        id: 'un',
+        mecanisme: 'voix',
+        evenement: 'son',
+        depuis: { attendu: 'coupee' },
+      };
+      const deux: Attendu = {
+        ...commun,
+        id: 'deux',
+        mecanisme: 'voix',
+        evenement: 'joue',
+        depuis: { attendu: 'un' },
+      };
+      const [d, u] = juger(scenario([deux, un1, coupee], chaine), partie);
+      expect(d).toMatchObject({ etat: 'non_jouee', source: 'coupure', propre: 'coupure' });
+      expect(u).toMatchObject({ etat: 'non_jouee', source: 'coupure', propre: 'coupure' });
     });
 
     it('of a delay looks in its turn only: a turn without a reply owns no event without one', () => {
