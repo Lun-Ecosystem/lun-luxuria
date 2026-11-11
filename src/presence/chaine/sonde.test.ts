@@ -26,6 +26,7 @@ class Source extends Node_ {
   }
 }
 interface Tap {
+  bufferSize: number;
   connect(): void;
   onaudioprocess:
     ((e: { playbackTime: number; inputBuffer: { getChannelData(): Float32Array } }) => void) | null;
@@ -46,7 +47,8 @@ class Ctx {
     Ctx.tous.push(this);
   }
   createMediaStreamDestination() {
-    return { stream: { micro: this }, channelCount: 2 };
+    const clone = (): object => ({ micro: this, clone });
+    return { stream: clone(), channelCount: 2 };
   }
   createBufferSource() {
     const s = new Ctx.Source();
@@ -54,8 +56,8 @@ class Ctx {
     this.sources.push(s);
     return s;
   }
-  createScriptProcessor() {
-    const t: Tap = { connect: () => {}, onaudioprocess: null, disconnect: vi.fn() };
+  createScriptProcessor(bufferSize: number) {
+    const t: Tap = { bufferSize, connect: () => {}, onaudioprocess: null, disconnect: vi.fn() };
     this.taps.push(t);
     return t;
   }
@@ -95,8 +97,9 @@ function installer(paroles: ({ a: number } | { apres: Apres })[], gestes: Geste[
     AudioContext: Ctx,
     AudioWorkletNode: Worklet,
     AudioBufferSourceNode: Ctx.Source,
-    fetch: async (url: string) => {
+    fetch: async (url: string, init?: RequestInit) => {
       if (url.startsWith('/banc/sons/')) return new Response(new ArrayBuffer(4));
+      if (init?.body === '{"text":"refus"}') return new Response('', { status: 503 });
       if (url === '/voix/tts')
         return new Response(tts.slice().buffer, { headers: { 'x-sample-rate': '1000' } });
       return sse([
@@ -148,8 +151,12 @@ const son = (tete: number, n = 300) => {
   for (let i = tete; i < tete + n; i++) x[i] = 0.2 + (i % 7) / 100;
   return x;
 };
-const traiter = (tap: Tap, x: Float32Array, playbackTime: number) =>
-  tap.onaudioprocess!({ playbackTime, inputBuffer: { getChannelData: () => x } });
+/** The tap reads `x`, which reached it at context time `entree`; its output plays a buffer later. */
+const traiter = (tap: Tap, x: Float32Array, entree: number, sr = 1000) =>
+  tap.onaudioprocess!({
+    playbackTime: entree + tap.bufferSize / sr,
+    inputBuffer: { getChannelData: () => x },
+  });
 
 beforeEach(() => {
   vi.useFakeTimers({ now: 10_000 });
@@ -163,8 +170,31 @@ describe('installerSonde', () => {
     installer([{ a: 300 }]);
     const stream = await win.navigator.mediaDevices.getUserMedia({ audio: true });
     expect(micro().sampleRate).toBe(48000);
-    expect(stream).toEqual({ micro: micro() });
+    expect(stream).toMatchObject({ micro: micro() });
     expect(micro().sources).toHaveLength(0);
+    // The page stops the tracks of the stream it closes: each opening gets its own, of the same context.
+    const encore = await win.navigator.mediaDevices.getUserMedia({ audio: true });
+    expect(encore).not.toBe(stream);
+    expect(encore).toMatchObject({ micro: micro() });
+    expect(Ctx.tous).toHaveLength(1);
+  });
+
+  it('dates a sample at the instant it entered the tap, not when the tap gives it out', async () => {
+    installer([]);
+    const sortie = new Ctx({ sampleRate: 1000 });
+    const x = son(0);
+    const { tap } = await parler('Bonjour.', sortie, x);
+    sortie.currentTime = 3;
+    tap.onaudioprocess!({ playbackTime: 3.256, inputBuffer: { getChannelData: () => x } });
+    expect(banc.journal.find((e) => e.name === 'joue')!.at).toBe(Date.now());
+  });
+
+  it("forgets a sending the server refused: it is no anchor's", async () => {
+    installer([]);
+    await win.fetch('/api/threads/main/messages', { method: 'POST', body: '{"text":"refus"}' });
+    await win.fetch('/api/threads/main/messages', { method: 'POST', body: '{"text":"b"}' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(banc.journal.filter((e) => e.name === 'envoi_recu')).toMatchObject([{ texte: 'b', reponse: 7 }]);
   });
 
   it('starts only after ten regular frames of the page, then poses each sound at t0 + a', async () => {

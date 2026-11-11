@@ -101,7 +101,8 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
     micCtx ??= new win.AudioContext({ sampleRate: 48000 });
     dest ??= micCtx.createMediaStreamDestination();
     dest.channelCount = 1;
-    return dest.stream;
+    // The page stops the tracks of a stream it closes: a clone each time, so a reopening is not born dead.
+    return dest.stream.clone();
   };
 
   // The page's frames, read beside its own `onmessage`.
@@ -148,7 +149,16 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
       const evenement = log('envoi_recu', { texte: (JSON.parse(corps ?? '{}') as { text?: string }).text });
       const envoi: Envoi = { evenement, texte: '', phrases: [] };
       envois.push(envoi);
-      const res = await fetchPage(input, init);
+      // A sending refused never reached the server: it is no anchor's.
+      const oublier = () => {
+        envois.splice(envois.indexOf(envoi), 1);
+        journal.splice(journal.indexOf(evenement), 1);
+      };
+      const res = await fetchPage(input, init).catch((err: unknown) => {
+        oublier();
+        throw err;
+      });
+      if (!res.ok) oublier();
       if (!res.ok || !res.body) return res;
       const [page, lu] = res.body.tee();
       void (async () => {
@@ -198,7 +208,8 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
       const x = e.inputBuffer.getChannelData(0);
       for (let i = 0; i < x.length; i++) {
         if (Math.abs(x[i]!) <= SILENCE) continue;
-        dernier = p + (e.playbackTime + i / sr - ct) * 1000;
+        // `playbackTime` is when the tap's output plays: its input came a buffer before.
+        dernier = p + (e.playbackTime - tap.bufferSize / sr + i / sr - ct) * 1000;
         if (premier === undefined) {
           premier = dernier;
           log('joue', { reponse: s?.reponse, phrase, texte: s?.texte ?? '', tete: s?.tete }, premier);
