@@ -32,6 +32,9 @@ interface Turn {
   next: number;
   said: string[];
   sounded: boolean;
+  /** Suspended by a sound that may be nothing: what was heard of the sentence it stopped in. */
+  suspended?: { part: string };
+  urgent?: true;
 }
 
 const SYNTH_TIMEOUT_MS = 5000;
@@ -74,11 +77,16 @@ export class Speaker {
     return this.#playing !== null || this.#reading !== null || (!!turn && turn.sounded && !turn.held);
   }
 
-  #turn(id: number): Turn {
+  #turn(id: number, urgent = false): Turn {
     let turn = this.#turns.find((t) => t.id === id);
     if (!turn) {
       turn = { id, held: false, ended: false, pieces: [], next: 0, said: [], sounded: false };
-      this.#turns.push(turn);
+      if (urgent) {
+        // In front of what waits, behind the urgencies already there; the sentence that sounds ends first.
+        turn.urgent = true;
+        const at = this.#turns.findIndex((t) => !t.urgent);
+        this.#turns.splice(at < 0 ? this.#turns.length : at, 0, turn);
+      } else this.#turns.push(turn);
     }
     return turn;
   }
@@ -95,12 +103,14 @@ export class Speaker {
     this.#pump();
   }
 
-  add(id: number, text: string): void {
+  /** `urgent`: this turn goes in front of the ones that wait. */
+  add(id: number, text: string, urgent = false): void {
     if (this.#gone.has(id)) return;
     // One at a time: a voice conversion takes one call at a time, and order matters more than speed.
+    // shortcut: an urgency waits for the sentences already being made, give it its own lane if that is heard.
     const clip = this.#chain.then(() => this.#oneClip(text));
     this.#chain = clip;
-    this.#turn(id).pieces.push({ text, clip });
+    this.#turn(id, urgent).pieces.push({ text, clip });
     this.#pump();
   }
 
@@ -165,7 +175,8 @@ export class Speaker {
       this.#on({ type: 'subtitle', id: turn.id, text: piece.text });
       const sound = this.#out.play(clip, () => {
         if (this.#playing?.sound !== sound) return;
-        turn.said.push(piece.text);
+        // An urgency may have come in front meanwhile: the words go to the turn that said them.
+        this.#playing.turn.said.push(piece.text);
         this.#playing = null;
         this.#pump();
       });
@@ -187,38 +198,75 @@ export class Speaker {
   }
 
   /**
+   * A sound came over her voice, and nobody knows yet what it is: the turn that sounds falls silent and waits, at the
+   * sentence it was in. The soft way lets that sentence end first. `resume` or `cutSuspended` tells what it was.
+   */
+  suspend(soft = false): void {
+    const now = this.#playing;
+    const turn = now?.turn ?? this.#turns[0];
+    if (!turn || turn.suspended) return;
+    turn.held = true;
+    turn.suspended = { part: '' };
+    if (!now || soft) return;
+    turn.suspended.part = wordsHeard(now.piece.text, now.sound.heard());
+    this.#playing = null;
+    now.sound.stop();
+    // The sentence it was in is said again from its start.
+    turn.next--;
+  }
+
+  /** It was nothing: the suspended turn goes on. */
+  resume(): void {
+    const turn = this.#turns.find((t) => t.suspended);
+    if (!turn) return;
+    delete turn.suspended;
+    turn.held = false;
+    this.#pump();
+  }
+
+  /**
+   * It was for her: the suspended turn is cut for good, and what waited behind it goes with it, but for the turn
+   * `keep`, the answer to what was just said. Answers what was heard before the suspension.
+   */
+  cutSuspended(keep?: number): { id: number; said: string } | undefined {
+    const turn = this.#turns.find((t) => t.suspended);
+    if (!turn) return undefined;
+    for (const t of this.#turns) if (t.id !== keep && t !== this.#playing?.turn) this.#gone.add(t.id);
+    this.#turns = this.#turns.filter((t) => t.id === keep || t === this.#playing?.turn);
+    // The soft way: its sentence may still be sounding, and is the last.
+    if (this.#playing?.turn === turn) {
+      this.#playing.turn = { ...turn, pieces: [], next: 0, ended: true, held: false };
+      this.#turns[this.#turns.indexOf(turn)] = this.#playing.turn;
+      this.#gone.add(turn.id);
+      return { id: turn.id, said: [...turn.said, this.#playing.piece.text].join(' ') };
+    }
+    this.#on({ type: 'silent', cut: true });
+    this.#pump();
+    return { id: turn.id, said: [...turn.said, turn.suspended!.part].filter(Boolean).join(' ') };
+  }
+
+  /**
    * The speaker cut it off: the sound stops now and what follows is thrown away. Answers what the speaker heard of the
    * current turn, undefined if nothing was under way.
    */
   stop(): { id: number; said: string } | undefined {
-    const turn = this.#turns[0];
     const now = this.#playing;
+    const turn = now?.turn ?? this.#turns.find((t) => t.suspended) ?? this.#turns[0];
     const reading = this.#reading !== null;
     this.#playing = null;
     clearTimeout(this.#reading ?? undefined);
     this.#reading = null;
     for (const t of this.#turns) this.#gone.add(t.id);
     this.#turns = [];
-    this.#on({ type: 'silent', cut: now !== null || reading });
+    this.#on({ type: 'silent', cut: now !== null || reading || !!turn?.suspended });
     if (!turn) return undefined;
     const said = [...turn.said];
+    if (turn.suspended?.part) said.push(turn.suspended.part);
     if (now) {
       const part = wordsHeard(now.piece.text, now.sound.heard());
       now.sound.stop();
       if (part) said.push(part);
     }
     return { id: turn.id, said: said.join(' ') };
-  }
-
-  /** The soft way: the sentence under way ends, the rest does not come. */
-  stopAfterSentence(): { id: number; said: string } | undefined {
-    const turn = this.#turns[0];
-    const now = this.#playing;
-    if (!turn || !now) return this.stop();
-    for (const t of this.#turns) this.#gone.add(t.id);
-    this.#turns = [{ ...turn, pieces: [], next: 0, ended: true }];
-    const kept = this.#turns[0]!;
-    now.turn = kept;
-    return { id: turn.id, said: [...turn.said, now.piece.text].join(' ') };
   }
 }

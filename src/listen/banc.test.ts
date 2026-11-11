@@ -156,6 +156,8 @@ describe.runIf(asked)('the bench', () => {
     const totals = { niveau: [0, 0], modèle: [0, 0] };
     let frames = 0;
     let spent = 0;
+    // What a bound on the speculative turn would take away: sentences with more than three pauses, or over ten seconds.
+    const attempts = { files: 0, overThree: 0, most: 0, overTen: 0 };
     for (const file of wavs(DIR).sort()) {
       const samples = readWav(readFileSync(file));
       const fiche = { ...json(join(file, '..', 'fiche.json')), ...json(file.replace(/\.wav$/, '.json')) };
@@ -164,6 +166,11 @@ describe.runIf(asked)('the bench', () => {
       const model = await replay(samples, await byModel(), ENDPOINT_DEFAULTS);
       spent += performance.now() - started;
       frames += Math.ceil(samples.length / FRAME);
+      const pauses = model.events.filter((e) => e.type === 'pause').length;
+      attempts.files++;
+      attempts.most = Math.max(attempts.most, pauses);
+      if (pauses > 3) attempts.overThree++;
+      if (model.sentences.some((s) => s.to - s.from > 10_000)) attempts.overTen++;
       if (fiche.phrases !== undefined) {
         totals.niveau[1]!++;
         totals.modèle[1]!++;
@@ -185,6 +192,7 @@ describe.runIf(asked)('the bench', () => {
       0,
       `Justes, sur les fichiers qui ont une fiche : le niveau ${totals.niveau[0]} sur ${totals.niveau[1]}, le modèle ${totals.modèle[0]} sur ${totals.modèle[1]}.`,
       `Le modèle : ${(spent / Math.max(frames, 1)).toFixed(2)} ms par trame de ${FRAME_MS} ms, modèle chargé compris.`,
+      `Le tour à l'essai : ${attempts.overThree} fichiers sur ${attempts.files} ont plus de trois pauses (${attempts.most} au plus), ${attempts.overTen} ont une phrase de plus de dix secondes.`,
     );
     writeFileSync(join(DIR, 'releve.md'), `${lines.join('\n')}\n`);
     console.log(lines.slice(0, 5).join('\n'), `\nRelevé complet : ${join(DIR, 'releve.md')}`);

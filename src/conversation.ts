@@ -17,10 +17,12 @@ export interface ConversationDeps {
     hold(id: number): void;
     release(id: number): void;
     drop(id: number): void;
-    add(id: number, text: string): void;
+    add(id: number, text: string, urgent?: boolean): void;
+    suspend(soft?: boolean): void;
+    resume(): void;
+    cutSuspended(keep?: number): { id: number; said: string } | undefined;
     end(id: number): void;
     stop(): { id: number; said: string } | undefined;
-    stopAfterSentence(): { id: number; said: string } | undefined;
   };
   settings(): Settings;
   layout(): Layout;
@@ -96,7 +98,7 @@ export class Conversation {
         return;
       }
       if (e.why !== 'reply' && !speak[e.why]) return;
-      this.#d.speaker.add(e.id, e.text);
+      this.#d.speaker.add(e.id, e.text, e.why === 'p0');
     } else if (e.type === 'speech-end') {
       this.#d.speaker.end(e.id);
     }
@@ -115,7 +117,10 @@ export class Conversation {
         });
         this.#clockFrom = null;
       }
-    } else if (e.type === 'subtitle' && e.mute) {
+    } else if (e.type === 'subtitle' && !e.mute) {
+      // Each sentence of a long reply keeps open the time in which a word without her name is for her.
+      this.#lastSpokeAt = this.#d.now();
+    } else if (e.type === 'subtitle') {
       // Its reply came, without a voice: no first sound will end the thinking, nor stop the clock.
       this.#d.on({ type: 'thinking', on: false });
       this.#clockFrom = null;
@@ -133,8 +138,11 @@ export class Conversation {
     switch (e.type) {
       case 'held':
         if (!s.bargeIn.on) return;
-        if (this.#d.speaker.speaking) this.#cutOff(s.bargeIn.mode);
-        else this.#holdBack();
+        // Nobody knows yet what this sound is: she falls silent, and the end of the sentence will tell.
+        if (this.#d.speaker.speaking) {
+          this.#lastSpokeAt = this.#d.now();
+          this.#d.speaker.suspend(s.bargeIn.mode === 'soft');
+        } else this.#holdBack();
         return;
       case 'pause':
         if (s.endOfSpeech.speculate && !this.#attempt) this.#attempt = this.#try(e.audio, false);
@@ -159,12 +167,6 @@ export class Conversation {
       case 'start':
         return;
     }
-  }
-
-  #cutOff(mode: 'soft' | 'now'): void {
-    const cut = mode === 'now' ? this.#d.speaker.stop() : this.#d.speaker.stopAfterSentence();
-    if (cut)
-      void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
   }
 
   /** Its reply sounded, or was shown: it is no longer one to take back. */
@@ -196,6 +198,8 @@ export class Conversation {
 
   /** What he said (`by`) was not for her: the reply held back comes out. */
   #letGo(by?: Attempt, restarted = true): void {
+    // A reply suspended while it sounded goes on; no first sound will come again, so no thinking is lit.
+    this.#d.speaker.resume();
     const waiting = this.#heldBack;
     this.#heldBack = null;
     if (!waiting) return;
@@ -211,6 +215,10 @@ export class Conversation {
 
   /** What he said (`by`) was for her: the reply held back is never said, and the server forgets it. His message stays. */
   #supersede(by: Attempt): void {
+    // A reply suspended while it sounded is cut for good, and the server learns what was heard of it.
+    const cut = this.#d.speaker.cutSuspended(by.replyId);
+    if (cut)
+      void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
     const waiting = this.#heldBack;
     // Held back while its own sentence was transcribed: the sentence said since will tell.
     if (!waiting || waiting === by) return;
@@ -281,6 +289,8 @@ export class Conversation {
       );
     } catch (err) {
       d.on({ type: 'thinking', on: false });
+      // Nothing will answer: what this sentence suspended, or held back, goes on.
+      if (attempt.committed) this.#noAnswer(attempt);
       this.#fail('Sa réponse n’est pas venue', err);
     }
   }
@@ -362,6 +372,8 @@ export class Conversation {
 
   /** The button that exists only while it speaks. */
   silence(): void {
-    this.#cutOff('now');
+    const cut = this.#d.speaker.stop();
+    if (cut)
+      void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
   }
 }
