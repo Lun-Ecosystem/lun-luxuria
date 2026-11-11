@@ -158,6 +158,57 @@ describe('jouer', () => {
     expect(named(page, 'durees')[0]).toMatchObject({ firstWordMs: 400, postMs: 2500, secondWordMs: 400 });
   });
 
+  describe('anchored on the game', () => {
+    const modele = { reponses: [{ phrases: ['Je regarde ça.', 'Voilà.'] }] };
+    const premiere = { a: 500, dit: 'des mails', duree: 600 };
+
+    it('places a speech after the sound of a sentence, and pushes the end back', async () => {
+      const { banc, fin } = await jouer(
+        base({
+          modele,
+          personne: [premiere, { dit: 'merci', duree: 400, apres: { joue: 1, phrase: 2, ms: 100 } }],
+        }),
+      );
+      const deux = named(banc, 'joue')[1]!.at;
+      expect(
+        named(banc, 'parole')
+          .filter((e) => e['parole'] === 2)
+          .map((e) => [e.at, e['etape']]),
+      ).toEqual([
+        [deux + 100, 'debut'],
+        [deux + 500, 'fin'],
+      ]);
+      expect(fin).toBeGreaterThanOrEqual(deux + 500 + 5000);
+    });
+
+    it('places a speech after a text received', async () => {
+      const { banc } = await jouer(
+        base({ modele, personne: [premiere, { dit: 'merci', duree: 400, apres: { envoi: 1, ms: 50 } }] }),
+      );
+      const envoi = named(banc, 'envoi_recu')[0]!.at;
+      expect(named(banc, 'parole').find((e) => e['parole'] === 2)!.at).toBe(envoi + 50);
+    });
+
+    it('writes a speech whose anchor never came, which never sounds', async () => {
+      const { banc } = await jouer(
+        base({ modele, personne: [premiere, { dit: 'merci', duree: 400, apres: { joue: 2, ms: 0 } }] }),
+      );
+      expect(named(banc, 'parole').some((e) => e['parole'] === 2)).toBe(false);
+      expect(named(banc, 'parole_sautee').map((e) => e['parole'])).toEqual([2]);
+    });
+
+    it('presses « Faire taire » at a gesture: her sound stops', async () => {
+      const { banc, page } = await jouer(
+        base({ modele, personne: [premiere], gestes: [{ geste: 'silence', apres: { joue: 1, ms: 200 } }] }),
+      );
+      const geste = named(banc, 'geste')[0]!;
+      expect(geste).toMatchObject({ at: named(banc, 'joue')[0]!.at + 200, geste: 'silence', etape: 'fait' });
+      expect(named(banc, 'arrete')[0]!.at).toBe(geste.at);
+      expect(named(banc, 'joue')).toHaveLength(1);
+      expect(named(page, 'silence').length).toBeGreaterThan(0);
+    });
+  });
+
   it('plays 60 virtual seconds in under a second', async () => {
     const personne = Array.from({ length: 10 }, (_, i) => ({
       a: 1000 + i * 5500,

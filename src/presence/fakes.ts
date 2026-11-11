@@ -2,7 +2,15 @@ import type { Brain, LiveEvent, Message, ReplyDurations, SendEvent } from '../br
 import type { Heard } from '../conversation.ts';
 import type { Clip, Output, Playing } from '../speech/speaker.ts';
 import type { TraceValue } from '../trace.ts';
-import { DEFAUTS, type BancEvent, type BancNom, type Reponse, type Scenario } from './scenario.ts';
+import {
+  choisir,
+  DEFAUTS,
+  type BancEvent,
+  type BancNom,
+  type Parole,
+  type Reponse,
+  type Scenario,
+} from './scenario.ts';
 
 /**
  * The false bricks of a scenario: the transcription, the server, the voice and its output. They wait by
@@ -15,15 +23,19 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export class Journal {
   readonly events: BancEvent[] = [];
   #now: () => number;
+  #on: () => void;
 
-  constructor(now: () => number) {
+  /** `on`: after each line, so an anchor on it can be placed. */
+  constructor(now: () => number, on: () => void = () => {}) {
     this.#now = now;
+    this.#on = on;
   }
 
   add(name: BancNom, values: Record<string, TraceValue | undefined> = {}): void {
     const e: BancEvent = { de: 'banc', at: this.#now(), name };
     for (const [k, v] of Object.entries(values)) if (v !== undefined) e[k] = v;
     this.events.push(e);
+    this.#on();
   }
 }
 
@@ -111,10 +123,12 @@ export function fausseTranscription(
   return async (audio) => {
     const from = audio[0] ?? 0;
     const to = (audio.at(-1) ?? 0) + frameMs;
-    const paroles = s.personne.filter((p) => p.a >= from && p.a < to);
+    // An anchored speech not placed yet has not sounded.
+    const debut = (p: Parole) => p.a ?? Infinity;
+    const paroles = s.personne.filter((p) => debut(p) >= from && debut(p) < to);
     const echos = s.echo ? voix.sons.filter((x) => x.de < to && (x.a ?? Infinity) > from) : [];
     const said = [
-      ...paroles.map((p) => ({ de: p.a, texte: p.entendu ?? p.dit })),
+      ...paroles.map((p) => ({ de: debut(p), texte: p.entendu ?? p.dit })),
       ...echos.map((x) => ({ de: x.de, texte: x.texte })),
     ].sort((x, y) => x.de - y.de);
     const last = paroles.at(-1);
@@ -129,8 +143,6 @@ export function fausseTranscription(
     };
   };
 }
-
-const plain = (t: string) => t.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 /**
  * The server: `send` gives `user`, then `reply` after `numeroMs`; replies are numbered 101, 102…, its own words
@@ -167,9 +179,8 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
     on({ type: 'user', message: msg(userId, 'user', { text }) });
     await sleep(DEFAUTS.numeroMs);
     on({ type: 'reply', id });
-    const r: Reponse = this.#s.modele?.reponses?.find((x) => !x.si || plain(text).includes(plain(x.si))) ?? {
-      phrases: [],
-    };
+    const reponses = this.#s.modele?.reponses ?? [];
+    const r: Reponse = reponses[choisir(reponses, text)] ?? { phrases: [] };
     const first = r.premierMotMs ?? DEFAUTS.premierMotMs;
     // From the text received (`Reponse`): the reply's number is already out.
     await sleep(first - DEFAUTS.numeroMs);
