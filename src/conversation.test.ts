@@ -320,6 +320,22 @@ describe('cutting it off', () => {
     expect(t.sounds).toHaveLength(2);
   });
 
+  it('a word too short to hold cuts her once it is known to be for her; not when barge-in is off', async () => {
+    const t = setup();
+    t.say(50, 'Une phrase assez longue pour être coupée.');
+    await tick();
+    t.convo.onEndpoint(ended);
+    await tick();
+    expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+
+    const off = setup({ bargeIn: { ...DEFAULTS.bargeIn, on: false } });
+    off.say(50, 'Une phrase.');
+    await tick();
+    off.convo.onEndpoint(ended);
+    await tick();
+    expect(off.calls).toEqual([]);
+  });
+
   it('the soft way: her sentence ends, the rest waits for what he says', async () => {
     const t = setup({ bargeIn: { ...DEFAULTS.bargeIn, mode: 'soft' } });
     t.say(50, 'Elle finit.');
@@ -608,5 +624,59 @@ describe('what is said aloud', () => {
       type: 'failed',
       text: 'Ta phrase n’a pas pu être transcrite : le service voix ne répond pas',
     });
+  });
+});
+
+describe('the sentence sent before its end has bounds', () => {
+  const pause = { type: 'pause', audio: AUDIO } as const;
+
+  it('three tries in a sentence, not a fourth; its end still answers', async () => {
+    const t = setup();
+    t.convo.onEndpoint({ type: 'start' });
+    for (let i = 0; i < 4; i++) {
+      t.convo.onEndpoint(pause);
+      await tick();
+      t.convo.onEndpoint({ type: 'resume' });
+    }
+    expect(t.sends).toHaveLength(3);
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });
+    await tick();
+    expect(t.sends).toHaveLength(4);
+    t.say(113, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+  });
+
+  it('no try past ten seconds of a sentence; the next sentence is tried again', async () => {
+    const t = setup();
+    t.convo.onEndpoint({ type: 'start' });
+    t.advance(12_000);
+    t.convo.onEndpoint(pause);
+    await tick();
+    expect(t.sends).toHaveLength(0);
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });
+    await tick();
+    expect(t.sends).toHaveLength(1);
+    t.convo.onEndpoint({ type: 'start' });
+    t.convo.onEndpoint(pause);
+    await tick();
+    expect(t.sends).toHaveLength(2);
+  });
+});
+
+describe('an urgency', () => {
+  it('sounds before the rest of the reply under way', async () => {
+    const t = setup();
+    t.say(50, 'Un.');
+    t.say(50, 'Deux.');
+    await tick();
+    t.convo.onLive({ type: 'speech', id: 60, n: 1, text: 'Alerte.', why: 'p0' });
+    t.convo.onLive({ type: 'speech-end', id: 60, why: 'p0' });
+    t.sounds[0]!.end();
+    await tick();
+    t.sounds[1]!.end();
+    await tick();
+    expect(t.sounds).toHaveLength(3);
+    expect(t.events.filter((e) => e.type === 'said')).toHaveLength(0);
   });
 });

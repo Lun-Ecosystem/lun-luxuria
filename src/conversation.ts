@@ -43,6 +43,9 @@ export type ConversationEvent =
   | { type: 'latency'; ms: number; speculated: boolean }
   | { type: 'said' };
 
+const MAX_TRIES = 3;
+const MAX_TRIED_MS = 10_000;
+
 /** A fragment sent before the sentence was over: its words stay silent until it is. */
 interface Attempt {
   /** Set when the transcription came back and went to the core. */
@@ -79,6 +82,8 @@ export class Conversation {
   #unheard: Attempt | null = null;
   /** The one held back by the sentence being said now. */
   #heldBack: Attempt | null = null;
+  /** The sentence being heard: when it began, and how many times it was sent before its end. */
+  #sentence = { from: 0, tries: 0 };
 
   constructor(deps: ConversationDeps) {
     this.#d = deps;
@@ -145,7 +150,16 @@ export class Conversation {
         } else this.#holdBack();
         return;
       case 'pause':
-        if (s.endOfSpeech.speculate && !this.#attempt) this.#attempt = this.#try(e.audio, false);
+        // Each try is a transcription and a call taken back if he goes on: a long or halting sentence waits its end.
+        if (
+          s.endOfSpeech.speculate &&
+          !this.#attempt &&
+          this.#sentence.tries < MAX_TRIES &&
+          this.#d.now() - this.#sentence.from <= MAX_TRIED_MS
+        ) {
+          this.#sentence.tries++;
+          this.#attempt = this.#try(e.audio, false);
+        }
         return;
       case 'resume':
         this.#dropAttempt();
@@ -165,6 +179,7 @@ export class Conversation {
         this.#attempt = null;
         return;
       case 'start':
+        this.#sentence = { from: this.#d.now(), tries: 0 };
         return;
     }
   }
@@ -216,6 +231,9 @@ export class Conversation {
   /** What he said (`by`) was for her: the reply held back is never said, and the server forgets it. His message stays. */
   #supersede(by: Attempt): void {
     // A reply suspended while it sounded is cut for good, and the server learns what was heard of it.
+    // A word too short to have suspended her (« non ») cuts her all the same, now that it is known to be for her.
+    const { on, mode } = this.#d.settings().bargeIn;
+    if (on && this.#d.speaker.speaking) this.#d.speaker.suspend(mode === 'soft');
     const cut = this.#d.speaker.cutSuspended(by.replyId);
     if (cut)
       void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));

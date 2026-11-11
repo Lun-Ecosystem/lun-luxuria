@@ -88,6 +88,8 @@ export async function replay(
   samples: Float32Array,
   voice: (frame: Float32Array, listening: boolean) => number | Promise<number>,
   params: EndpointParams,
+  /** Each moment as it is found, for what listens further down. */
+  on?: (e: EndpointEvent) => void,
 ): Promise<Heard> {
   const endpointer = new Endpointer(params);
   const heard: Heard = { events: [], sentences: [], noises: 0, held: 0, resumed: 0 };
@@ -99,6 +101,7 @@ export async function replay(
     frame.set(samples.subarray(i * FRAME, (i + 1) * FRAME));
     const at = i * FRAME_MS;
     for (const e of endpointer.push(frame, await voice(frame, endpointer.listening), at)) {
+      on?.(e);
       heard.events.push({ at, type: e.type });
       if (e.type === 'start') from = at;
       else if (e.type === 'end') heard.sentences.push({ from, to: e.lastVoiceAt });
