@@ -36,9 +36,9 @@ export type TraceValue = number | string | boolean;
 
 /** Where an event belongs: the sentence, its try, the reply. Nothing is found back by the time. */
 export interface TraceRef {
-  phrase?: number;
-  essai?: number;
-  reponse?: number;
+  phrase?: number | undefined;
+  essai?: number | undefined;
+  reponse?: number | undefined;
 }
 
 export interface TraceEvent extends TraceRef {
@@ -87,7 +87,13 @@ export class Trace {
   }
 
   /** `at` is the instant of the decision; by default, now. */
-  add(name: TraceName, ref: TraceRef = {}, values: Record<string, TraceValue> = {}, at = this.#now()): void {
+  /** A value left undefined is not written. */
+  add(
+    name: TraceName,
+    ref: TraceRef = {},
+    values: Record<string, TraceValue | undefined> = {},
+    at = this.#now(),
+  ): void {
     const own: TraceRef = { ...ref };
     if (own.reponse !== undefined) {
       if (own.phrase !== undefined) this.#replies.set(own.reponse, { ...own });

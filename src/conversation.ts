@@ -1,8 +1,9 @@
 import type { Brain, LiveEvent, Message, SendEvent } from './brain.ts';
 import { decide } from './listen/filter.ts';
-import type { EndpointEvent } from './listen/endpoint.ts';
+import type { EndpointEvent, Moment } from './listen/endpoint.ts';
 import type { Layout, Settings } from './settings.ts';
 import type { SpeakerEvent } from './speech/speaker.ts';
+import type { Trace, TraceName, TraceRef, TraceValue } from './trace.ts';
 
 export interface Heard {
   text: string;
@@ -18,7 +19,8 @@ export interface ConversationDeps {
     release(id: number): void;
     drop(id: number): void;
     add(id: number, text: string, urgent?: boolean): void;
-    suspend(soft?: boolean): void;
+    /** `by`: the sentence whose sound suspends her, for the trace. */
+    suspend(soft?: boolean, by?: number): void;
     resume(): void;
     cutSuspended(keep?: number): { id: number; said: string }[];
     end(id: number): void;
@@ -32,6 +34,8 @@ export interface ConversationDeps {
   silenced?(): boolean;
   now(): number;
   on(e: ConversationEvent): void;
+  /** Where each decision is written; without it, nothing else changes. */
+  trace?: Trace;
 }
 
 export type ConversationEvent =
@@ -42,6 +46,15 @@ export type ConversationEvent =
   | { type: 'failed'; text: string }
   | { type: 'latency'; ms: number; speculated: boolean }
   | { type: 'said' };
+
+const LISTENED: Record<EndpointEvent['type'], TraceName> = {
+  start: 'voix',
+  held: 'tenue',
+  pause: 'pause',
+  resume: 'reprise',
+  end: 'fin',
+  noise: 'bruit',
+};
 
 const MAX_TRIES = 3;
 const MAX_TRIED_MS = 10_000;
@@ -66,6 +79,9 @@ interface Attempt {
   superseded?: boolean;
   /** The one whose reply was still unheard when this sentence ended: it is again, if this one asks nothing. */
   before?: Attempt | null;
+  /** In the trace: its sentence and its rank. */
+  phrase?: number;
+  essai?: number;
 }
 
 /**
@@ -87,9 +103,19 @@ export class Conversation {
   /** He holds a sentence now; and the ones that ended without their verdict yet. She does not resume over either. */
   #talking = false;
   #unjudged = new Set<Attempt>();
+  /** The sentence being heard, in the trace: numbered at its first sound. */
+  #phrase: number | undefined;
 
   constructor(deps: ConversationDeps) {
     this.#d = deps;
+  }
+
+  #write(name: TraceName, ref: TraceRef, values?: Record<string, TraceValue | undefined>, at?: number): void {
+    this.#d.trace?.add(name, ref, values, at);
+  }
+
+  #ref(a: Attempt): TraceRef {
+    return { phrase: a.phrase, essai: a.essai, reponse: a.replyId };
   }
 
   #fail(what: string, err: unknown): void {
@@ -98,6 +124,9 @@ export class Conversation {
 
   /** A turn the brain marked as spoken. */
   onLive(e: LiveEvent): void {
+    if (e.type === 'speech')
+      this.#write('phrase_recue', { reponse: e.id }, { rang: e.n, longueur: e.text.length, pourquoi: e.why });
+    else if (e.type === 'speech-end') this.#write('fin_recue', { reponse: e.id });
     if (e.type === 'speech') {
       const speak = this.#d.settings().speak;
       if (this.#d.silenced?.() && e.why !== 'p0') {
@@ -114,13 +143,16 @@ export class Conversation {
 
   onSpeaker(e: SpeakerEvent): void {
     if (e.type === 'first-sound') {
-      this.#lastSpokeAt = this.#d.now();
+      const now = this.#d.now();
+      this.#lastSpokeAt = now;
+      // Written here, on the same instant as the measure: the trace must give back the same number.
+      this.#write('premier_son', { reponse: e.id }, {}, now);
       this.#d.on({ type: 'thinking', on: false });
       this.#heard(e.id);
       if (this.#clockFrom && e.id === this.#waitingReply) {
         this.#d.on({
           type: 'latency',
-          ms: this.#d.now() - this.#clockFrom.at,
+          ms: now - this.#clockFrom.at,
           speculated: this.#clockFrom.speculated,
         });
         this.#clockFrom = null;
@@ -141,8 +173,16 @@ export class Conversation {
     }
   }
 
-  onEndpoint(e: EndpointEvent): void {
+  /** The listening's moments, each with the instant of its sound and of its decision (the clock, when it has none). */
+  onEndpoint(e: EndpointEvent & Partial<Moment>): void {
     const s = this.#d.settings();
+    if (this.#d.trace) {
+      if (e.type === 'start' || this.#phrase === undefined) this.#phrase = this.#d.trace.phrase();
+      const name = LISTENED[e.type];
+      const now = e.decidedAt ?? this.#d.now();
+      const last = e.type === 'end' ? e.lastVoiceAt : undefined;
+      this.#write(name, { phrase: this.#phrase }, { son: e.at ?? now, dernier_son: last }, now);
+    }
     switch (e.type) {
       case 'held':
         this.#talking = true;
@@ -150,7 +190,7 @@ export class Conversation {
         // Nobody knows yet what this sound is: she falls silent, and the end of the sentence will tell.
         if (this.#d.speaker.speaking) {
           this.#lastSpokeAt = this.#d.now();
-          this.#d.speaker.suspend(s.bargeIn.mode === 'soft');
+          this.#d.speaker.suspend(s.bargeIn.mode === 'soft', this.#phrase);
         } else this.#holdBack();
         return;
       case 'pause':
@@ -205,6 +245,7 @@ export class Conversation {
 
   /** Nothing will answer this sentence: the reply before it is the unheard one again, and comes out if held back. */
   #noAnswer(attempt: Attempt): void {
+    this.#write('sans_reponse', this.#ref(attempt), {});
     if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
     this.#letGo(attempt);
   }
@@ -242,7 +283,7 @@ export class Conversation {
     // A reply suspended while it sounded is cut for good, and the server learns what was heard of it.
     // A word too short to have suspended her (« non ») cuts her all the same, now that it is known to be for her.
     const { on, mode } = this.#d.settings().bargeIn;
-    if (on && this.#d.speaker.speaking) this.#d.speaker.suspend(mode === 'soft');
+    if (on && this.#d.speaker.speaking) this.#d.speaker.suspend(mode === 'soft', by.phrase);
     this.#unjudged.delete(by);
     for (const cut of this.#d.speaker.cutSuspended(by.replyId))
       void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
@@ -263,6 +304,12 @@ export class Conversation {
   /** Transcribes, filters, sends; held unless `final`. */
   #try(audio: Float32Array, final: boolean): Attempt {
     const attempt: Attempt = { dropped: false, committed: final, early: !final, keyHeld: this.#d.keyHeld() };
+    const t = this.#d.trace;
+    if (t && this.#phrase !== undefined) {
+      attempt.phrase = this.#phrase;
+      attempt.essai = t.essai(this.#phrase);
+      this.#write('essai', this.#ref(attempt), { final });
+    }
     if (final) this.#awaits(attempt);
     attempt.sent = this.#transcribeAndSend(audio, attempt);
     return attempt;
@@ -271,9 +318,11 @@ export class Conversation {
   async #transcribeAndSend(audio: Float32Array, attempt: Attempt): Promise<void> {
     const d = this.#d;
     let heard: Heard;
+    const from = d.now();
     try {
       heard = await d.stt(audio);
     } catch (err) {
+      this.#write('transcrite', this.#ref(attempt), { duree: d.now() - from, echec: true });
       if (attempt.dropped) return;
       // Nothing will come of it: the end of the sentence must not wait for a reply.
       attempt.dropped = true;
@@ -284,10 +333,16 @@ export class Conversation {
       this.#fail('Ta phrase n’a pas pu être transcrite', err);
       return;
     }
+    const transcribed = {
+      duree: d.now() - from,
+      confiance: heard.confidence,
+      longueur: heard.text.length,
+    };
     try {
       // Muted while it was transcribed: nothing leaves, nothing is paid.
       if (d.silenced?.()) attempt.dropped = true;
       if (attempt.dropped) {
+        this.#write('transcrite', this.#ref(attempt), transcribed);
         if (attempt.committed) this.#noAnswer(attempt);
         return;
       }
@@ -296,6 +351,14 @@ export class Conversation {
         { layout: d.layout(), keyHeld: attempt.keyHeld, lastSpokeAt: this.#lastSpokeAt, now: d.now() },
         d.settings(),
       );
+      // Its words are written only when it is for her: what the filter set aside never is.
+      this.#write('transcrite', this.#ref(attempt), {
+        ...transcribed,
+        texte: verdict.pass ? heard.text : undefined,
+      });
+      this.#write('verdict', this.#ref(attempt), {
+        resultat: verdict.pass ? 'pour_elle' : verdict.reason === 'noise' ? 'bruit' : 'ecartee',
+      });
       if (!verdict.pass) {
         if (verdict.reason === 'filtered' && attempt.committed && d.settings().traceIgnored)
           d.on({ type: 'ignored', text: heard.text });
@@ -311,6 +374,7 @@ export class Conversation {
         d.on({ type: 'thinking', on: true });
         this.#supersede(attempt);
       } else attempt.passed = true;
+      this.#write('envoyee', this.#ref(attempt), { final: attempt.committed });
       await d.brain.send(heard.text, { surface: 'voice', confidence: heard.confidence }, (e) =>
         this.#onTurn(e, attempt),
       );
@@ -328,6 +392,7 @@ export class Conversation {
       if (attempt.dropped) this.#withdraw(attempt);
     } else if (e.type === 'reply') {
       attempt.replyId = e.id;
+      this.#write('numero', this.#ref(attempt), { message: attempt.userId });
       if (attempt.dropped) this.#d.speaker.drop(e.id);
       else if (attempt.superseded) this.#forget(e.id);
       else if (attempt.committed) {
@@ -339,6 +404,7 @@ export class Conversation {
       if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
       if (this.#heldBack === attempt) this.#heldBack = null;
       if (attempt.heldBack && attempt.replyId !== undefined) this.#d.speaker.drop(attempt.replyId);
+      this.#write('sans_reponse', this.#ref(attempt), { raison: 'erreur' });
       this.#d.on({ type: 'thinking', on: false });
       this.#d.on({ type: 'failed', text: e.message.error ?? 'Sa réponse a échoué.' });
     }
@@ -356,6 +422,7 @@ export class Conversation {
     this.#attempt = null;
     if (!attempt) return;
     attempt.dropped = true;
+    this.#write('retiree', this.#ref(attempt), {});
     this.#withdraw(attempt);
   }
 
@@ -363,6 +430,7 @@ export class Conversation {
   #commit(attempt: Attempt): void {
     if (attempt.dropped) return;
     attempt.committed = true;
+    this.#write('confirmee', this.#ref(attempt), {});
     this.#awaits(attempt);
     if (attempt.passed) {
       this.#d.on({ type: 'addressed' });

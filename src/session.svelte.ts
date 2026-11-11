@@ -18,6 +18,7 @@ const MAX_TAPE_FRAMES = (5 * 60 * 1000) / 32;
 import { presenceKeeper, watchPage } from './page.ts';
 import { readSettings, type Layout, type Settings } from './settings.ts';
 import { Speaker, type SpeakerEvent } from './speech/speaker.ts';
+import { Trace } from './trace.ts';
 import { appsOnMicrophone, busyWith, synthesize, transcribe } from './voice.ts';
 
 const SETTINGS_KEY = 'luxuria.settings';
@@ -86,6 +87,8 @@ export class Session {
   failure = $state('');
   level = $state(0);
   latencies = $state<{ ms: number; speculated: boolean }[]>([]);
+  /** What each turn decided, on the same clock: in memory, written to a file only on his gesture. */
+  readonly turns = new Trace(clock);
   thread = $state<Message[]>([]);
   /** Read once at least: before, or unreachable since, an empty thread says nothing of what it holds. */
   threadRead = $state(false);
@@ -246,7 +249,9 @@ export class Session {
         (text) => synthesize(text, this.#net.voice),
         out,
         (e: SpeakerEvent) => this.#onSpeaker(e, convo),
+        this.turns,
       )),
+      trace: this.turns,
       settings: () => this.settings,
       layout: () => this.layout,
       keyHeld: () => this.#keyHeld || this.#keyInPhrase,
