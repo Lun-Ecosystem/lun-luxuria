@@ -1,12 +1,14 @@
 // @vitest-environment node
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ENDPOINT_DEFAULTS, levelToVoice } from './endpoint.ts';
 import { decide } from './filter.ts';
 import { FRAME_MS, readWav, replay, writeWav, type Heard } from './replay.ts';
 import { FRAME, loadSilero, SileroVoice } from './vad.ts';
+import { Conversation } from '../conversation.ts';
 import { DEFAULTS } from '../settings.ts';
+import { Speaker } from '../speech/speaker.ts';
 
 const MODEL = readFileSync('src/listen/silero/silero_vad.onnx');
 const byLevel = (frame: Float32Array) => levelToVoice(frame, DEFAULTS.endOfSpeech.floorDb);
@@ -156,6 +158,8 @@ describe.runIf(asked)('the bench', () => {
     const totals = { niveau: [0, 0], modèle: [0, 0] };
     let frames = 0;
     let spent = 0;
+    // What a bound on the speculative turn would take away: sentences with more than three pauses, or over ten seconds.
+    const attempts = { files: 0, overThree: 0, most: 0, overTen: 0 };
     for (const file of wavs(DIR).sort()) {
       const samples = readWav(readFileSync(file));
       const fiche = { ...json(join(file, '..', 'fiche.json')), ...json(file.replace(/\.wav$/, '.json')) };
@@ -164,6 +168,11 @@ describe.runIf(asked)('the bench', () => {
       const model = await replay(samples, await byModel(), ENDPOINT_DEFAULTS);
       spent += performance.now() - started;
       frames += Math.ceil(samples.length / FRAME);
+      const pauses = model.events.filter((e) => e.type === 'pause').length;
+      attempts.files++;
+      attempts.most = Math.max(attempts.most, pauses);
+      if (pauses > 3) attempts.overThree++;
+      if (model.sentences.some((s) => s.to - s.from > 10_000)) attempts.overTen++;
       if (fiche.phrases !== undefined) {
         totals.niveau[1]!++;
         totals.modèle[1]!++;
@@ -185,8 +194,77 @@ describe.runIf(asked)('the bench', () => {
       0,
       `Justes, sur les fichiers qui ont une fiche : le niveau ${totals.niveau[0]} sur ${totals.niveau[1]}, le modèle ${totals.modèle[0]} sur ${totals.modèle[1]}.`,
       `Le modèle : ${(spent / Math.max(frames, 1)).toFixed(2)} ms par trame de ${FRAME_MS} ms, modèle chargé compris.`,
+      `Le tour à l'essai : ${attempts.overThree} fichiers sur ${attempts.files} ont plus de trois pauses (${attempts.most} au plus), ${attempts.overTen} ont une phrase de plus de dix secondes.`,
     );
     writeFileSync(join(DIR, 'releve.md'), `${lines.join('\n')}\n`);
     console.log(lines.slice(0, 5).join('\n'), `\nRelevé complet : ${join(DIR, 'releve.md')}`);
+  }, 600_000);
+});
+
+/**
+ * The same recordings, heard while she is in the middle of a reply, through the whole chain: the voice model, the end
+ * of the sentence, the conversation and her voice. Only the transcription is made up: a word for a file that holds a
+ * sentence, nothing for one that holds none.
+ */
+describe.runIf(asked)('the bench: a sound while she speaks', () => {
+  it('counts what cuts her for good, what she resumes after, and what she never notices', async () => {
+    if (!existsSync(DIR)) return;
+    const tally = {
+      sentence: { files: 0, suspended: 0, cut: 0 },
+      nothing: { files: 0, suspended: 0, cut: 0 },
+    };
+    const missed: string[] = [];
+    for (const file of wavs(DIR).sort()) {
+      const fiche = { ...json(join(file, '..', 'fiche.json')), ...json(file.replace(/\.wav$/, '.json')) };
+      if (fiche.phrases === undefined) continue;
+      const said = fiche.phrases > 0;
+      let stops = 0;
+      let cut = false;
+      const convo: Conversation = new Conversation({
+        brain: {
+          send: async (_text, _opts, on) => on({ type: 'reply', id: 99 }),
+          cut: async (id) => void (cut ||= id === 50),
+          withdraw: async () => {},
+        },
+        stt: async () => ({ text: said ? 'Arrête' : '', confidence: 0.9 }),
+        speaker: new Speaker(
+          async () => ({ samples: new Float32Array(1), rate: 16000 }),
+          { play: () => ({ stop: () => void stops++, heard: () => 0.5 }) },
+          (e) => convo.onSpeaker(e),
+        ),
+        settings: () => DEFAULTS,
+        layout: () => 'small',
+        keyHeld: () => false,
+        now: () => 0,
+        on: () => {},
+      });
+      convo.onLive({
+        type: 'speech',
+        id: 50,
+        n: 1,
+        text: 'Une phrase assez longue pour être coupée.',
+        why: 'reply',
+      });
+      await new Promise((r) => setTimeout(r));
+      await replay(readWav(readFileSync(file)), await byModel(), ENDPOINT_DEFAULTS, (e) =>
+        convo.onEndpoint(e),
+      );
+      for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r));
+      const t = tally[said ? 'sentence' : 'nothing'];
+      t.files++;
+      if (stops > 0) t.suspended++;
+      if (cut) t.cut++;
+      if (cut !== said) missed.push(relative(DIR, file).replaceAll('\\', '/'));
+    }
+    const lines = [
+      '',
+      '## Un son pendant qu’elle parle',
+      '',
+      `Fichiers qui portent une phrase : ${tally.sentence.files} ; sa voix s’arrête pour ${tally.sentence.suspended}, la coupure est réelle pour ${tally.sentence.cut}.`,
+      `Fichiers sans phrase : ${tally.nothing.files} ; elle se tait un instant pour ${tally.nothing.suspended}, coupée pour de bon ${tally.nothing.cut} fois.`,
+      missed.length ? `À côté : ${missed.join(', ')}.` : 'Aucun à côté.',
+    ];
+    appendFileSync(join(DIR, 'releve.md'), `${lines.join('\n')}\n`);
+    console.log(lines.join('\n'));
   }, 600_000);
 });

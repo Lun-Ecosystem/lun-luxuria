@@ -17,10 +17,12 @@ export interface ConversationDeps {
     hold(id: number): void;
     release(id: number): void;
     drop(id: number): void;
-    add(id: number, text: string): void;
+    add(id: number, text: string, urgent?: boolean): void;
+    suspend(soft?: boolean): void;
+    resume(): void;
+    cutSuspended(keep?: number): { id: number; said: string }[];
     end(id: number): void;
     stop(): { id: number; said: string } | undefined;
-    stopAfterSentence(): { id: number; said: string } | undefined;
   };
   settings(): Settings;
   layout(): Layout;
@@ -40,6 +42,9 @@ export type ConversationEvent =
   | { type: 'failed'; text: string }
   | { type: 'latency'; ms: number; speculated: boolean }
   | { type: 'said' };
+
+const MAX_TRIES = 3;
+const MAX_TRIED_MS = 10_000;
 
 /** A fragment sent before the sentence was over: its words stay silent until it is. */
 interface Attempt {
@@ -77,6 +82,11 @@ export class Conversation {
   #unheard: Attempt | null = null;
   /** The one held back by the sentence being said now. */
   #heldBack: Attempt | null = null;
+  /** The sentence being heard: when it began, and how many times it was sent before its end. */
+  #sentence = { from: 0, tries: 0 };
+  /** He holds a sentence now; and the ones that ended without their verdict yet. She does not resume over either. */
+  #talking = false;
+  #unjudged = new Set<Attempt>();
 
   constructor(deps: ConversationDeps) {
     this.#d = deps;
@@ -96,7 +106,7 @@ export class Conversation {
         return;
       }
       if (e.why !== 'reply' && !speak[e.why]) return;
-      this.#d.speaker.add(e.id, e.text);
+      this.#d.speaker.add(e.id, e.text, e.why === 'p0');
     } else if (e.type === 'speech-end') {
       this.#d.speaker.end(e.id);
     }
@@ -115,7 +125,10 @@ export class Conversation {
         });
         this.#clockFrom = null;
       }
-    } else if (e.type === 'subtitle' && e.mute) {
+    } else if (e.type === 'subtitle' && !e.mute) {
+      // Each sentence of a long reply keeps open the time in which a word without her name is for her.
+      this.#lastSpokeAt = this.#d.now();
+    } else if (e.type === 'subtitle') {
       // Its reply came, without a voice: no first sound will end the thinking, nor stop the clock.
       this.#d.on({ type: 'thinking', on: false });
       this.#clockFrom = null;
@@ -132,22 +145,37 @@ export class Conversation {
     const s = this.#d.settings();
     switch (e.type) {
       case 'held':
+        this.#talking = true;
         if (!s.bargeIn.on) return;
-        if (this.#d.speaker.speaking) this.#cutOff(s.bargeIn.mode);
-        else this.#holdBack();
+        // Nobody knows yet what this sound is: she falls silent, and the end of the sentence will tell.
+        if (this.#d.speaker.speaking) {
+          this.#lastSpokeAt = this.#d.now();
+          this.#d.speaker.suspend(s.bargeIn.mode === 'soft');
+        } else this.#holdBack();
         return;
       case 'pause':
-        if (s.endOfSpeech.speculate && !this.#attempt) this.#attempt = this.#try(e.audio, false);
+        // Each try is a transcription and a call taken back if he goes on: a long or halting sentence waits its end.
+        if (
+          s.endOfSpeech.speculate &&
+          !this.#attempt &&
+          this.#sentence.tries < MAX_TRIES &&
+          this.#d.now() - this.#sentence.from <= MAX_TRIED_MS
+        ) {
+          this.#sentence.tries++;
+          this.#attempt = this.#try(e.audio, false);
+        }
         return;
       case 'resume':
         this.#dropAttempt();
         return;
       case 'noise':
+        this.#talking = false;
         this.#dropAttempt();
         // No sentence ended, so the chronometer was not restarted.
         this.#letGo(undefined, false);
         return;
       case 'end':
+        this.#talking = false;
         this.#clockFrom = { at: e.lastVoiceAt, speculated: this.#attempt !== null };
         if (this.#attempt) {
           this.#commit(this.#attempt);
@@ -157,14 +185,9 @@ export class Conversation {
         this.#attempt = null;
         return;
       case 'start':
+        this.#sentence = { from: this.#d.now(), tries: 0 };
         return;
     }
-  }
-
-  #cutOff(mode: 'soft' | 'now'): void {
-    const cut = mode === 'now' ? this.#d.speaker.stop() : this.#d.speaker.stopAfterSentence();
-    if (cut)
-      void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
   }
 
   /** Its reply sounded, or was shown: it is no longer one to take back. */
@@ -175,6 +198,7 @@ export class Conversation {
 
   /** A sentence that ended becomes the one whose reply nobody heard; the one before is kept in case it asks nothing. */
   #awaits(attempt: Attempt): void {
+    this.#unjudged.add(attempt);
     attempt.before = this.#unheard;
     this.#unheard = attempt;
   }
@@ -196,6 +220,10 @@ export class Conversation {
 
   /** What he said (`by`) was not for her: the reply held back comes out. */
   #letGo(by?: Attempt, restarted = true): void {
+    // A reply suspended while it sounded goes on; no first sound will come again, so no thinking is lit.
+    // Not while he is in a sentence, nor while one that ended may still turn out to be for her.
+    if (by) this.#unjudged.delete(by);
+    if (!this.#talking && this.#unjudged.size === 0) this.#d.speaker.resume();
     const waiting = this.#heldBack;
     this.#heldBack = null;
     if (!waiting) return;
@@ -211,6 +239,13 @@ export class Conversation {
 
   /** What he said (`by`) was for her: the reply held back is never said, and the server forgets it. His message stays. */
   #supersede(by: Attempt): void {
+    // A reply suspended while it sounded is cut for good, and the server learns what was heard of it.
+    // A word too short to have suspended her (« non ») cuts her all the same, now that it is known to be for her.
+    const { on, mode } = this.#d.settings().bargeIn;
+    if (on && this.#d.speaker.speaking) this.#d.speaker.suspend(mode === 'soft');
+    this.#unjudged.delete(by);
+    for (const cut of this.#d.speaker.cutSuspended(by.replyId))
+      void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
     const waiting = this.#heldBack;
     // Held back while its own sentence was transcribed: the sentence said since will tell.
     if (!waiting || waiting === by) return;
@@ -281,6 +316,8 @@ export class Conversation {
       );
     } catch (err) {
       d.on({ type: 'thinking', on: false });
+      // Nothing will answer: what this sentence suspended, or held back, goes on.
+      if (attempt.committed) this.#noAnswer(attempt);
       this.#fail('Sa réponse n’est pas venue', err);
     }
   }
@@ -356,12 +393,16 @@ export class Conversation {
 
   /** The microphone stops in the middle of a sentence: it will never end, so nothing waits on it any more. */
   stopListening(): void {
+    this.#talking = false;
+    this.#unjudged.clear();
     this.#dropAttempt();
     this.#letGo(undefined, false);
   }
 
   /** The button that exists only while it speaks. */
   silence(): void {
-    this.#cutOff('now');
+    const cut = this.#d.speaker.stop();
+    if (cut)
+      void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
   }
 }

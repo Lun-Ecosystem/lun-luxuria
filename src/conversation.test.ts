@@ -230,14 +230,170 @@ describe('what stays on the PC', () => {
 });
 
 describe('cutting it off', () => {
-  it('held voice cuts, and the brain is told what the speaker heard', async () => {
-    const t = setup();
+  const pause = { type: 'pause', audio: AUDIO } as const;
+  const ended = { type: 'end', audio: AUDIO, lastVoiceAt: 2000 } as const;
+  /** She is in the middle of a sentence, and a voice holds over hers. */
+  async function suspended(...args: Parameters<typeof setup>) {
+    const t = setup(...args);
     t.say(50, 'Une phrase assez longue pour être coupée.');
+    t.say(50, 'La suite.');
     await tick();
     t.convo.onEndpoint({ type: 'held' });
     await tick();
-    expect(t.calls).toContain('sound stop');
-    expect(t.calls).toContain('cut 50 "Une phrase assez"');
+    expect(t.calls).toEqual(['sound stop']);
+    return t;
+  }
+
+  it('held voice suspends her; the sentence was for her: cut for good, told once, and its answer sounds', async () => {
+    const t = await suspended();
+    t.convo.onEndpoint(pause);
+    await tick();
+    t.convo.onEndpoint(ended);
+    await tick();
+    expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+    t.say(110, 'Oui ?');
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+    expect(t.events.filter((e) => e.type === 'thinking').at(-1)).toEqual({ type: 'thinking', on: false });
+  });
+
+  it.each([
+    [
+      'a cough',
+      (t: Awaited<ReturnType<typeof suspended>>) => t.convo.onEndpoint({ type: 'noise' }),
+      undefined,
+    ],
+    ['nothing transcribed', (t) => t.convo.onEndpoint(ended), 'Sous-titres par Amara.org'],
+    ['a transcription that fails', (t) => t.convo.onEndpoint(ended), new Error('en panne')],
+    ['the microphone stopped', (t) => t.convo.stopListening(), undefined],
+  ] as [string, (t: Awaited<ReturnType<typeof suspended>>) => void, string | Error | undefined][])(
+    '%s: she says her sentence again and goes on, the server hears nothing',
+    async (_, what, heard) => {
+      const t = await suspended({}, heard);
+      const thinking = t.events.filter((e) => e.type === 'thinking').length;
+      what(t);
+      await tick();
+      expect(t.calls).toEqual(['sound stop']);
+      expect(t.sounds).toHaveLength(2);
+      t.sounds[1]!.end();
+      await tick();
+      expect(t.sounds).toHaveLength(3);
+      // No first sound will come again to put it out.
+      expect(t.events.filter((e) => e.type === 'thinking' && e.on).length).toBeLessThanOrEqual(thinking);
+    },
+  );
+
+  it('a sentence the filter sets aside costs her nothing; « arrête » late in a long reply still cuts', async () => {
+    const FILTERED = { filter: { scene: true, small: true } };
+    const aside = await suspended(FILTERED, 'On mange quoi ce soir');
+    aside.advance(20_000);
+    aside.convo.onEndpoint(ended);
+    await tick();
+    expect(aside.calls).toEqual(['sound stop']);
+    expect(aside.sounds).toHaveLength(2);
+
+    const late = setup(FILTERED, 'Arrête');
+    late.say(50, 'Une.');
+    late.say(50, 'Deux, vingt secondes plus tard.');
+    await tick();
+    late.advance(20_000);
+    late.sounds[0]!.end();
+    await tick();
+    late.convo.onEndpoint({ type: 'held' });
+    late.convo.onEndpoint(ended);
+    await tick();
+    expect(late.calls).toEqual(['sound stop', 'cut 50 "Une. Deux, vingt"']);
+  });
+
+  it('a second sentence begins while the first is transcribed: its answer does not sound over it', async () => {
+    const t = await suspended({}, ['Bonjour toi', 'Sous-titres par Amara.org']);
+    t.convo.onEndpoint(ended);
+    t.convo.onEndpoint({ type: 'held' });
+    await tick();
+    expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+    t.say(110, 'Oui ?');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+  });
+
+  it('a word too short to hold cuts her once it is known to be for her; not when barge-in is off', async () => {
+    const t = setup();
+    t.say(50, 'Une phrase assez longue pour être coupée.');
+    await tick();
+    t.convo.onEndpoint(ended);
+    await tick();
+    expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+
+    const off = setup({ bargeIn: { ...DEFAULTS.bargeIn, on: false } });
+    off.say(50, 'Une phrase.');
+    await tick();
+    off.convo.onEndpoint(ended);
+    await tick();
+    expect(off.calls).toEqual([]);
+  });
+
+  it('she does not resume while a sentence that ended may still be for her, nor over one he holds', async () => {
+    const FILTERED = { filter: { scene: true, small: true } };
+    const cough = await suspended();
+    cough.convo.onEndpoint(ended);
+    cough.convo.onEndpoint({ type: 'noise' });
+    expect(cough.sounds).toHaveLength(1);
+    await tick();
+    expect(cough.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+
+    const over = await suspended(FILTERED, ['On mange quoi ce soir', 'Sous-titres par Amara.org']);
+    over.advance(20_000);
+    over.convo.onEndpoint(ended);
+    over.convo.onEndpoint({ type: 'held' });
+    await tick();
+    expect(over.sounds).toHaveLength(1);
+    over.convo.onEndpoint(ended);
+    await tick();
+    expect(over.sounds).toHaveLength(2);
+    expect(over.calls).toEqual(['sound stop']);
+  });
+
+  it('an urgency that waited behind her sentence sounds during the suspension, and both are told cut', async () => {
+    const t = setup();
+    t.say(50, 'Une phrase assez longue pour être coupée.');
+    await tick();
+    t.convo.onLive({ type: 'speech', id: 60, n: 1, text: 'Alerte rouge.', why: 'p0' });
+    t.convo.onEndpoint({ type: 'held' });
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+    t.convo.onEndpoint(ended);
+    await tick();
+    expect(t.calls.filter((c) => c.startsWith('cut')).sort()).toEqual([
+      'cut 50 "Une phrase assez"',
+      'cut 60 "Alerte"',
+    ]);
+  });
+
+  it('the soft way: her sentence ends, the rest waits for what he says', async () => {
+    const t = setup({ bargeIn: { ...DEFAULTS.bargeIn, mode: 'soft' } });
+    t.say(50, 'Elle finit.');
+    t.say(50, 'Pas tout de suite.');
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.sounds[0]!.end();
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    t.convo.onEndpoint(ended);
+    await tick();
+    expect(t.calls).toEqual(['cut 50 "Elle finit."']);
+    expect(t.sounds).toHaveLength(1);
+  });
+
+  it('the button during a suspension silences her for good', async () => {
+    const t = await suspended();
+    t.convo.silence();
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+    expect(t.sounds).toHaveLength(1);
   });
 
   it('not when barge-in is off, nor when it is silent', async () => {
@@ -394,13 +550,14 @@ describe('cutting it off', () => {
     expect(t.calls).toEqual([]);
   });
 
-  it('held voice cuts between two sentences of a long reply too', async () => {
+  it('held voice suspends between two sentences of a long reply too', async () => {
     const t = setup();
     t.say(50, 'Première phrase.');
     await tick();
     t.sounds[0]!.end();
     // The next sentence has not come yet: nothing plays, and it is still her turn.
     t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(ended);
     await tick();
     expect(t.calls).toEqual(['cut 50 "Première phrase."']);
   });
@@ -503,5 +660,59 @@ describe('what is said aloud', () => {
       type: 'failed',
       text: 'Ta phrase n’a pas pu être transcrite : le service voix ne répond pas',
     });
+  });
+});
+
+describe('the sentence sent before its end has bounds', () => {
+  const pause = { type: 'pause', audio: AUDIO } as const;
+
+  it('three tries in a sentence, not a fourth; its end still answers', async () => {
+    const t = setup();
+    t.convo.onEndpoint({ type: 'start' });
+    for (let i = 0; i < 4; i++) {
+      t.convo.onEndpoint(pause);
+      await tick();
+      t.convo.onEndpoint({ type: 'resume' });
+    }
+    expect(t.sends).toHaveLength(3);
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });
+    await tick();
+    expect(t.sends).toHaveLength(4);
+    t.say(113, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+  });
+
+  it('no try past ten seconds of a sentence; the next sentence is tried again', async () => {
+    const t = setup();
+    t.convo.onEndpoint({ type: 'start' });
+    t.advance(12_000);
+    t.convo.onEndpoint(pause);
+    await tick();
+    expect(t.sends).toHaveLength(0);
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 1000 });
+    await tick();
+    expect(t.sends).toHaveLength(1);
+    t.convo.onEndpoint({ type: 'start' });
+    t.convo.onEndpoint(pause);
+    await tick();
+    expect(t.sends).toHaveLength(2);
+  });
+});
+
+describe('an urgency', () => {
+  it('sounds before the rest of the reply under way', async () => {
+    const t = setup();
+    t.say(50, 'Un.');
+    t.say(50, 'Deux.');
+    await tick();
+    t.convo.onLive({ type: 'speech', id: 60, n: 1, text: 'Alerte.', why: 'p0' });
+    t.convo.onLive({ type: 'speech-end', id: 60, why: 'p0' });
+    t.sounds[0]!.end();
+    await tick();
+    t.sounds[1]!.end();
+    await tick();
+    expect(t.sounds).toHaveLength(3);
+    expect(t.events.filter((e) => e.type === 'said')).toHaveLength(0);
   });
 });

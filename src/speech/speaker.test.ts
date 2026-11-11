@@ -164,19 +164,6 @@ describe('cutting it off', () => {
     expect(setup().speaker.stop()).toBeUndefined();
   });
 
-  it('the soft way lets the sentence end, and only that one', async () => {
-    const t = setup();
-    t.speaker.add(7, 'Elle finit.');
-    t.speaker.add(7, 'Pas celle-ci.');
-    await tick();
-    expect(t.speaker.stopAfterSentence()).toEqual({ id: 7, said: 'Elle finit.' });
-    expect(t.sounds[0]!.stopped).toBe(false);
-    t.sounds[0]!.end();
-    await tick();
-    expect(t.subtitles()).toEqual(['Elle finit.']);
-    expect(t.events.at(-1)).toEqual({ type: 'silent' });
-  });
-
   it('words still on their way after a cut stay unheard, and block nothing', async () => {
     const t = setup();
     t.speaker.add(7, 'Un.');
@@ -193,5 +180,161 @@ describe('cutting it off', () => {
     expect(wordsHeard('un deux trois quatre', 0.5)).toBe('un deux');
     expect(wordsHeard('un deux', 0)).toBe('');
     expect(wordsHeard('un deux', 2)).toBe('un deux');
+  });
+});
+
+describe('suspended by a sound that may be nothing', () => {
+  async function midSecond() {
+    const t = setup();
+    t.speaker.add(7, 'Une phrase entière.');
+    t.speaker.add(7, 'Celle-ci coupée en deux.');
+    t.speaker.add(7, 'La suite.');
+    t.speaker.end(7);
+    await tick();
+    t.sounds[0]!.end();
+    await tick();
+    return t;
+  }
+
+  it('falls silent, and resumed says the sentence again from its start, then the rest', async () => {
+    const t = await midSecond();
+    t.speaker.suspend();
+    expect(t.sounds[1]!.stopped).toBe(true);
+    expect(t.speaker.speaking).toBe(false);
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+    t.speaker.resume();
+    await tick();
+    expect(t.subtitles()).toEqual([
+      'Une phrase entière.',
+      'Celle-ci coupée en deux.',
+      'Celle-ci coupée en deux.',
+    ]);
+    t.sounds[2]!.end();
+    await tick();
+    t.sounds[3]!.end();
+    await tick();
+    expect(t.subtitles().at(-1)).toBe('La suite.');
+    expect(t.events.at(-1)).toEqual({ type: 'silent' });
+    expect(t.events.filter((e) => e.type === 'first-sound')).toHaveLength(1);
+  });
+
+  it('cut for good, tells what was heard before, and the answer kept behind it sounds', async () => {
+    const t = await midSecond();
+    t.speaker.hold(8);
+    t.speaker.add(9, 'Une autre, jamais dite.');
+    t.speaker.suspend();
+    expect(t.speaker.cutSuspended(8)).toEqual([{ id: 7, said: 'Une phrase entière. Celle-ci coupée' }]);
+    expect(t.events.at(-1)).toEqual({ type: 'silent', cut: true });
+    t.speaker.add(8, 'La réponse.');
+    t.speaker.release(8);
+    t.speaker.end(8);
+    t.speaker.add(7, 'Trop tard.');
+    await tick();
+    expect(t.subtitles().slice(2)).toEqual(['La réponse.']);
+  });
+
+  it('suspended between two sentences, the one being made waits for the resume', async () => {
+    let made!: (c: Clip) => void;
+    const t = setup((text) => (text === 'Deux.' ? new Promise((r) => (made = r)) : Promise.resolve(CLIP)));
+    t.speaker.add(7, 'Un.');
+    t.speaker.add(7, 'Deux.');
+    await tick();
+    t.sounds[0]!.end();
+    await tick();
+    expect(t.speaker.speaking).toBe(true);
+    t.speaker.suspend();
+    made(CLIP);
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    t.speaker.resume();
+    await tick();
+    expect(t.subtitles()).toEqual(['Un.', 'Deux.']);
+  });
+
+  it('the button during a suspension is for good', async () => {
+    const t = await midSecond();
+    t.speaker.suspend();
+    expect(t.speaker.stop()).toEqual({ id: 7, said: 'Une phrase entière. Celle-ci coupée' });
+    expect(t.events.at(-1)).toEqual({ type: 'silent', cut: true });
+    t.speaker.resume();
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+  });
+
+  it('the soft way lets the sentence end; cut for good, it was the last', async () => {
+    const t = await midSecond();
+    t.speaker.suspend(true);
+    expect(t.sounds[1]!.stopped).toBe(false);
+    expect(t.speaker.cutSuspended()).toEqual([
+      { id: 7, said: 'Une phrase entière. Celle-ci coupée en deux.' },
+    ]);
+    // Told once: neither a second verdict nor the button tells it again.
+    expect(t.speaker.cutSuspended()).toEqual([]);
+    t.sounds[1]!.end();
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+    expect(t.events.at(-1)).toEqual({ type: 'silent' });
+  });
+
+  it('the soft way, resumed after its sentence ended, goes on with the next', async () => {
+    const t = await midSecond();
+    t.speaker.suspend(true);
+    t.sounds[1]!.end();
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+    t.speaker.resume();
+    await tick();
+    expect(t.subtitles().at(-1)).toBe('La suite.');
+  });
+});
+
+describe('an urgency goes first', () => {
+  it('after the sentence that sounds, before the rest of the reply', async () => {
+    const t = setup();
+    t.speaker.add(7, 'Un.');
+    t.speaker.add(7, 'Deux.');
+    t.speaker.end(7);
+    await tick();
+    t.speaker.add(1, 'Alerte.', true);
+    t.speaker.add(2, 'Autre alerte.', true);
+    t.speaker.end(1);
+    t.speaker.end(2);
+    for (let i = 0; i < 4; i++) {
+      t.sounds[i]!.end();
+      await tick();
+    }
+    expect(t.subtitles()).toEqual(['Un.', 'Alerte.', 'Autre alerte.', 'Deux.']);
+    expect(t.events.at(-1)).toEqual({ type: 'silent' });
+  });
+
+  it('one that waited is spared by the cut of the suspended reply', async () => {
+    const t = setup();
+    t.speaker.add(7, 'Un.');
+    await tick();
+    t.speaker.add(1, 'Alerte.', true);
+    t.speaker.suspend(true);
+    expect(t.speaker.cutSuspended()).toEqual([{ id: 7, said: 'Un.' }]);
+    t.sounds[0]!.end();
+    await tick();
+    expect(t.subtitles()).toEqual(['Un.', 'Alerte.']);
+  });
+
+  it('sounds during a suspension', async () => {
+    const t = setup();
+    t.speaker.add(7, 'Un.');
+    await tick();
+    t.speaker.suspend();
+    t.speaker.add(1, 'Alerte.', true);
+    await tick();
+    expect(t.subtitles()).toEqual(['Un.', 'Alerte.']);
+  });
+
+  it('the button while an urgency waits tells the turn that sounded, and its words', async () => {
+    const t = setup();
+    t.speaker.add(7, 'Une phrase assez longue.');
+    await tick();
+    t.speaker.add(1, 'Alerte.', true);
+    expect(t.speaker.stop()).toEqual({ id: 7, said: 'Une phrase' });
   });
 });
