@@ -86,8 +86,7 @@ export class Trace {
     return rank;
   }
 
-  /** `at` is the instant of the decision; by default, now. */
-  /** A value left undefined is not written. */
+  /** `at` is the instant of the decision; by default, now. A value left undefined is not written. */
   add(
     name: TraceName,
     ref: TraceRef = {},
@@ -110,6 +109,8 @@ export class Trace {
     const from = this.#events.findIndex((x) => keyOf(x) === this.#keys[0]);
     this.#events = this.#events.slice(from).filter((x) => keyOf(x) !== gone);
     for (const [id, r] of this.#replies) if (keyOf(r) === gone) this.#replies.delete(id);
+    // A page that runs for days keeps nothing of a sentence gone from the trace, not even its count of tries.
+    if (gone.startsWith('p')) this.#tries.delete(Number(gone.slice(1)));
   }
 
   /** One line per event, after one that says the format. */

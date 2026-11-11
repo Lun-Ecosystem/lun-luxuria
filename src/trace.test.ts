@@ -81,6 +81,19 @@ describe('the trace of a turn', () => {
     ]);
   });
 
+  it('forgets the count of tries of a sentence gone with the bound, and only of that one', () => {
+    const { trace } = setup(2);
+    const tried = (phrase: number) => {
+      trace.add('voix', { phrase });
+      trace.add('essai', { phrase, essai: trace.essai(phrase) });
+    };
+    const [one, two, three] = [trace.phrase(), trace.phrase(), trace.phrase()];
+    for (const phrase of [one, two, three]) tried(phrase);
+    // The first sentence left the trace: its count went with it. The second is still counted.
+    expect(trace.essai(one)).toBe(1);
+    expect(trace.essai(two)).toBe(2);
+  });
+
   it('is written one line per event, after its format', () => {
     const { trace } = setup();
     trace.add('voix', { phrase: trace.phrase() }, { son: 90 });
