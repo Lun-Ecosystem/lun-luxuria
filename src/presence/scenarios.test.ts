@@ -1,4 +1,4 @@
-﻿// @vitest-environment node
+// @vitest-environment node
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -25,25 +25,22 @@ const deroule = (p: Partie) =>
     .map((e) => JSON.stringify(e))
     .join('\n') + '\n';
 
-describe('les scÃ©narios de dÃ©part', () => {
+describe('les scénarios de départ', () => {
   it('sont seize', () => {
     expect(Object.keys(scenarios)).toHaveLength(16);
   });
 
-  it.each(Object.entries(scenarios))(
-    '%s : chargÃ©, jouÃ© deux fois Ã  lâ€™identique, tenu',
-    async (file, s) => {
-      expect(charger(s)).toBe(s);
-      expect(JSON.parse(JSON.stringify(s))).toEqual(s);
-      expect(`./scenarios/${s.nom}.ts`).toBe(file);
-      const partie = await jouer(s);
-      expect(await jouer(s)).toEqual(partie);
-      const juge: Juge = { nom: s.nom, verdicts: juger(s, partie) };
-      juges.push(juge);
-      parties.set(s.nom, partie);
-      expect(juge.verdicts.every(passe), releve([juge])).toBe(true);
-    },
-  );
+  it.each(Object.entries(scenarios))("%s : chargé, joué deux fois à l'identique, tenu", async (file, s) => {
+    expect(charger(s)).toBe(s);
+    expect(JSON.parse(JSON.stringify(s))).toEqual(s);
+    expect(`./scenarios/${s.nom}.ts`).toBe(file);
+    const partie = await jouer(s);
+    expect(await jouer(s)).toEqual(partie);
+    const juge: Juge = { nom: s.nom, verdicts: juger(s, partie) };
+    juges.push(juge);
+    parties.set(s.nom, partie);
+    expect(juge.verdicts.every(passe), releve([juge])).toBe(true);
+  });
 });
 
 afterAll(() => {
@@ -51,5 +48,5 @@ afterAll(() => {
   mkdirSync(DIR, { recursive: true });
   writeFileSync(join(DIR, 'releve-scenarios.md'), releve(juges));
   for (const [nom, p] of parties) writeFileSync(join(DIR, `deroule-${nom}.jsonl`), deroule(p));
-  console.log(`RelevÃ© et dÃ©roulÃ©s Ã©crits dans ${DIR}.`);
+  console.log(`Relevé et déroulés écrits dans ${DIR}.`);
 });
