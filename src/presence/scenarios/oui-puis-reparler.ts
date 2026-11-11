@@ -19,7 +19,8 @@ export default {
   mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'retenue', 'coupure', 'serveur', 'voix'],
   personne: [
     { a: 320, dit: 'Oui', duree: 448 },
-    { a: 1504, dit: 'Attends, en fait je préfère demain', duree: 1600 },
+    // 1504 − 1046, l'envoi du « oui » : pendant la synthèse de sa réponse
+    { apres: { envoi: 1, ms: 458 }, dit: 'Attends, en fait je préfère demain', duree: 1600 },
   ],
   modele: {
     reponses: [
