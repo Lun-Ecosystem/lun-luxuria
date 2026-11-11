@@ -259,6 +259,7 @@ export class Conversation {
     this.#heldBack = waiting;
     waiting.heldBack = true;
     if (waiting.replyId !== undefined) this.#d.speaker.hold(waiting.replyId);
+    this.#write('retenue', this.#ref(waiting), { par: this.#phrase });
   }
 
   /** What he said (`by`) was not for her: the reply held back comes out. */
@@ -273,6 +274,7 @@ export class Conversation {
     waiting.heldBack = false;
     // The sound that held it back came while its own sentence was still being transcribed: it had no reply to hold.
     if (waiting === by) return;
+    this.#write('relachee', this.#ref(waiting), { par: by?.phrase });
     // The chronometer was restarted by a sentence that asked nothing.
     if (restarted) this.#clockFrom = null;
     // It is still on its way.
@@ -299,6 +301,7 @@ export class Conversation {
   }
 
   #forget(replyId: number): void {
+    this.#write('oubliee', { reponse: replyId });
     this.#d.speaker.drop(replyId);
     void this.#d.brain.cut(replyId, '').catch((err) => this.#fail('Coupure non transmise', err));
   }
@@ -360,6 +363,7 @@ export class Conversation {
       });
       this.#write('verdict', this.#ref(attempt), {
         resultat: verdict.pass ? 'pour_elle' : verdict.reason === 'noise' ? 'bruit' : 'ecartee',
+        par: verdict.pass ? verdict.by : undefined,
       });
       if (!verdict.pass) {
         if (verdict.reason === 'filtered' && attempt.committed && d.settings().traceIgnored)

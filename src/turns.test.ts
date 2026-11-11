@@ -242,7 +242,7 @@ describe('the trace of a turn', () => {
   });
 
   it('a clean cut: her sound stops at the hold, the sentence for her cuts the reply for good', async () => {
-    const t = setup(['ArrÃªte']);
+    const t = setup(['Arrête']);
     t.say(50, 'Une longue phrase.', 'ritual');
     await tick();
     t.hear({ type: 'start' });
@@ -273,6 +273,27 @@ describe('the trace of a turn', () => {
     expect(find(t, 'coupee')[0]).toMatchObject({ entendu: 'Une' });
   });
 
+  it('each sound says which sentence of the reply it is, and the same again when said over', async () => {
+    const t = setup();
+    t.say(50, 'Une phrase.', 'ritual');
+    t.convo.onLive({ type: 'speech', id: 50, n: 2, text: 'Une autre.', why: 'ritual' });
+    await tick();
+    t.sounds[0]!.end();
+    await tick();
+    t.hear({ type: 'start' });
+    t.advance(400);
+    t.hear({ type: 'held' });
+    t.hear({ type: 'noise' });
+    await tick();
+    expect(find(t, 'son').map((e) => [e['etape'], e['rang']])).toEqual([
+      ['debut', 1],
+      ['fin', undefined],
+      ['debut', 2],
+      ['fin', undefined],
+      ['debut', 2],
+    ]);
+  });
+
   it('a speech without a sentence is found by its reply alone', async () => {
     const t = setup();
     t.say(40, 'Bonjour.', 'ritual');
@@ -290,6 +311,64 @@ describe('the trace of a turn', () => {
       'son:fin r40',
       'silence',
     ]);
+  });
+});
+
+describe('a reply held back while he talks again', () => {
+  /** A first sentence sent and numbered (r110), then a second one held: its reply waits. */
+  async function heldBack(heard: string[]) {
+    const t = setup(heard);
+    t.hear({ type: 'start' });
+    t.advance(1200);
+    t.hear({ type: 'end', audio: AUDIO, lastVoiceAt: 1480 });
+    await tick();
+    t.hear({ type: 'start' });
+    t.advance(400);
+    t.hear({ type: 'held' });
+    t.advance(500);
+    t.hear({ type: 'end', audio: AUDIO, lastVoiceAt: 2000 });
+    await tick();
+    return t;
+  }
+
+  it('is held back by the sentence that holds, and let go by one not for her', async () => {
+    const t = await heldBack(['Bonjour toi', '']);
+    expect(find(t, 'retenue')).toMatchObject([{ phrase: 1, essai: 1, reponse: 110, par: 2 }]);
+    expect(find(t, 'relachee')).toMatchObject([{ phrase: 1, essai: 1, reponse: 110, par: 2 }]);
+    expect(find(t, 'oubliee')).toEqual([]);
+    expect(find(t, 'verdict').map((e) => e['resultat'])).toEqual(['pour_elle', 'bruit']);
+  });
+
+  it('is forgotten when the new sentence is for her, and the verdict says by which rule', async () => {
+    const t = await heldBack(['Bonjour toi', 'Et demain ?']);
+    expect(find(t, 'retenue')).toHaveLength(1);
+    expect(find(t, 'relachee')).toEqual([]);
+    expect(find(t, 'oubliee')).toMatchObject([{ phrase: 1, essai: 1, reponse: 110 }]);
+    expect(find(t, 'verdict').map((e) => e['par'])).toEqual(['off', 'off']);
+  });
+
+  it('is not let go when the sentence held back is the one let go', async () => {
+    const t = setup(['']);
+    t.hear({ type: 'start' });
+    t.advance(1200);
+    t.hear({ type: 'end', audio: AUDIO, lastVoiceAt: 1480 });
+    // Held while its own transcription is on its way: it has no reply yet.
+    t.hear({ type: 'start' });
+    t.advance(400);
+    t.hear({ type: 'held' });
+    await tick();
+    expect(find(t, 'retenue')).toMatchObject([{ phrase: 1, essai: 1, par: 2 }]);
+    expect(find(t, 'retenue')[0]!.reponse).toBeUndefined();
+    expect(find(t, 'relachee')).toEqual([]);
+  });
+
+  it('the verdict names the rule when the filter is on', async () => {
+    const t = setup([`${DEFAULTS.agent.name} viens`], { filter: { scene: true, small: true } });
+    t.hear({ type: 'start' });
+    t.advance(1200);
+    t.hear({ type: 'end', audio: AUDIO, lastVoiceAt: 1500 });
+    await tick();
+    expect(find(t, 'verdict')[0]).toMatchObject({ resultat: 'pour_elle', par: 'nom' });
   });
 });
 

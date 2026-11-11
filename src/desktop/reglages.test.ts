@@ -412,7 +412,7 @@ describe('everyday first', () => {
     expect(names[0]).toMatch(/^deroule-.*\.jsonl$/);
     const lines = (await files[0]!.text()).trimEnd().split('\n');
     expect(lines.map((l) => JSON.parse(l) as object)).toEqual([
-      { format: 1 },
+      { format: 2 },
       expect.objectContaining({ name: 'voix', phrase: 1, son: 12 }),
     ]);
   });

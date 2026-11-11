@@ -1,5 +1,9 @@
-/** The version of the file's format: the scenarios read these names, a change of meaning is a new version. */
-export const TRACE_FORMAT = 1;
+/**
+ * The version of the file's format: the scenarios read these names, a change of meaning is a new version.
+ * 2: `retenue`, `relachee`, `oubliee` added; `verdict` says by which rule (`par`) a sentence passed; `son` at its
+ * start says which sentence of the reply sounds (`rang`).
+ */
+export const TRACE_FORMAT = 2;
 
 export type TraceName =
   // The listening: each with the instant of its sound (`son`) and of its decision (`at`).
@@ -18,6 +22,10 @@ export type TraceName =
   | 'retiree'
   | 'confirmee'
   | 'sans_reponse'
+  // A reply on its way while he talks again: held back (`par` the sentence), let go by one not for her, or forgotten.
+  | 'retenue'
+  | 'relachee'
+  | 'oubliee'
   // The server.
   | 'phrase_recue'
   | 'fin_recue'

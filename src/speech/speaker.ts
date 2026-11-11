@@ -39,7 +39,8 @@ interface Turn {
   urgent?: true;
 }
 
-const SYNTH_TIMEOUT_MS = 5000;
+/** A synthesis longer than this is given up: the sentence is shown without a voice. */
+export const SYNTH_TIMEOUT_MS = 5000;
 
 /** How long words without a voice stay on screen before the next sentence: enough to read them. */
 export const readingMs = (text: string) => Math.max(1500, 60 * text.length);
@@ -194,7 +195,8 @@ export class Speaker {
         this.#on({ type: 'first-sound', id: turn.id });
       }
       this.#on({ type: 'subtitle', id: turn.id, text: piece.text });
-      this.#trace?.add('son', { reponse: turn.id }, { etape: 'debut' });
+      // `rang`: the sentence of the reply, from 1; a sentence said again after a suspension keeps its rank.
+      this.#trace?.add('son', { reponse: turn.id }, { etape: 'debut', rang: turn.next });
       const sound = this.#out.play(clip, () => {
         if (this.#playing?.sound !== sound) return;
         this.#trace?.add('son', { reponse: this.#playing.turn.id }, { etape: 'fin' });
