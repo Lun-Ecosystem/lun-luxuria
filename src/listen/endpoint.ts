@@ -19,7 +19,7 @@ export const ENDPOINT_DEFAULTS: EndpointParams = {
   on: 0.6,
   off: 0.45,
   pauseMs: 160,
-  silenceMs: 500,
+  silenceMs: 700,
   prePadMs: 200,
   minSpeechMs: 250,
   maxSpeechMs: 30_000,
