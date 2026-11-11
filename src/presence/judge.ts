@@ -84,7 +84,7 @@ const ligne = (e: Ligne) => {
  *
  * In the chain (`lieu`), two more: a speech whose anchor never came names the link of its anchor (`voix` for a
  * sound, `serveur` for a text received); and when the false model chose another reply on the text it received than
- * on what the person said, the transcription is the first link of every failure whose window reaches that call.
+ * on what the person said (none, a request it refused, counts as a choice), the transcription is the first link of every failure whose window reaches that call.
  */
 export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdict[] {
   const base = (a: Attendu) => ({
@@ -160,16 +160,20 @@ export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdic
    */
   const divergence = (): number | undefined => {
     const reponses = s.modele?.reponses ?? [];
-    const appels = bancDe('modele_appele');
+    // A request refused chose no reply: -1, as `choisir` says it.
+    const appels = partie.banc.filter(
+      (e) => e.name === 'modele_appele' || (e.name === 'modele_inattendu' && e['sorte'] === 'stream'),
+    );
     const envois = rattacher(appels, bancDe('envoi_recu'));
     for (const [k, appel] of appels.entries()) {
+      const choisie = appel.name === 'modele_inattendu' ? -1 : appel.reponse;
       const r = envois[k]?.reponse;
       const phrase = partie.page.find((e) => e.name === 'numero' && e.reponse === r)?.phrase;
       if (phrase === undefined) continue;
       const dits = s.personne
         .filter((_, i) => resoudre({ parole: i + 1 })?.phrase === phrase)
         .map((p) => p.dit);
-      if (dits.length > 0 && choisir(reponses, dits.join(' ')) !== appel.reponse) return appel.at;
+      if (dits.length > 0 && choisir(reponses, dits.join(' ')) !== choisie) return appel.at;
     }
     return undefined;
   };

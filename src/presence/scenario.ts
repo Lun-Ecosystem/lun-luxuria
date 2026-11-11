@@ -56,7 +56,12 @@ export type BancNom =
   /** `parole`: an anchored speech whose anchor never came; it never sounded. */
   | 'parole_sautee'
   /** `reponse` (the index in `modele.reponses`, from 0), `texte`: what the false model behind the real server chose. */
-  | 'modele_appele';
+  | 'modele_appele'
+  /**
+   * `sorte` 'stream' | 'complete', `extrait`: the last 80 characters of a request the false model had no reply for.
+   * A 'stream' one answers a text received.
+   */
+  | 'modele_inattendu';
 
 /** A line of the player's log, merged with the page's trace in the same file. */
 export interface BancEvent {
@@ -90,7 +95,7 @@ export const ECRIT_PAR: Record<Mecanisme, { page: readonly TraceName[]; banc: re
   coupure: { page: ['coupee', 'arretee'], banc: ['coupure_recue'] },
   serveur: {
     page: ['envoyee', 'numero', 'phrase_recue', 'fin_recue', 'durees'],
-    banc: ['envoi_recu', 'retrait_recu', 'modele_appele'],
+    banc: ['envoi_recu', 'retrait_recu', 'modele_appele', 'modele_inattendu'],
   },
   voix: { page: ['synthese', 'son', 'premier_son', 'silence'], banc: ['joue', 'arrete', 'echo'] },
 };
@@ -327,12 +332,16 @@ export function ancre(apres: Apres, journal: readonly BancEvent[]): number | und
 /**
  * For each call of the false model, the text received it answers: the first not yet taken with the same `texte` (the
  * server writes the same raw string in both). A reply withdrawn or forgotten in the queue, or `fixed`, has no call.
+ * A request it refused (`modele_inattendu`) keeps only the last 80 characters, `extrait`: the texts compare by them.
  */
 export function rattacher<E extends object>(appels: readonly E[], envois: readonly E[]): (E | undefined)[] {
-  const texte = (x: E) => (x as Record<string, unknown>)['texte'];
+  const fin = (x: E) => {
+    const r = x as Record<string, unknown>;
+    return String(r['texte'] ?? r['extrait'] ?? '').slice(-80);
+  };
   const pris = new Set<E>();
   return appels.map((a) => {
-    const e = envois.find((x) => !pris.has(x) && texte(x) === texte(a));
+    const e = envois.find((x) => !pris.has(x) && fin(x) === fin(a));
     if (e) pris.add(e);
     return e;
   });

@@ -454,6 +454,31 @@ describe('judging a game of the chain', () => {
       expect(j(appel(1, [retiree]))).toMatchObject({ source: 'transcription', propre: 'voix' });
     });
 
+    it('is named when the text heard chose no reply where what was said chose one', () => {
+      // « Arrête » heard « Arret ? »: the false model refuses, and keeps the end of the text.
+      const refus = (s: Partial<Scenario>) =>
+        juger(
+          scenario([joue], { mecanismes, ...s }),
+          {
+            ...partie,
+            banc: [
+              ...banc,
+              {
+                de: 'banc',
+                at: 2860,
+                name: 'modele_inattendu',
+                sorte: 'stream',
+                extrait: 'Le jardin est mouillé',
+              },
+            ],
+          },
+          'chaine',
+        )[0]!;
+      expect(refus({ modele })).toMatchObject({ source: 'transcription', propre: 'voix' });
+      // What was said chose none either: the scenario's, not the transcription's.
+      expect(refus({ modele: { reponses: [{ si: 'film', phrases: ['Un.'] }] } }).source).toBe('voix');
+    });
+
     it('is not named when the text heard differs but the reply is the same, nor at the exact level', () => {
       expect(j(appel(0))).toMatchObject({ source: 'voix', propre: 'voix' });
       expect(j(appel(1), 'exact').source).toBe('voix');

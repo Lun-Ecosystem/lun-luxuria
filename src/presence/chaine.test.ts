@@ -38,7 +38,16 @@ interface LigneServeur {
   [valeur: string]: TraceValue | null | undefined;
 }
 
-const DU_SERVEUR: readonly string[] = ['envoi_recu', 'coupure_recue', 'retrait_recu', 'modele_appele'];
+const DU_SERVEUR: readonly string[] = [
+  'envoi_recu',
+  'coupure_recue',
+  'retrait_recu',
+  'modele_appele',
+  'modele_inattendu',
+];
+/** A call of the false model, or a request of a sending it refused: each answers a text received. */
+const appelDuModele = (l: LigneServeur) =>
+  l.name === 'modele_appele' || (l.name === 'modele_inattendu' && l['sorte'] === 'stream');
 
 /** An instant of the page brought to the game's, to the ms: the bounds are in ms. */
 const depuis = (at: number, t0: number) => Math.round(at - t0);
@@ -67,7 +76,7 @@ function fondre(
   fin: number,
 ): Partie {
   const lignes = serveur.filter((l) => DU_SERVEUR.includes(l.name));
-  const appels = lignes.filter((l) => l.name === 'modele_appele');
+  const appels = lignes.filter(appelDuModele);
   const envois = rattacher(
     appels,
     lignes.filter((l) => l.name === 'envoi_recu'),
@@ -186,6 +195,21 @@ describe('le joueur réel, sans navigateur', () => {
     ];
     const p = fondre(trace, 2, [], serveur, 1000, 9000);
     expect(p.banc.find((e) => e.name === 'modele_appele')!.at).toBe(2100);
+  });
+
+  it('pose une demande refusée par le faux modèle sur le texte reçu dont elle garde la fin', () => {
+    const trace: TraceEvent[] = [{ at: 1900, name: 'numero', phrase: 1, essai: 1, reponse: 101, message: 7 }];
+    const serveur: LigneServeur[] = [
+      { partie: 'p', t: 1, name: 'modele_inattendu', sorte: 'complete', extrait: 'un titre' },
+      { partie: 'p', t: 2, name: 'modele_inattendu', sorte: 'stream', extrait: 'Arret ?' },
+      { partie: 'p', t: 5, name: 'envoi_recu', texte: 'Arret ?', message: 7, reponse: 101 },
+    ];
+    const p = fondre(trace, 2, [], serveur, 1000, 9000);
+    expect(p.banc.map((e) => [e.at, e.name, e['sorte']])).toEqual([
+      [0, 'modele_inattendu', 'complete'],
+      [900, 'modele_inattendu', 'stream'],
+      [900, 'envoi_recu', undefined],
+    ]);
   });
 
   it('pose la coupure reçue sur la coupure de la page, arretee faute de coupee', () => {
