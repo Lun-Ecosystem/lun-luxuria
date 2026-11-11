@@ -70,10 +70,12 @@ class Worklet {
   port = new EventTarget();
 }
 
+const sseTexte = (blocs: [string, unknown][]) =>
+  blocs.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join('');
 const sse = (blocs: [string, unknown][]) =>
-  new Response(blocs.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join(''), {
-    headers: { 'content-type': 'text/event-stream' },
-  });
+  new Response(sseTexte(blocs), { headers: { 'content-type': 'text/event-stream' } });
+/** What the server answers a sending, a reply 7 of two sentences by default. */
+let serveur: () => Response;
 
 let tts: Float32Array;
 let win: Window & typeof globalThis;
@@ -102,12 +104,7 @@ function installer(paroles: ({ a: number } | { apres: Apres })[], gestes: Geste[
       if (init?.body === '{"text":"refus"}') return new Response('', { status: 503 });
       if (url === '/voix/tts')
         return new Response(tts.slice().buffer, { headers: { 'x-sample-rate': '1000' } });
-      return sse([
-        ['user', { id: 6 }],
-        ['reply', { id: 7 }],
-        ['delta', { text: 'Bonjour. ' }],
-        ['delta', { text: 'Il fait beau.' }],
-      ]);
+      return serveur();
     },
   } as unknown as Window & typeof globalThis;
   banc = installerSonde(win, plan);
@@ -162,6 +159,13 @@ beforeEach(() => {
   vi.useFakeTimers({ now: 10_000 });
   Ctx.tous = [];
   Ctx.Source = class extends Source {};
+  serveur = () =>
+    sse([
+      ['user', { id: 6 }],
+      ['reply', { id: 7 }],
+      ['delta', { text: 'Bonjour. ' }],
+      ['delta', { text: 'Il fait beau.' }],
+    ]);
 });
 afterEach(() => vi.useRealTimers());
 
@@ -187,6 +191,46 @@ describe('installerSonde', () => {
     sortie.currentTime = 3;
     tap.onaudioprocess!({ playbackTime: 3.256, inputBuffer: { getChannelData: () => x } });
     expect(banc.journal.find((e) => e.name === 'joue')!.at).toBe(Date.now());
+  });
+
+  it('counts a reply in progress until its done, its cut or its withdrawal, and says when the last ended', async () => {
+    installer([]);
+    expect(banc.reponses()).toEqual({ enCours: 0, finie: 0 });
+    // Three sendings whose streams stay open: the server is still writing their replies.
+    const fermes: (() => void)[] = [];
+    let n = 0;
+    serveur = () => {
+      const [user, reply] = [6 + 2 * n, 7 + 2 * n++];
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(
+              new TextEncoder().encode(
+                sseTexte([
+                  ['user', { id: user }],
+                  ['reply', { id: reply }],
+                ]),
+              ),
+            );
+            fermes.push(() => c.close());
+          },
+        }),
+      );
+    };
+    const envoyer = () => win.fetch('/api/threads/main/messages', { method: 'POST', body: '{"text":"x"}' });
+    for (let i = 0; i < 3; i++) await envoyer();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(banc.reponses().enCours).toBe(3);
+    // Reply 7 cut, the try of reply 9 (user 8) withdrawn, reply 11 done.
+    await win.fetch('/api/threads/main/messages/7/cut', { method: 'POST', body: '{"said":""}' });
+    vi.advanceTimersByTime(10);
+    await win.fetch('/api/threads/main/messages/8/withdraw', { method: 'POST' });
+    expect(banc.reponses().enCours).toBe(1);
+    serveur = () => sse([]);
+    vi.advanceTimersByTime(10);
+    fermes[2]!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(banc.reponses()).toEqual({ enCours: 0, finie: Date.now() });
   });
 
   it("forgets a sending the server refused: it is no anchor's", async () => {

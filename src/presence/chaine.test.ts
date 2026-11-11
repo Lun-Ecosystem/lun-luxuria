@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULTS } from '../settings.ts';
 import type { TraceEvent, TraceValue } from '../trace.ts';
 import { fichiers, planDePartie, sonsDe, synthSapi, temoin, type Sons } from './chaine/sons.ts';
-import type { Plan } from './chaine/sonde.ts';
+import type { Banc, Plan } from './chaine/sonde.ts';
 import { juger, passe } from './judge.ts';
 import { jouer } from './player.ts';
 import { releveChaine, type Jouee, type PartieChaine } from './releve.ts';
@@ -20,6 +20,7 @@ import {
   rattacher,
   type BancEvent,
   type BancNom,
+  type Parle,
   type Partie,
   type Scenario,
 } from './scenario.ts';
@@ -235,6 +236,42 @@ describe('le joueur réel, sans navigateur', () => {
       { de: 'banc', at: 0, name: 'modele_appele', reponse: 0, texte: 'x' },
       { de: 'banc', at: 0, name: 'envoi_recu', texte: 'x', message: 1 },
     ]);
+  });
+
+  it("n'arrête pas la partie sur une réponse encore en cours, plafond gardé", () => {
+    const s = scenarios['./scenarios/phrase-attente.ts']!;
+    const plan: Plan = {
+      nom: s.nom,
+      poses: [{ son: 0, de: 'parole', numero: 1, duree: 1000, a: 0 }],
+      gestes: [],
+      reponses: [],
+    };
+    // Her speech ended at 1000; « Je regarde. » played 3000 → 3600; the result still to come.
+    const j: BancEvent[] = [
+      { de: 'banc', at: 1000, name: 'parole', parole: 1, etape: 'fin' },
+      { de: 'banc', at: 3000, name: 'joue', reponse: 101, phrase: 1 },
+      { de: 'banc', at: 3600, name: 'arrete', reponse: 101, phrase: 1 },
+    ];
+    const fini = (now: number, r: { enCours: number; finie: number }) => partieFinie(now, 0, j, r, s, plan);
+    expect(fini(7000, { enCours: 1, finie: 0 })).toBe(false);
+    expect(fini(7000, { enCours: 0, finie: 6000 })).toBe(false);
+    expect(fini(7500, { enCours: 0, finie: 6000 })).toBe(true);
+    expect(fini(PLAFOND_MS, { enCours: 1, finie: 0 })).toBe(true);
+  });
+
+  it('fait échouer la partie sur un mot à elle que le serveur refuse', async () => {
+    const s: Scenario = {
+      ...scenarios['./scenarios/deux-phrases.ts']!,
+      modele: { parle: [{ a: 0, pourquoi: 'spontaneous', phrases: ['Tiens.'] }] },
+    };
+    const dits: string[] = [];
+    const envoyer = (status: number) => async (p: Parle) => {
+      dits.push(p.phrases[0]!);
+      return new Response('', { status });
+    };
+    await expect(sesMots(s, 0, async () => 0, envoyer(200))).resolves.toBeUndefined();
+    await expect(sesMots(s, 0, async () => 0, envoyer(409))).rejects.toThrow(/409/);
+    expect(dits).toEqual(['Tiens.', 'Tiens.']);
   });
 
   it('dit chaque scénario non joué et sa raison', () => {
@@ -464,17 +501,20 @@ describe.runIf(enChaine)('la chaîne', () => {
             throw new Error("le micro de la page ne s'ouvre pas");
           });
       const maintenant = () => page.evaluate(() => performance.now());
-      for (const p of s.modele?.parle ?? [])
-        setTimeout(
-          () =>
-            void fetch(`${SERVEUR}/api/chaine/parle`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json', authorization: `Bearer ${jeton}` },
-              body: JSON.stringify({ pourquoi: p.pourquoi, phrases: p.phrases }),
-            }),
-          Math.max(0, t0 + p.a - (await maintenant())),
-        );
+      // Awaited after the game: a word of hers refused fails it, never unseen.
+      const mots = sesMots(s, t0, maintenant, (p) =>
+        fetch(`${SERVEUR}/api/chaine/parle`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${jeton}` },
+          body: JSON.stringify({ pourquoi: p.pourquoi, phrases: p.phrases }),
+        }),
+      ).then(
+        () => undefined,
+        (err: unknown) => err,
+      );
       await finDePartie(page, s, plan, t0, temoinDe?.fin);
+      const echec = await mots;
+      if (echec !== undefined) throw echec;
       const sonde = temoinDe ? [] : await page.evaluate(() => window.__banc!.fin());
       const sortieMs = temoinDe ? undefined : await page.evaluate(() => window.__banc!.sortieAnnonceeMs);
       const fin = await maintenant();
@@ -570,26 +610,62 @@ const PREMIERE_TRAME = `{
   };
 }`;
 
-/** The end of a game: every sound posed and `finApresMs` after the last (or `jusqua`), at most `PLAFOND_MS`. */
+/** Her own words (`modele.parle`), each asked of the server at its instant; rejects on one refused or failed. */
+async function sesMots(
+  s: Scenario,
+  t0: number,
+  maintenant: () => Promise<number>,
+  envoyer: (p: Parle) => Promise<Response>,
+): Promise<void> {
+  await Promise.all(
+    (s.modele?.parle ?? []).map(async (p) => {
+      await pause(Math.max(0, t0 + p.a - (await maintenant())));
+      const r = await envoyer(p);
+      if (!r.ok) throw new Error(`parle (${p.pourquoi}) refusé par le serveur : ${r.status}`);
+    }),
+  );
+}
+
+/**
+ * Whether the game is over at `now`: every sound posed and `finApresMs` after the last (or `jusqua`), no reply still
+ * coming, her voice silent; at most `PLAFOND_MS`.
+ */
+function partieFinie(
+  now: number,
+  t0: number,
+  j: readonly BancEvent[],
+  reponses: ReturnType<Banc['reponses']>,
+  s: Scenario,
+  plan: Plan,
+  finTemoin?: number,
+): boolean {
+  if (now >= t0 + PLAFOND_MS) return true;
+  if (finTemoin !== undefined) return now >= t0 + finTemoin;
+  if (s.jusqua !== undefined) return now >= t0 + s.jusqua;
+  const sons = j.filter((e) => e.name === 'parole' || e.name === 'bruit_joue');
+  const fins = sons.filter((e) => e['etape'] === 'fin').map((e) => e.at);
+  if (fins.length < plan.poses.length || now < Math.max(...fins) + DEFAUTS.finApresMs) return false;
+  // A reply the server is still writing has sentences to come, however long her voice has been silent.
+  if (reponses.enCours > 0) return false;
+  // Her voice comes later than at the exact level: the game also waits for it to fall silent, every sound stopped.
+  const [joue, arrete] = [j.filter((e) => e.name === 'joue'), j.filter((e) => e.name === 'arrete')];
+  return (
+    joue.length === arrete.length && now >= Math.max(reponses.finie, ...arrete.map((e) => e.at)) + CALME_MS
+  );
+}
+
 async function finDePartie(page: Page, s: Scenario, plan: Plan, t0: number, finTemoin?: number) {
   for (;;) {
     await pause(250);
-    const [now, j] = await page.evaluate(() => [performance.now(), window.__banc?.journal ?? []] as const);
-    if (now >= t0 + PLAFOND_MS) return;
-    if (finTemoin !== undefined) {
-      if (now >= t0 + finTemoin) return;
-      continue;
-    }
-    if (s.jusqua !== undefined) {
-      if (now >= t0 + s.jusqua) return;
-      continue;
-    }
-    const sons = j.filter((e) => e.name === 'parole' || e.name === 'bruit_joue');
-    const fins = sons.filter((e) => e['etape'] === 'fin').map((e) => e.at);
-    if (fins.length < plan.poses.length || now < Math.max(...fins) + DEFAUTS.finApresMs) continue;
-    // Her voice comes later than at the exact level: the game also waits for it to fall silent, every sound stopped.
-    const [joue, arrete] = [j.filter((e) => e.name === 'joue'), j.filter((e) => e.name === 'arrete')];
-    if (joue.length === arrete.length && now >= Math.max(0, ...arrete.map((e) => e.at)) + CALME_MS) return;
+    const [now, j, r] = await page.evaluate(
+      () =>
+        [
+          performance.now(),
+          window.__banc?.journal ?? [],
+          window.__banc?.reponses() ?? { enCours: 0, finie: 0 },
+        ] as const,
+    );
+    if (partieFinie(now, t0, j, r, s, plan, finTemoin)) return;
   }
 }
 

@@ -21,6 +21,8 @@ export interface Banc {
   sortieAnnonceeMs?: number;
   /** Waits for regular frames of the page, then starts the sounds; gives `t0`. */
   jouer(): Promise<number>;
+  /** The replies still coming (their stream open, not cut, not withdrawn), and when the last one stopped (0: none). */
+  reponses(): { enCours: number; finie: number };
   /** The game is over: each anchor never come writes `parole_sautee`, or `geste` 'saute'. Gives the journal. */
   fin(): BancEvent[];
 }
@@ -63,6 +65,10 @@ interface Envoi {
   evenement: BancEvent;
   texte: string;
   phrases: string[];
+  /** The person's message, from the stream's `user`: a withdrawal names it. */
+  message?: number;
+  /** When its reply stopped coming: `done`, the stream closed, cut, or its try withdrawn. */
+  finie?: number;
 }
 
 export function installerSonde(win: Window & typeof globalThis, plan: Plan): Banc {
@@ -87,6 +93,7 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
     if (joue) resoudre();
     return e;
   };
+  const finir = (e: Envoi) => (e.finie ??= now());
   const resoudre = () => {
     for (let i = 0; i < enAttente.length; i++) {
       const at = ancre(enAttente[i]!.apres, journal);
@@ -166,10 +173,21 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
           if (event === 'reply') {
             evenement.reponse = (JSON.parse(data) as { id: number }).id;
             if (joue) resoudre();
-          } else if (event === 'delta') envoi.texte += (JSON.parse(data) as { text: string }).text;
+          } else if (event === 'user') envoi.message = (JSON.parse(data) as { id: number }).id;
+          else if (event === 'delta') envoi.texte += (JSON.parse(data) as { text: string }).text;
+          else if (event === 'done') finir(envoi);
         }
-      })().catch(() => {});
+      })()
+        .catch(() => {})
+        .finally(() => finir(envoi));
       return new Response(page, { status: res.status, statusText: res.statusText, headers: res.headers });
+    }
+    // A reply cut (forgotten unheard included), or the try of a message withdrawn: its reply no longer comes.
+    const coupe = post ? /\/messages\/(\d+)\/(cut|withdraw)$/.exec(url) : null;
+    if (coupe) {
+      const [id, quoi] = [Number(coupe[1]), coupe[2]];
+      const envoi = envois.find((e) => (quoi === 'cut' ? e.evenement.reponse : e.message) === id);
+      if (envoi) finir(envoi);
     }
     return fetchPage(input, init);
   };
@@ -300,6 +318,12 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
       joue = true;
       resoudre();
       return t0;
+    },
+    reponses() {
+      return {
+        enCours: envois.filter((e) => e.finie === undefined).length,
+        finie: Math.max(0, ...envois.map((e) => e.finie ?? 0)),
+      };
     },
     fin() {
       joue = false;
