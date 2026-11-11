@@ -9,7 +9,7 @@ Nothing it hears or says leaves the PC, except to a voice converter on this mach
   uv run voix/service.py --stt faster:small --tts piper:<voix.onnx> [--rvc http://127.0.0.1:18888 [--rvc-gain 2.0]]
 
   POST /stt   raw float32 LE at 16 kHz    -> {"text", "confidence", "ms"}
-  POST /tts   {"text"}                    -> raw float32 LE, X-Sample-Rate, X-Ms, the whole sentence
+  POST /tts   {"text"}                    -> raw float32 LE, X-Sample-Rate, X-Ms, the whole sentence; 503 with --tts aucun
   GET  /micro                             -> {"apps": ["..."]}, the apps holding the microphone
   GET  /ping                              -> {"ok": true, "stt", "tts", "rvc"}
   GET  /etat                              -> {"stt": {"kind", "up"}, "rvc": {"up"} | null}, the programs it calls
@@ -72,7 +72,10 @@ def make_stt(spec, lang):
 
 
 def make_tts(spec):
+    """None for "aucun": /tts then answers 503, the voice is served by someone else (the chain's player)."""
     kind, _, arg = spec.partition(":")
+    if kind == "aucun":
+        return None
     if kind == "piper":
         from piper import PiperVoice
 
@@ -279,6 +282,9 @@ def serve(stt, tts, rvc, names, port, origins=ORIGINS, state=lambda: {}):
                     with stt_lock:
                         text, conf = stt(audio)
                     self._json(200, {"text": text, "confidence": conf, "ms": round((time.perf_counter() - t0) * 1000)})
+                elif self.path == "/tts" and tts is None:
+                    self._body()  # read, so that Windows does not reset the socket before the 503
+                    self._json(503, {"error": "aucune synthèse"})
                 elif self.path == "/tts":
                     text = json.loads(self._body())["text"]
                     with tts_lock:
@@ -307,17 +313,21 @@ def serve(stt, tts, rvc, names, port, origins=ORIGINS, state=lambda: {}):
     server.serve_forever()
 
 
-def main():
+def options(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--stt", default="faster:small")
-    ap.add_argument("--tts", required=True)
+    ap.add_argument("--tts", default="aucun", help="piper:<voix.onnx>, kokoro:<modèle>:<voix>, ou aucun")
     ap.add_argument("--rvc", default="")
     ap.add_argument("--rvc-gain", type=float, default=2.0, help="gain de sortie de RVC, sortie bornée à [-1, 1]")
     ap.add_argument("--port", type=int, default=8793)
     ap.add_argument("--lang", default="fr", help="langue transcrite")
     ap.add_argument("--origin", action="append", help="page autorisée, en plus de celles de l'appli")
-    a = ap.parse_args()
-    names = {"stt": a.stt, "tts": a.tts.split(":")[0], "rvc": bool(a.rvc)}
+    a = ap.parse_args(argv)
+    return a, {"stt": a.stt, "tts": a.tts.split(":")[0], "rvc": bool(a.rvc)}
+
+
+def main():
+    a, names = options()
     serve(make_stt(a.stt, a.lang), make_tts(a.tts), make_rvc(a.rvc, a.rvc_gain), names, a.port,
           (*ORIGINS, *(a.origin or [])), lambda: bricks(a.stt, a.rvc))
 
