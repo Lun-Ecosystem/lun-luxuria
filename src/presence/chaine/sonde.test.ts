@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Apres, Geste } from '../scenario.ts';
+import type { Apres, AttenduEvenement, Geste } from '../scenario.ts';
+import faireTaire from '../scenarios/faire-taire.ts';
 import { installerSonde, type Banc, type Plan } from './sonde.ts';
 
 // Web Audio by hand: jsdom has none. Time is the false clock of vitest, read by `performance.now()` of the window.
@@ -269,9 +270,16 @@ describe('installerSonde', () => {
 
   it('clicks « Faire taire » at its instant, and writes each anchor never come at the end', async () => {
     document.body.innerHTML = '<button aria-label="Faire taire"></button>';
-    const clic = vi.fn();
+    // The page's `silence` is written in the click: the gesture must already be in the log.
+    const clic = vi.fn(() => banc.journal.some((e) => e.name === 'geste'));
     document.querySelector('button')!.addEventListener('click', clic);
-    installer([{ apres: { envoi: 2, ms: 0 } }], [{ geste: 'silence', a: 500 }]);
+    installer(
+      [{ apres: { envoi: 2, ms: 0 } }],
+      [
+        { geste: 'silence', a: 500 },
+        { geste: 'silence', apres: { envoi: 3, ms: 0 } },
+      ],
+    );
     const n = await ouvrir();
     const t0 = await (async () => {
       const p = finirJouer(n);
@@ -282,9 +290,29 @@ describe('installerSonde', () => {
     expect(clic).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(clic).toHaveBeenCalledOnce();
-    expect(banc.fin().filter((e) => e.name === 'geste' || e.name === 'parole_sautee')).toMatchObject([
-      { name: 'geste', geste: 'silence', trouve: true, at: t0 + 500 },
+    expect(clic).toHaveReturnedWith(true);
+    const journal = banc.fin();
+    expect(journal.filter((e) => e.name === 'geste' || e.name === 'parole_sautee')).toMatchObject([
+      { name: 'geste', geste: 'silence', etape: 'fait', at: t0 + 500 },
       { name: 'parole_sautee', son: 0, parole: 1 },
+      { name: 'geste', geste: 'silence', etape: 'saute' },
     ]);
+    // The line the scenario expects of the button, as the exact player writes it.
+    const attendu = faireTaire.attendus.find((a) => a.id === 'geste') as AttenduEvenement;
+    const fait = journal.find((e) => e.name === 'geste')!;
+    expect(Object.entries(attendu.ou!.valeurs!).every(([k, v]) => fait[k] === v)).toBe(true);
+  });
+
+  it('writes the gesture introuvable when the page has no « Faire taire »', async () => {
+    document.body.innerHTML = '';
+    installer([], [{ geste: 'silence', a: 100 }]);
+    const n = await ouvrir();
+    const t0 = await (async () => {
+      const p = finirJouer(n);
+      await vi.advanceTimersByTimeAsync(0);
+      return p;
+    })();
+    await vi.advanceTimersByTimeAsync(t0 + 100 - Date.now());
+    expect(banc.journal.find((e) => e.name === 'geste')).toMatchObject({ etape: 'introuvable' });
   });
 });

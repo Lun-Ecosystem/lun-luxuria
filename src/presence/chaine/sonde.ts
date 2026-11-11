@@ -21,7 +21,7 @@ export interface Banc {
   sortieAnnonceeMs?: number;
   /** Waits for regular frames of the page, then starts the sounds; gives `t0`. */
   jouer(): Promise<number>;
-  /** The game is over: each anchor never come writes `parole_sautee`. Gives the journal. */
+  /** The game is over: each anchor never come writes `parole_sautee`, or `geste` 'saute'. Gives the journal. */
   fin(): BancEvent[];
 }
 
@@ -72,7 +72,12 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
   let dest: MediaStreamAudioDestinationNode | undefined;
   const syntheses: Synthese[] = [];
   const envois: Envoi[] = [];
-  const enAttente: { apres: Apres; poser: (at: number) => void; sautee: Record<string, TraceValue> }[] = [];
+  const enAttente: {
+    apres: Apres;
+    poser: (at: number) => void;
+    /** What `fin` writes when the anchor never came, as the exact player does. */
+    sautee: [BancNom, Record<string, TraceValue>];
+  }[] = [];
   let joue = false;
 
   const log = (name: BancNom, valeurs: Record<string, TraceValue | undefined> = {}, at = now()) => {
@@ -214,8 +219,9 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
   };
   const cliquer = (geste: 'silence') => {
     const b = win.document.querySelector<HTMLElement>('[aria-label="Faire taire"]');
+    // Before the click: the page writes its `silence` inside it, and an expectation anchored here must see it after.
+    log('geste', { geste, etape: b ? 'fait' : 'introuvable' });
     b?.click();
-    log('geste', { geste, trouve: b !== null });
   };
   const plusTard = (at: number, f: () => void) => win.setTimeout(f, Math.max(0, at - now()));
 
@@ -267,7 +273,7 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
           enAttente.push({
             apres: p.apres,
             poser: (at) => poser(p.son, at, nom, debut),
-            sautee: { son: p.son, ...('parole' in debut ? { parole: debut.parole } : {}) },
+            sautee: ['parole_sautee', { son: p.son, ...('parole' in debut ? { parole: debut.parole } : {}) }],
           });
       }
       for (const g of plan.gestes) {
@@ -276,7 +282,7 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
           enAttente.push({
             apres: g.apres,
             poser: (at) => plusTard(at, () => cliquer(g.geste)),
-            sautee: { geste: g.geste },
+            sautee: ['geste', { geste: g.geste, etape: 'saute' }],
           });
       }
       banc.t0 = t0;
@@ -286,7 +292,7 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
     },
     fin() {
       joue = false;
-      for (const p of enAttente.splice(0)) log('parole_sautee', p.sautee);
+      for (const p of enAttente.splice(0)) log(...p.sautee);
       return journal;
     },
   };

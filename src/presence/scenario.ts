@@ -48,7 +48,10 @@ export type BancNom =
   | 'joue'
   /** `reponse`: the output stops, at its end or cut. */
   | 'arrete'
-  /** `geste` 'silence', `etape` 'fait' | 'saute': a gesture of the person, played at its instant or never anchored. */
+  /**
+   * `geste` 'silence', `etape` 'fait' | 'saute' | 'introuvable': a gesture of the person, played at its instant, never
+   * anchored, or (in the chain) its button not on the page.
+   */
   | 'geste'
   /** `parole`: an anchored speech whose anchor never came; it never sounded. */
   | 'parole_sautee'
