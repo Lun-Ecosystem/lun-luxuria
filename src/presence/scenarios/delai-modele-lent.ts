@@ -6,7 +6,6 @@
 // - parole 1, 320 → 1920 : dernière trame de voix 1888 (k = 59) ; la fin est la trame 59 + 22 = 81 (2592),
 //   décidée à 40 × 82 = 3280. attente_fin = 3280 − 1888 = 1392 = 704 + 688.
 // - transcrite 3430, phrase reçue 3830, premier son 3980 : blanc_de_tour = 3980 − 1888 = 2092 = 1392 + 700.
-// Si le joueur commence ses trames à 32, le retard perd 8 ms (1384, 2084) : la marge le couvre.
 import type { Scenario } from '../scenario.ts';
 
 export default {
@@ -26,8 +25,8 @@ export default {
       dit: 'le retard du modèle de voix sort dans attente_fin',
       delai: 'attente_fin',
       tour: { parole: 1 },
-      // 704 + 688 = 1392, une trame de marge de chaque côté
-      entre: [1360, 1424],
+      // 704 + 688 = 1392 (le joueur juge sa première trame à 0), une trame de marge
+      entre: [1392, 1424],
     },
     {
       id: 'blanc-de-tour',
@@ -36,8 +35,8 @@ export default {
       dit: 'le blanc garde tout ce retard, et rien de plus',
       delai: 'blanc_de_tour',
       tour: { parole: 1 },
-      // 1392 + 150 + 400 + 150 = 2092, une trame de marge de chaque côté
-      entre: [2060, 2124],
+      // 1392 + 150 + 400 + 150 = 2092, une trame de marge
+      entre: [2092, 2124],
     },
   ],
 } satisfies Scenario;

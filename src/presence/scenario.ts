@@ -32,7 +32,7 @@ export type BancNom =
   | 'bruit_joue'
   /** `etape` 'debut' | 'fin': her own sound back in the microphone. */
   | 'echo'
-  /** `texte`: what the false server received. */
+  /** `texte`: what the false server received; `reponse`: the number it gives that reply. */
   | 'envoi_recu'
   /** `message`: the number withdrawn. */
   | 'retrait_recu'
@@ -57,6 +57,10 @@ export interface Partie {
   format: number;
   page: readonly TraceEvent[];
   banc: readonly BancEvent[];
+  /** The instant the game stops: a window « until the end » runs to it. */
+  fin: number;
+  /** An exception the chain of frames threw: the judge makes every expectation `joueur`. */
+  erreur?: string;
 }
 
 /** What says, in the trace or the log, that a link played. */
@@ -117,11 +121,20 @@ export interface Parole {
   echec?: true;
 }
 
-/** What the false model says to a text it receives. */
+/**
+ * What the false model says to a text it receives. The false server's clock, from `envoi_recu` (the text received):
+ * the reply's number at `DEFAUTS.numeroMs`; sentence 1 at `premierMotMs` (the number included); each next sentence
+ * `entrePhrasesMs` after the one before, except the one after a `poste`: `poste.ms + premierMotMs` after it, as
+ * the server does, whose `secondWordMs` is the first word of the call that follows the tool. Nothing waits for her
+ * voice.
+ */
 export interface Reponse {
-  /** Contained in the text received, without accents or case; the first that matches answers, one without `si` any. */
+  /**
+   * Contained in the text received, without accents or case; the first that matches answers, one without `si` any.
+   * One without `si` answers her own words heard back too: with an `echo`, give every reply a `si`.
+   */
   si?: string;
-  /** From the text received to the first sentence. */
+  /** From the text received to the first sentence, the reply's number included. */
   premierMotMs?: number;
   /** What the model writes, sentence by sentence. */
   phrases: string[];
@@ -132,7 +145,10 @@ export interface Reponse {
   erreur?: string;
 }
 
-/** A word of her own, without a sentence of the person (`pourquoi` other than a reply). */
+/**
+ * A word of her own, without a sentence of the person (`pourquoi` other than a reply): sentence 1 at `a`, each next
+ * one `DEFAUTS.entrePhrasesMs` after the one before; numbered 51, 52… in their order.
+ */
 export interface Parle {
   a: number;
   pourquoi: Exclude<SpeechWhy, 'reply'>;
@@ -141,7 +157,12 @@ export interface Parle {
 
 export type Niveau = 'exact' | 'tous';
 
-/** The sentence of the trace opened by the n-th speech, the reply to the n-th sentence sent, the n-th `parle`. From 1. */
+/**
+ * From 1. `parole`: the sentence of the trace the n-th speech of `personne` sounds in, the one it opens or, said
+ * before the sentence before has ended (after a cough, say), the one it goes on. `reponse`: the reply to the n-th
+ * text the false server received (`envoi_recu`), a try withdrawn included. `parle`: the n-th of `modele.parle`.
+ * A sentence opened by her echo or by a noise has no turn: an expectation on it names none, and says it by `valeurs`.
+ */
 export type Tour = { parole: number } | { reponse: number } | { parle: number };
 
 /** The turn, and values the event must carry (`etape`, `resultat`, `par`, `texte`…). */
@@ -156,6 +177,10 @@ export type Espece =
 interface AttenduCommun {
   id: string;
   niveau: Niveau;
+  /**
+   * The link it checks: one of the scenario's `mecanismes`, or, for an `absent` only, a link that must not play
+   * (the scenario does not play it, so it is not in its chain). Any other is refused at loading.
+   */
   mecanisme: Mecanisme;
   /** What it checks, in words. */
   dit: string;
@@ -177,7 +202,10 @@ export interface AttenduDelai extends AttenduCommun {
   entre: [number, number];
 }
 
-/** The time a `parole` and a `joue` overlap, read in the player's log. */
+/**
+ * The time she speaks over the person, read in the player's log: the sum, over every `parole` of `personne` (not a
+ * noise, not her echo) and every sentence she plays (`joue` to its `arrete`), of their overlap.
+ */
 export interface AttenduMesure extends AttenduCommun {
   mesure: 'chevauchement';
   entre: [number, number];
@@ -244,6 +272,8 @@ export function charger(s: Scenario): Scenario {
     if (ids.has(a.id)) raisons.push(`deux attendus « ${a.id} »`);
     ids.set(a.id, a);
     if (a.entre && a.entre[0] > a.entre[1]) raisons.push(`« ${a.id} » : bornes inversées`);
+    if (!s.mecanismes.includes(a.mecanisme) && !('evenement' in a && a.absent))
+      raisons.push(`« ${a.id} » : mécanisme ${a.mecanisme} hors des mécanismes du scénario`);
   }
   const anchor = (a: Attendu | undefined) =>
     a && 'evenement' in a && a.depuis && 'attendu' in a.depuis ? a.depuis.attendu : undefined;

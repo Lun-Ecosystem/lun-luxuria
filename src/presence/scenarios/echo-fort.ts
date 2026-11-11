@@ -29,7 +29,8 @@ export default {
         phrases: ['Il commence à pleuvoir, pense à rentrer le linge qui sèche dehors.'],
       },
     ],
-    reponses: [{ phrases: ['Hm.'] }],
+    // A `si`: without it the false server would answer each of its own echoes, for ever.
+    reponses: [{ si: 'pleuvoir', phrases: ['Hm.'] }],
   },
   attendus: [
     {

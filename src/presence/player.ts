@@ -111,16 +111,29 @@ async function partie(s: Scenario): Promise<Partie> {
   const modeleMs = s.modeleMs ?? DEFAUTS.modeleMs;
   const end = fin(s);
   let frames: Promise<void> = Promise.resolve();
+  let erreur: string | undefined;
   const frame = (t: number) => {
     const v = voice(t);
     frames = frames.then(async () => {
-      if (modeleMs > 0) await new Promise((r) => setTimeout(r, modeleMs));
-      for (const ev of endpointer.push(trame(t), v, t, now())) convo.onEndpoint(ev);
+      // The page stopped deciding: nothing after this frame would mean anything.
+      if (erreur !== undefined) return;
+      try {
+        if (modeleMs > 0) await new Promise((r) => setTimeout(r, modeleMs));
+        for (const ev of endpointer.push(trame(t), v, t, now())) convo.onEndpoint(ev);
+      } catch (err) {
+        erreur = `trame ${t} : ${err instanceof Error ? err.message : String(err)}`;
+      }
     });
     if (t + frameMs < end) at(frameMs, () => frame(t + frameMs));
   };
   at(0, () => frame(0));
 
   await vi.advanceTimersByTimeAsync(end);
-  return { format: TRACE_FORMAT, page: [...trace.events], banc: [...journal.events] };
+  return {
+    format: TRACE_FORMAT,
+    page: [...trace.events],
+    banc: [...journal.events],
+    fin: end,
+    ...(erreur !== undefined && { erreur }),
+  };
 }

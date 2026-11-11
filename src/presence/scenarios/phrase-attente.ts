@@ -5,10 +5,10 @@
 // - parole 1, 320 → 1280 : dernière trame 1248 ; pause 1408 → essai ; transcrite 1558 → envoyée (réponse 1) ;
 //   fin 1952 → confirmée.
 // - phrase d'attente reçue 1558 + 400 = 1958, synthèse → son 2108, 21 car. × 60 = 1260 → arrêt 3368.
-// - le poste dure 2,5 s : le résultat est reçu 1958 + 300 + 2500 = 4758, synthèse → son 4908.
-//   Le blanc entendu : 4908 − 3368 = 1540 = 300 + 2500 + 150 − 1260 (l'écart, le poste, la synthèse, moins le son
-//   de la phrase d'attente). Si le faux serveur compte le poste à la place de l'écart entre phrases, 1240 : hors de
-//   la borne, à relire avec le joueur.
+// - le poste dure 2,5 s, puis le modèle réécrit à partir de lui (le second mot du serveur, `Reponse`) : le résultat est
+//   reçu 1958 + 2500 + 400 = 4858, synthèse → son 5008.
+//   Le blanc entendu : 5008 − 3368 = 1640 = 2500 + 400 − 1260 (le poste, le second mot, moins le son de la phrase
+//   d'attente ; les deux synthèses durent autant et s'annulent).
 import type { Scenario } from '../scenario.ts';
 
 export default {
@@ -61,8 +61,8 @@ export default {
       evenement: 'joue',
       ou: { reponse: 1, valeurs: { texte: 'Tu as deux nouveaux messages.' } },
       depuis: { attendu: 'attente-finie' },
-      // 300 + 2500 + 150 − 1260 = 1540, une trame de marge
-      entre: [1540, 1572],
+      // 2500 + 400 − 1260 = 1640, une trame de marge
+      entre: [1640, 1672],
     },
     {
       id: 'poste',

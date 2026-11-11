@@ -23,11 +23,11 @@ const page: TraceEvent[] = [
 const banc: BancEvent[] = [
   { de: 'banc', at: 1000, name: 'parole', etape: 'debut', parole: 1 },
   { de: 'banc', at: 2000, name: 'parole', etape: 'fin', parole: 1 },
-  { de: 'banc', at: 2874, name: 'envoi_recu', texte: 'Le jardin est mouillé' },
+  { de: 'banc', at: 2854, name: 'envoi_recu', texte: 'Le jardin est mouillé', reponse: 101 },
   { de: 'banc', at: 3424, name: 'joue', reponse: 101, texte: 'Il a plu cette nuit.' },
   { de: 'banc', at: 4800, name: 'arrete', reponse: 101 },
 ];
-const partie: Partie = { format: 2, page, banc };
+const partie: Partie = { format: 2, page, banc, fin: 6000 };
 
 const commun = { niveau: 'exact', mecanisme: 'ecoute', dit: 'un essai' } as const;
 
@@ -35,7 +35,7 @@ const scenario = (attendus: Attendu[], s: Partial<Scenario> = {}): Scenario => (
   nom: 'a-la-main',
   source: 'un point',
   apport: 'rien',
-  mecanismes: ['ecoute'],
+  mecanismes: ['ecoute', 'voix'],
   personne: [{ a: 1000, dit: 'Le jardin est mouillé', duree: 1000 }],
   attendus,
   ...s,
@@ -101,6 +101,60 @@ describe('judging a game', () => {
     expect(un({ ...tenue, absent: true, entre: [500, 900] }).etat).toBe('tenue');
   });
 
+  it("runs « until the end » to the game's end, not to its last line", () => {
+    // A speech and a sentence still going when the game stops, at 6000.
+    const ouverts: BancEvent[] = [
+      { de: 'banc', at: 5000, name: 'parole', etape: 'debut', parole: 2 },
+      { de: 'banc', at: 5500, name: 'joue', reponse: 102, texte: 'Encore.' },
+    ];
+    const mesure = { ...commun, id: 'm', mecanisme: 'voix', mesure: 'chevauchement' } as const;
+    expect(un({ ...mesure, entre: [0, 0] }, {}, { ...partie, banc: [...banc, ...ouverts] })).toMatchObject({
+      espece: 'hors_bornes',
+      trouve: 500,
+    });
+  });
+
+  it('resolves a reply by the number the false server gave, a try withdrawn included', () => {
+    // Two texts received: the first withdrawn (101), the second answered (102).
+    const deux: Partie = {
+      ...partie,
+      page: [...page, { at: 3000, name: 'numero', phrase: 2, essai: 1, reponse: 102 }],
+      banc: [
+        { de: 'banc', at: 2800, name: 'envoi_recu', texte: 'Le jardin', reponse: 101 },
+        { de: 'banc', at: 2980, name: 'envoi_recu', texte: 'Le jardin est mouillé', reponse: 102 },
+        { de: 'banc', at: 3424, name: 'joue', reponse: 102, texte: 'Il a plu.' },
+      ],
+    };
+    const joue = { ...commun, id: 'j', evenement: 'joue' } as const;
+    expect(un({ ...joue, ou: { reponse: 2 } }, {}, deux).etat).toBe('tenue');
+    expect(un({ ...joue, ou: { reponse: 1 } }, {}, deux).espece).toBe('absent');
+    expect(un({ ...joue, ou: { reponse: 3 } }, {}, deux).etat).toBe('non_jouee');
+  });
+
+  it('finds the sentence a speech goes on when it opens none, and none for a speech after its close', () => {
+    // The speech 2 from 2100, before sentence 1 closes (its `fin` at 2704): it goes on sentence 1.
+    const suite: Partie = {
+      ...partie,
+      banc: [
+        ...banc,
+        { de: 'banc', at: 2100, name: 'parole', etape: 'debut', parole: 2 },
+        { de: 'banc', at: 2500, name: 'parole', etape: 'fin', parole: 2 },
+      ],
+    };
+    const fin2 = { ...commun, id: 'f', evenement: 'fin', ou: { parole: 2 } } as const;
+    expect(un(fin2, {}, suite).etat).toBe('tenue');
+    // Begun after the sentence's end (its last sound at 2000 + 704): heard by nothing.
+    const apres: Partie = {
+      ...suite,
+      banc: [
+        ...banc,
+        { de: 'banc', at: 2800, name: 'parole', etape: 'debut', parole: 2 },
+        { de: 'banc', at: 3000, name: 'parole', etape: 'fin', parole: 2 },
+      ],
+    };
+    expect(un(fin2, {}, apres).etat).toBe('non_jouee');
+  });
+
   it('reads a delay in delays(), and a missing end is delai_manquant, never zero', () => {
     const delai = {
       ...commun,
@@ -139,7 +193,9 @@ describe('judging a game', () => {
       couverture: ['ecoute', 'essai', 'filtre', 'serveur', 'voix'],
     });
     expect(un(coupee, chaine)).toMatchObject({ source: 'coupure' });
-    expect(un({ ...tenue, entre: [0, 300] })).toMatchObject({ source: 'ecoute' });
+    expect(un({ ...tenue, entre: [0, 300] }, { mecanismes: ['ecoute'] })).toMatchObject({ source: 'ecoute' });
+    // Her voice wrote nothing in [1000, 1300]: the first silent link.
+    expect(un({ ...tenue, entre: [0, 300] })).toMatchObject({ source: 'voix' });
   });
 
   it('measures the overlap of a speech and a sentence that sounds', () => {
@@ -181,7 +237,7 @@ describe('judging a game', () => {
       espece: 'scenario',
       trouve: 'deux attendus « tenue »',
     });
-    expect(juger(scenario([tenue]), new Error('la sortie a cassé'))[0]).toMatchObject({
+    expect(juger(scenario([tenue]), { ...partie, erreur: 'la sortie a cassé' })[0]).toMatchObject({
       etat: 'ratee',
       espece: 'joueur',
       trouve: 'la sortie a cassé',

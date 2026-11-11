@@ -5,12 +5,11 @@
 // - parole 1, 320 → 1600 : dernière trame 1568 ; pause 1728 → essai ; transcrite 1878 → envoyée (réponse 1) ;
 //   fin 2272 → confirmée.
 // - réponse 1 : phrase d'attente reçue 1878 + 400 = 2278, synthèse → son 2428, 24 car. × 60 = 1440 → fin 3868.
-//   Le poste dure 2 s : le résultat est reçu 2278 + 300 + 2000 = 4578, synthèse → 4728. Le blanc : 3868 → 4728.
+//   Le poste dure 2 s, puis le second mot : le résultat serait reçu 2278 + 2000 + 400 = 4678, synthèse → 4828.
+//   Le blanc : 3868 → 4828.
 // - « arrête », parole 2, 3872 → 4472 : tenue 3872 + 384 = 4256, dans le blanc → suspendue, aucun son à arrêter.
 //   Dernière trame 4448 ; pause 4608 → essai, transcrite 4758 → pour elle (filtre coupé), envoyée (réponse 2) ;
 //   fin 4448 + 704 = 5152 → confirmée → la réponse 1 est coupée, entendu : la phrase d'attente entière.
-// Si le faux serveur compte le poste à la place de l'écart entre phrases (4278, son 4428), la tenue reste dans le
-// blanc.
 import type { Scenario } from '../scenario.ts';
 
 export default {

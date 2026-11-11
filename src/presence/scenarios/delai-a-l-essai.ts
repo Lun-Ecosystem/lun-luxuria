@@ -6,7 +6,7 @@
 // - dernière trame de voix 1888 ; pause 2048 → essai 2 ; transcrite 2198 → envoyé, tenu ; fin 1888 + 704 = 2592
 //   → confirmé, relâché ; phrase reçue 2198 + 400 = 2598 ; synthèse → premier son 2748.
 //   attente_fin = 704 ; blanc_de_tour = 2748 − 1888 = 860 = 160 + 150 + 400 + 150, contre 1404 sans l'essai
-//   (delai-de-reponse). Si le premier mot se compte depuis le numéro (20 ms), 880 : dans la marge.
+//   (delai-de-reponse).
 import type { Scenario } from '../scenario.ts';
 
 export default {

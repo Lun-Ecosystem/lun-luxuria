@@ -4,8 +4,8 @@
 // - parole 1, 320 → 1920 : dernière trame de voix 1888 ; 22 trames de silence (704 ≥ 700) → fin 2592.
 //   attente_fin = 2592 − 1888 = 704.
 // - essai final 2592 ; transcrite 2592 + 150 = 2742 → envoyée ; phrase reçue 2742 + 400 = 3142 ; synthèse →
-//   premier son 3292. blanc_de_tour = 3292 − 1888 = 1404 = 704 + 150 + 400 + 150.
-//   Si le premier mot du faux serveur se compte depuis le numéro (20 ms), 1424 : dans la marge.
+//   premier son 3292. blanc_de_tour = 3292 − 1888 = 1404 = 704 + 150 + 400 + 150 (le premier mot se compte du
+//   texte reçu, le numéro compris : `Reponse`).
 import type { Scenario } from '../scenario.ts';
 
 export default {

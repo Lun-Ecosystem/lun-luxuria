@@ -111,7 +111,16 @@ describe('loading a scenario', () => {
       "mécanismes : ecoute après voix, hors de l'ordre de la chaîne",
     ]);
     expect(refus({ mecanismes: ['ecoute', 'ecoute'] })).toHaveLength(1);
-    expect(charger({ ...base, mecanismes: ['suspension', 'retenue'] }).mecanismes).toHaveLength(2);
+    expect(charger({ ...base, mecanismes: ['ecoute', 'suspension', 'retenue'] }).mecanismes).toHaveLength(3);
+  });
+
+  it('refuses an expectation on a link the scenario does not play, unless it says that link stays silent', () => {
+    const coupure: Attendu = { ...voix, id: 'coupure', mecanisme: 'coupure', evenement: 'coupee' };
+    expect(refus({ attendus: [...base.attendus, coupure] })).toEqual([
+      '« coupure » : mécanisme coupure hors des mécanismes du scénario',
+    ]);
+    const muet = { ...coupure, absent: true } as Attendu;
+    expect(charger({ ...base, attendus: [...base.attendus, muet] }).attendus).toContain(muet);
   });
 
   it('gives every reason at once', () => {

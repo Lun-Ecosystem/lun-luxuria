@@ -61,8 +61,8 @@ const ligne = (e: Ligne) => {
   return `${at}  ${de ? `${de} ` : ''}${name}${values ? `  ${values}` : ''}`;
 };
 
-/** Every expectation of the scenario against one game, or the game's error. */
-export function juger(s: Scenario, partie: Partie | Error): Verdict[] {
+/** Every expectation of the scenario against one game: `joueur` for all if the game threw. */
+export function juger(s: Scenario, partie: Partie): Verdict[] {
   const base = (a: Attendu) => ({
     id: a.id,
     niveau: a.niveau,
@@ -80,13 +80,13 @@ export function juger(s: Scenario, partie: Partie | Error): Verdict[] {
     if (err instanceof ScenarioRefuse) return tout('scenario', err.raisons.join(' ; '));
     throw err;
   }
-  if (partie instanceof Error) return tout('joueur', partie.message);
   if (partie.format < 2)
     throw new Error(`déroulé au format ${partie.format} : le juge lit le format 2 au moins`);
+  if (partie.erreur !== undefined) return tout('joueur', partie.erreur);
 
   // One clock: the page's trace and the player's log, merged; at the same instant the page first.
   const lignes: Ligne[] = [...partie.page, ...partie.banc].sort((x, y) => x.at - y.at);
-  const finPartie = Math.max(s.jusqua ?? 0, ...lignes.map((e) => e.at));
+  const finPartie = partie.fin;
   const bancDe = (name: string, f: (e: BancEvent) => boolean = () => true) =>
     partie.banc.filter((e) => e.name === name && f(e));
 
@@ -97,14 +97,24 @@ export function juger(s: Scenario, partie: Partie | Error): Verdict[] {
     if ('parole' in t && t.parole !== undefined) {
       const [debut, fin] = [parole(t.parole, 'debut'), parole(t.parole, 'fin') ?? Infinity];
       if (debut === undefined) return undefined;
-      const voix = partie.page.find((e) => {
-        const son = typeof e['son'] === 'number' ? e['son'] : e.at;
-        return e.name === 'voix' && son >= debut && son <= fin;
-      });
-      return voix?.phrase === undefined ? undefined : { phrase: voix.phrase };
+      const son = (e: TraceEvent) => (typeof e['son'] === 'number' ? e['son'] : e.at);
+      // The sentence it opens, or the one still open when it starts (it goes on a cough not ended yet).
+      const ouverte = partie.page.filter((e) => e.name === 'voix' && son(e) <= fin).at(-1);
+      if (ouverte?.phrase === undefined) return undefined;
+      const close = partie.page.find(
+        (e) => e.phrase === ouverte.phrase && (e.name === 'fin' || e.name === 'bruit'),
+      );
+      // Closed before it began: the speech opened nothing the listening heard.
+      if (close && son(close) < debut) return undefined;
+      return { phrase: ouverte.phrase };
     }
     if ('reponse' in t && t.reponse !== undefined) {
-      const r = partie.page.filter((e) => e.name === 'numero')[t.reponse - 1]?.reponse;
+      // The false server says which number it gave; a trace without the log, the n-th number the page wrote.
+      const r =
+        bancDe('envoi_recu')[t.reponse - 1]?.reponse ??
+        (bancDe('envoi_recu').length === 0
+          ? partie.page.filter((e) => e.name === 'numero')[t.reponse - 1]?.reponse
+          : undefined);
       return r === undefined ? undefined : { reponse: r };
     }
     if ('parle' in t && t.parle !== undefined) {

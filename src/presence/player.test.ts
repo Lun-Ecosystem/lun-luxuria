@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Endpointer } from '../listen/endpoint.ts';
 import { Speaker } from '../speech/speaker.ts';
 import { Trace, TRACE_FORMAT, type TraceEvent } from '../trace.ts';
 import { FausseVoix, Journal } from './fakes.ts';
@@ -101,8 +102,27 @@ describe('jouer', () => {
         ],
       }),
     );
-    expect(named(banc, 'envoi_recu').map((e) => e['texte'])).toEqual(['un', 'un deux']);
+    expect(named(banc, 'envoi_recu').map((e) => [e['texte'], e.reponse])).toEqual([
+      ['un', 101],
+      ['un deux', 102],
+    ]);
     expect(named(banc, 'retrait_recu')).toHaveLength(1);
+  });
+
+  it('gives the end of the game, and the error the chain of frames threw', async () => {
+    const push = vi.spyOn(Endpointer.prototype, 'push').mockImplementationOnce(() => {
+      throw new Error('cassé');
+    });
+    try {
+      const partie = await jouer({ ...parole, jusqua: 3000 });
+      expect(partie.fin).toBe(3000);
+      expect(partie.erreur).toBe('trame 0 : cassé');
+      // Nothing is decided after it.
+      expect(partie.page).toEqual([]);
+    } finally {
+      push.mockRestore();
+    }
+    expect((await jouer(parole)).erreur).toBeUndefined();
   });
 
   it('hears its echo while it sounds, and no longer once it stops', async () => {

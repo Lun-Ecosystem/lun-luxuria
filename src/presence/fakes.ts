@@ -151,7 +151,9 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
   }
 
   async send(text: string, _opts: unknown, on: (e: SendEvent) => void): Promise<void> {
-    this.#journal.add('envoi_recu', { texte: text });
+    // Numbered on receipt: every send waits the same `numeroMs`, so the order is the same.
+    const id = ++this.#replies;
+    this.#journal.add('envoi_recu', { texte: text, reponse: id });
     const userId = ++this.#users;
     const msg = (id: number, role: Message['role'], extra: Partial<Message> = {}): Message => ({
       id,
@@ -164,13 +166,12 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
     });
     on({ type: 'user', message: msg(userId, 'user', { text }) });
     await sleep(DEFAUTS.numeroMs);
-    const id = ++this.#replies;
     on({ type: 'reply', id });
     const r: Reponse = this.#s.modele?.reponses?.find((x) => !x.si || plain(text).includes(plain(x.si))) ?? {
       phrases: [],
     };
     const first = r.premierMotMs ?? DEFAUTS.premierMotMs;
-    // From the text received: the reply's number is already out.
+    // From the text received (`Reponse`): the reply's number is already out.
     await sleep(first - DEFAUTS.numeroMs);
     const durations: ReplyDurations = { firstWordMs: first };
     for (const [i, phrase] of r.phrases.entries()) {
