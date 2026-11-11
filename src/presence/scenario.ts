@@ -311,6 +311,29 @@ export const plain = (t: string): string => t.normalize('NFD').replace(/\p{M}/gu
 export const choisir = (reponses: readonly Reponse[], texte: string): number =>
   reponses.findIndex((x) => !x.si || plain(texte).includes(plain(x.si)));
 
+/**
+ * What the real server says of each sentence of a reply (the speaker of the chain's server): the first one
+ * may stop at its first `, ` outside brackets, from its third character, because a first sound matters more than a
+ * whole sentence; its rest follows as a sentence of its own. The others stay whole.
+ * shortcut: a sentence end before that comma keeps the sentence whole (the server would cut it there first); a
+ * scenario's sentence is one sentence. Go to the server's `sentenceEnd` if one ever holds two.
+ */
+export function morceaux(phrases: readonly string[]): string[][] {
+  return phrases.map((p, i) => {
+    if (i > 0) return [p];
+    let ouvertes = 0;
+    for (let k = 0; k < p.length; k++) {
+      const c = p[k]!;
+      if (c === '(' || c === '[') ouvertes++;
+      else if ((c === ')' || c === ']') && ouvertes > 0) ouvertes--;
+      else if ('.!?…\n'.includes(c)) return [p];
+      else if (c === ',' && p[k + 1] === ' ' && ouvertes === 0)
+        return k >= 2 ? [p.slice(0, k + 1), p.slice(k + 1).trim()] : [p];
+    }
+    return [p];
+  });
+}
+
 /** The instant an anchor gives in the player's log, or undefined while it has not come. */
 export function ancre(apres: Apres, journal: readonly BancEvent[]): number | undefined {
   const envois = journal.filter((e) => e.name === 'envoi_recu');
@@ -429,7 +452,8 @@ export function charger(s: Scenario, lieu: Lieu = 'exact'): Scenario {
     const p = s.personne[x.joue - 1];
     const r = p && reponses[choisir(reponses, p.entendu ?? p.dit)];
     if (!r) return `ancre vers la réponse ${x.joue}, que modele ne prévoit pas`;
-    if ((x.phrase ?? 1) > r.phrases.length)
+    // A sentence she says: a sentence of the model may be two (`morceaux`).
+    if ((x.phrase ?? 1) > morceaux(r.phrases).flat().length)
       return `ancre vers la phrase ${x.phrase} de la réponse ${x.joue}, que modele ne prévoit pas`;
     return undefined;
   };

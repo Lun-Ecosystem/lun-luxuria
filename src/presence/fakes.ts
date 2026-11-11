@@ -5,6 +5,7 @@ import type { TraceValue } from '../trace.ts';
 import {
   choisir,
   DEFAUTS,
+  morceaux,
   type BancEvent,
   type BancNom,
   type Parole,
@@ -146,7 +147,8 @@ export function fausseTranscription(
 
 /**
  * The server: `send` gives `user`, then `reply` after `numeroMs`; replies are numbered 101, 102…, its own words
- * (`parler`) 51, 52… Each sentence comes on `live` as the false model says; a reply cut sends nothing more.
+ * (`parler`) 51, 52… Each sentence comes on `live` as the false model says, cut as the real server cuts it
+ * (`morceaux`); a reply cut sends nothing more.
  */
 export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
   #s: Scenario;
@@ -185,7 +187,8 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
     // From the text received (`Reponse`): the reply's number is already out.
     await sleep(first - DEFAUTS.numeroMs);
     const durations: ReplyDurations = { firstWordMs: first };
-    for (const [i, phrase] of r.phrases.entries()) {
+    let n = 0;
+    for (const [i, pieces] of morceaux(r.phrases).entries()) {
       if (i > 0) {
         if (r.poste?.apres === i) {
           // The tool runs, then the model writes again from it.
@@ -194,8 +197,10 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
           durations.secondWordMs = first;
         } else await sleep(r.entrePhrasesMs ?? DEFAUTS.entrePhrasesMs);
       }
-      if (this.#cut.has(id)) return;
-      this.#live({ type: 'speech', id, n: i + 1, text: phrase, why: 'reply' });
+      for (const text of pieces) {
+        if (this.#cut.has(id)) return;
+        this.#live({ type: 'speech', id, n: ++n, text, why: 'reply' });
+      }
     }
     if (this.#cut.has(id)) return;
     this.#live({ type: 'speech-end', id, why: 'reply' });
@@ -224,10 +229,13 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
       const id = 51 + i;
       void (async () => {
         await sleep(p.a);
-        for (const [n, phrase] of p.phrases.entries()) {
-          if (n > 0) await sleep(DEFAUTS.entrePhrasesMs);
-          if (this.#cut.has(id)) return;
-          this.#live({ type: 'speech', id, n: n + 1, text: phrase, why: p.pourquoi });
+        let n = 0;
+        for (const [i, pieces] of morceaux(p.phrases).entries()) {
+          if (i > 0) await sleep(DEFAUTS.entrePhrasesMs);
+          for (const text of pieces) {
+            if (this.#cut.has(id)) return;
+            this.#live({ type: 'speech', id, n: ++n, text, why: p.pourquoi });
+          }
         }
         if (!this.#cut.has(id)) this.#live({ type: 'speech-end', id, why: p.pourquoi });
       })();

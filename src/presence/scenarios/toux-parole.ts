@@ -2,7 +2,8 @@
 //
 // Le calcul (trames de 32 ms à partir de 0, DEFAUTS, réglages par défaut : pause 160, silence 700, tenue 400) :
 // - parole 1, 320 → 1600 : dernière trame 1568 ; pause 1728 → essai ; transcrite 1878 → envoyée (réponse 1) ;
-//   fin 2272 → confirmée. Phrase 1 reçue 2278, synthèse → son 2428, 83 car. × 60 = 4980 ms.
+//   fin 2272 → confirmée. Reçue 2278, coupée à sa première virgule comme le fait le serveur : phrase 1
+//   « Demain matin il fera frais, », synthèse → son 2428, 27 car. × 60 = 1620 ms.
 // - la toux, parole 2, 3008 → 3458 (450 ms) : tenue 3008 + 384 = 3392 → suspendue, son arrêté.
 //   Dernière trame 3456 ; pause 3616 → essai, transcrite vide 3766 → bruit ; fin 3456 + 704 = 4160 → sans
 //   réponse → reprise : la phrase 1 est redite depuis son début à 4160.
@@ -85,7 +86,7 @@ export default {
       ou: {
         reponse: 1,
         valeurs: {
-          texte: 'Demain matin il fera frais, puis le soleil reviendra vers midi avec un peu de vent.',
+          texte: 'Demain matin il fera frais,',
         },
       },
       depuis: { attendu: 'arrete' },
@@ -99,7 +100,7 @@ export default {
       ou: {
         reponse: 1,
         valeurs: {
-          texte: 'Demain matin il fera frais, puis le soleil reviendra vers midi avec un peu de vent.',
+          texte: 'Demain matin il fera frais,',
         },
       },
       depuis: { attendu: 'arrete' },

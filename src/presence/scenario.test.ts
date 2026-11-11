@@ -3,6 +3,7 @@ import { SYNTH_TIMEOUT_MS } from '../speech/speaker.ts';
 import {
   ancre,
   charger,
+  morceaux,
   ScenarioRefuse,
   type Attendu,
   type AttenduEvenement,
@@ -211,6 +212,25 @@ describe('what the chain cannot hold', () => {
       '« recue » : tous, une ligne du serveur avec bornes ou ancre, sans instant dans la chaîne',
     ]);
     expect(ok([{ ...recue, entre: [0, 10] } as Attendu])).toBeTruthy();
+  });
+});
+
+describe('morceaux', () => {
+  it('cuts the first sentence at its first comma, as the real server does, and only it', () => {
+    expect(
+      morceaux(['Demain matin il fera frais, puis le soleil reviendra.', 'Le soir, la pluie arrivera.']),
+    ).toEqual([
+      ['Demain matin il fera frais,', 'puis le soleil reviendra.'],
+      ['Le soir, la pluie arrivera.'],
+    ]);
+  });
+
+  it('keeps whole a first sentence without a comma outside brackets, or whose comma comes too early', () => {
+    expect(morceaux(['Bonjour.'])).toEqual([['Bonjour.']]);
+    expect(morceaux(['A, b.'])).toEqual([['A, b.']]);
+    expect(morceaux(['Un (deux, trois) quatre.'])).toEqual([['Un (deux, trois) quatre.']]);
+    expect(morceaux(['Un (deux) trois, quatre.'])).toEqual([['Un (deux) trois,', 'quatre.']]);
+    expect(morceaux([])).toEqual([]);
   });
 });
 
