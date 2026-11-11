@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ReplyDurations, SendEvent } from './brain.ts';
 import { Conversation } from './conversation.ts';
 import type { EndpointEvent, Moment } from './listen/endpoint.ts';
 import { DEFAULTS, type Settings } from './settings.ts';
@@ -19,6 +20,7 @@ function setup(heard: string[] = ['Bonjour toi'], over: Partial<Settings> = {}) 
   const sounds: { end: () => void; stopped: boolean }[] = [];
   let ids = 10;
   const latencies: { ms: number; speculated: boolean }[] = [];
+  const turns: ((e: SendEvent) => void)[] = [];
   const out: Output = {
     play(_, onEnd) {
       const s = { end: onEnd, stopped: false };
@@ -29,6 +31,7 @@ function setup(heard: string[] = ['Bonjour toi'], over: Partial<Settings> = {}) 
   const convo: Conversation = new Conversation({
     brain: {
       send: async (text, _opts, on) => {
+        turns.push(on);
         const id = ids++;
         on({ type: 'user', message: { id, role: 'user', text, status: 'ok', surface: 'voice', at: '' } });
         on({ type: 'reply', id: id + 100 });
@@ -57,7 +60,21 @@ function setup(heard: string[] = ['Bonjour toi'], over: Partial<Settings> = {}) 
     convo.onLive({ type: 'speech', id, n: 1, text, why });
   const ends = (id: number) => convo.onLive({ type: 'speech-end', id, why: 'reply' });
   const advance = (ms: number) => (clock += ms);
-  return { convo, trace, sounds, latencies, hear, say, ends, advance };
+  /** The last turn sent ends, with what the server measured of it. */
+  const done = (id: number, durations?: ReplyDurations) =>
+    turns.at(-1)!({
+      type: 'done',
+      message: {
+        id,
+        role: 'assistant',
+        text: '',
+        status: 'ok',
+        surface: 'voice',
+        at: '',
+        ...(durations && { durations }),
+      },
+    });
+  return { convo, trace, sounds, latencies, hear, say, ends, advance, done };
 }
 
 /** Each event as its name (and step), its sentence, its try, its reply. */
@@ -256,6 +273,39 @@ describe('the trace of a turn', () => {
       'son:fin r40',
       'silence',
     ]);
+  });
+});
+
+describe("the server's durations", () => {
+  it('are written under the turn when the finished reply carries them, and the delays read them', async () => {
+    const t = setup();
+    t.hear({ type: 'start' });
+    t.advance(1200);
+    t.hear({ type: 'end', audio: AUDIO, lastVoiceAt: 1480 });
+    await tick();
+    t.done(110, { queueMs: 4, firstWordMs: 320 });
+    expect(find(t, 'durees')).toMatchObject([
+      { phrase: 1, essai: 1, reponse: 110, queueMs: 4, firstWordMs: 320 },
+    ]);
+    expect(delays(t.trace.events)[0]!.ms).toMatchObject({ file_serveur: 4, premier_mot: 320 });
+    expect(delays(t.trace.events)[0]!.ms).not.toHaveProperty('poste');
+  });
+
+  it('an older server gives none: nothing is written, nothing breaks', async () => {
+    const t = setup();
+    t.hear({ type: 'start' });
+    t.advance(1200);
+    t.hear({ type: 'end', audio: AUDIO, lastVoiceAt: 1480 });
+    await tick();
+    t.done(110);
+    expect(find(t, 'durees')).toEqual([]);
+  });
+
+  it('a written message is found by its reply', async () => {
+    const t = setup();
+    await t.convo.write('Bonjour');
+    t.done(110, { firstWordMs: 280 });
+    expect(find(t, 'durees')).toMatchObject([{ reponse: 110, firstWordMs: 280 }]);
   });
 });
 

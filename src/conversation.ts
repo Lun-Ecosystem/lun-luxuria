@@ -399,7 +399,8 @@ export class Conversation {
         this.#waitingReply = e.id;
         if (attempt.heldBack) this.#d.speaker.hold(e.id);
       } else this.#d.speaker.hold(e.id);
-    } else if (e.type === 'done' && e.message.status === 'error') {
+    } else if (e.type === 'done') this.#durations(e.message, this.#ref(attempt));
+    if (e.type === 'done' && e.message.status === 'error') {
       // No word will come: a turn held back for it must not block the next ones.
       if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
       if (this.#heldBack === attempt) this.#heldBack = null;
@@ -408,6 +409,11 @@ export class Conversation {
       this.#d.on({ type: 'thinking', on: false });
       this.#d.on({ type: 'failed', text: e.message.error ?? 'Sa réponse a échoué.' });
     }
+  }
+
+  /** What the server measured of its reply, as it gave it: an older server gives nothing, and nothing is written. */
+  #durations(reply: Message, ref: TraceRef): void {
+    if (reply.durations) this.#write('durees', ref, { ...reply.durations });
   }
 
   #withdraw(attempt: Attempt): void {
@@ -447,6 +453,7 @@ export class Conversation {
   async write(text: string): Promise<void> {
     let refused: string | undefined;
     await this.#d.brain.send(text, { surface: 'desktop' }, (e) => {
+      if (e.type === 'done') this.#durations(e.message, { reponse: e.message.id });
       if (e.type === 'done' && e.message.status === 'error')
         refused = e.message.error ?? 'Sa réponse a échoué.';
     });

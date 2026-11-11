@@ -13,7 +13,16 @@ export interface Message {
   surface: string;
   at: string;
   error?: string;
+  /** On a finished reply only, what the server measured of it, never kept; each one absent when not measured. */
+  durations?: ReplyDurations;
 }
+
+export type ReplyDurations = {
+  queueMs?: number;
+  firstWordMs?: number;
+  postMs?: number;
+  secondWordMs?: number;
+};
 
 export type SendEvent =
   | { type: 'user'; message: Message }
