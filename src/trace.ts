@@ -117,3 +117,91 @@ export class Trace {
     return [{ format: TRACE_FORMAT }, ...this.#events].map((e) => JSON.stringify(e)).join('\n') + '\n';
   }
 }
+
+export type DelayName =
+  | 'attente_fin'
+  | 'transcription'
+  | 'file_serveur'
+  | 'premier_mot'
+  | 'poste'
+  | 'second_mot'
+  | 'premiere_phrase'
+  | 'blanc_de_tour'
+  | 'arret_coupure';
+
+export interface TurnDelays extends TraceRef {
+  /** A delay one of whose ends is missing is absent, never deduced. */
+  ms: Partial<Record<DelayName, number>>;
+  /** The sentence left at a pause: its first sentence back answers a try. */
+  aLEssai: boolean;
+  /** Her voice's synthesis, sentence by sentence of the reply. */
+  synthese: number[];
+}
+
+/** What the server measured of a reply (`durees`), under the names of the turn. */
+const SERVER: Record<string, DelayName> = {
+  queueMs: 'file_serveur',
+  firstWordMs: 'premier_mot',
+  postMs: 'poste',
+  secondWordMs: 'second_mot',
+};
+
+/** The delays of each turn of the trace, in the order the turns began. */
+export function delays(events: readonly TraceEvent[]): TurnDelays[] {
+  const turns = new Map<string, TraceEvent[]>();
+  for (const e of events) {
+    const key = keyOf(e);
+    if (key !== undefined) turns.set(key, [...(turns.get(key) ?? []), e]);
+  }
+  return [...turns.values()].map((own) => turnDelays(own, events));
+}
+
+function turnDelays(own: readonly TraceEvent[], all: readonly TraceEvent[]): TurnDelays {
+  const find = (name: TraceName, f: (e: TraceEvent) => boolean = () => true, from = own) =>
+    from.find((e) => e.name === name && f(e));
+  const phrase = own[0]!.phrase;
+  // The try that answers the sentence: made at its end, or confirmed by it.
+  const kept = find('essai', (e) => e['final'] === true)?.essai ?? find('confirmee')?.essai;
+  const ofKept = (name: TraceName) => (kept === undefined ? undefined : find(name, (e) => e.essai === kept));
+  const reponse = phrase === undefined ? own[0]!.reponse : ofKept('numero')?.reponse;
+  const ofReply = (name: TraceName, f: (e: TraceEvent) => boolean = () => true) =>
+    reponse === undefined ? undefined : find(name, (e) => e.reponse === reponse && f(e));
+  const span = (a?: number, b?: number) => (a === undefined || b === undefined ? undefined : b - a);
+  const num = (v: TraceValue | undefined) => (typeof v === 'number' ? v : undefined);
+
+  const fin = find('fin');
+  const sent = ofKept('envoyee');
+  const tenue = find('tenue');
+  const ms: Partial<Record<DelayName, number | undefined>> = {
+    attente_fin: span(num(fin?.['dernier_son']), fin?.at),
+    transcription: span(ofKept('essai')?.at, ofKept('transcrite')?.at),
+    premiere_phrase: span(sent?.at, ofReply('phrase_recue')?.at),
+    blanc_de_tour: span(num(fin?.['dernier_son']), ofReply('premier_son')?.at),
+    // Only a clean cut stops her sound on the voice; the soft way lets the sentence end.
+    arret_coupure:
+      phrase === undefined
+        ? undefined
+        : span(tenue?.at, find('son', (e) => e['arrete'] === true && e['par'] === phrase, all)?.at),
+  };
+  const server = ofReply('durees');
+  for (const [field, name] of Object.entries(SERVER)) ms[name] = num(server?.[field]);
+
+  const synthese: number[] = [];
+  if (reponse !== undefined)
+    for (const start of own.filter(
+      (e) => e.name === 'synthese' && e['etape'] === 'debut' && e.reponse === reponse,
+    )) {
+      const end = find(
+        'synthese',
+        (e) => e.reponse === reponse && e['etape'] === 'fin' && e['rang'] === start['rang'],
+      );
+      if (end) synthese.push(end.at - start.at);
+    }
+  return {
+    phrase,
+    reponse,
+    ms: Object.fromEntries(Object.entries(ms).filter(([, v]) => v !== undefined)),
+    aLEssai: sent?.['final'] === false,
+    synthese,
+  };
+}

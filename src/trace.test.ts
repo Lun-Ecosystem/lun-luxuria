@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Trace, TRACE_FORMAT } from './trace.ts';
+import { delays, Trace, TRACE_FORMAT, type TraceName, type TraceRef, type TraceValue } from './trace.ts';
 
 function setup(max?: number) {
   let clock = 100;
@@ -89,5 +89,148 @@ describe('the trace of a turn', () => {
       { format: TRACE_FORMAT },
       { at: 100, name: 'voix', phrase: 1, son: 90 },
     ]);
+  });
+});
+
+/** A trace written by hand: `[at, name, ref, values]`. */
+function written(rows: [number, TraceName, TraceRef, Record<string, TraceValue>?][]) {
+  let clock = 0;
+  const trace = new Trace(() => clock);
+  for (const [at, name, ref, values] of rows) {
+    clock = at;
+    trace.add(name, ref, values);
+  }
+  return trace.events;
+}
+
+describe('the delays of a turn', () => {
+  const p = { phrase: 1 };
+  const e1 = { phrase: 1, essai: 1 };
+  const r = { reponse: 110 };
+
+  it('each from one event to another, under its name', () => {
+    const turns = delays(
+      written([
+        [1000, 'voix', p, { son: 990 }],
+        [1500, 'tenue', p, { son: 1490 }],
+        [2200, 'fin', p, { son: 2180, dernier_son: 1480 }],
+        [2200, 'essai', e1, { final: true }],
+        [2500, 'transcrite', e1, {}],
+        [2500, 'envoyee', e1, { final: true }],
+        [2510, 'numero', { ...e1, ...r }, {}],
+        [2900, 'phrase_recue', r, { rang: 1 }],
+        [2900, 'synthese', r, { etape: 'debut', rang: 1 }],
+        [3100, 'synthese', r, { etape: 'fin', rang: 1 }],
+        [3100, 'synthese', r, { etape: 'debut', rang: 2 }],
+        [3150, 'premier_son', r],
+        [3250, 'synthese', r, { etape: 'fin', rang: 2 }],
+        [4000, 'durees', r, { queueMs: 12, firstWordMs: 340, postMs: 800, secondWordMs: 290 }],
+      ]),
+    );
+    expect(turns).toEqual([
+      {
+        phrase: 1,
+        reponse: 110,
+        aLEssai: false,
+        synthese: [200, 150],
+        ms: {
+          attente_fin: 720,
+          transcription: 300,
+          file_serveur: 12,
+          premier_mot: 340,
+          poste: 800,
+          second_mot: 290,
+          premiere_phrase: 400,
+          blanc_de_tour: 1670,
+        },
+      },
+    ]);
+  });
+
+  it('a delay whose end is missing is absent: no server durations, no first sound', () => {
+    const [turn] = delays(
+      written([
+        [1000, 'voix', p],
+        [2200, 'fin', p, { dernier_son: 1480 }],
+        [2200, 'essai', e1, { final: true }],
+        [2500, 'envoyee', e1, { final: true }],
+        [2510, 'numero', { ...e1, ...r }],
+      ]),
+    );
+    expect(turn!.ms).toEqual({ attente_fin: 720 });
+  });
+
+  it('the first sentence back answers a try when the sentence left at a pause', () => {
+    const [turn] = delays(
+      written([
+        [1000, 'voix', p],
+        [1400, 'pause', p],
+        [1400, 'essai', e1, { final: false }],
+        [1600, 'transcrite', e1],
+        [1600, 'envoyee', e1, { final: false }],
+        [1610, 'numero', { ...e1, ...r }],
+        [1900, 'phrase_recue', r],
+        [2100, 'fin', p, { dernier_son: 1380 }],
+        [2100, 'confirmee', { ...e1, ...r }],
+        [2150, 'premier_son', r],
+      ]),
+    );
+    expect(turn).toMatchObject({
+      aLEssai: true,
+      ms: { premiere_phrase: 300, blanc_de_tour: 770, transcription: 200 },
+    });
+  });
+
+  it('a try withdrawn does not count: the delays are those of the one kept', () => {
+    const e2 = { phrase: 1, essai: 2 };
+    const [turn] = delays(
+      written([
+        [1000, 'voix', p],
+        [1400, 'essai', e1, { final: false }],
+        [1600, 'transcrite', e1],
+        [1610, 'numero', { ...e1, reponse: 110 }],
+        [1700, 'retiree', { ...e1, reponse: 110 }],
+        [2400, 'fin', p, { dernier_son: 1700 }],
+        [2400, 'essai', e2, { final: true }],
+        [2550, 'transcrite', e2],
+        [2560, 'numero', { ...e2, reponse: 111 }],
+        [2900, 'premier_son', { reponse: 111 }],
+      ]),
+    );
+    expect(turn).toMatchObject({ reponse: 111, ms: { transcription: 150, blanc_de_tour: 1200 } });
+  });
+
+  it('the stop of a clean cut, from the hold to her sound stopped by that sentence', () => {
+    const turns = delays(
+      written([
+        [500, 'premier_son', { reponse: 50 }],
+        [1000, 'voix', p],
+        [1400, 'tenue', p],
+        [1400, 'suspendue', { reponse: 50 }, { par: 1, doux: false }],
+        [1403, 'son', { reponse: 50 }, { etape: 'fin', arrete: true, par: 1 }],
+      ]),
+    );
+    expect(turns.map((t) => t.ms)).toEqual([{}, { arret_coupure: 3 }]);
+    // The soft way does not stop her sound on the voice: no delay.
+    const soft = delays(
+      written([
+        [1000, 'voix', p],
+        [1400, 'tenue', p],
+        [1400, 'suspendue', { reponse: 50 }, { par: 1, doux: true }],
+      ]),
+    );
+    expect(soft[0]!.ms).toEqual({});
+  });
+
+  it('a speech without a sentence has only the delays of its reply', () => {
+    const [turn] = delays(
+      written([
+        [100, 'phrase_recue', { reponse: 40 }],
+        [100, 'synthese', { reponse: 40 }, { etape: 'debut', rang: 1 }],
+        [300, 'synthese', { reponse: 40 }, { etape: 'fin', rang: 1 }],
+        [300, 'premier_son', { reponse: 40 }],
+      ]),
+    );
+    expect(turn).toEqual({ phrase: undefined, reponse: 40, aLEssai: false, synthese: [200], ms: {} });
   });
 });

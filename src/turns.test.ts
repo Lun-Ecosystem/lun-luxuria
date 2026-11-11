@@ -3,7 +3,7 @@ import { Conversation } from './conversation.ts';
 import type { EndpointEvent, Moment } from './listen/endpoint.ts';
 import { DEFAULTS, type Settings } from './settings.ts';
 import { Speaker, type Clip, type Output } from './speech/speaker.ts';
-import { Trace, type TraceEvent } from './trace.ts';
+import { delays, Trace, type TraceEvent } from './trace.ts';
 
 /** The trace each mechanism of the page writes, case by case. */
 
@@ -18,6 +18,7 @@ function setup(heard: string[] = ['Bonjour toi'], over: Partial<Settings> = {}) 
   const trace = new Trace(() => clock);
   const sounds: { end: () => void; stopped: boolean }[] = [];
   let ids = 10;
+  const latencies: { ms: number; speculated: boolean }[] = [];
   const out: Output = {
     play(_, onEnd) {
       const s = { end: onEnd, stopped: false };
@@ -46,7 +47,7 @@ function setup(heard: string[] = ['Bonjour toi'], over: Partial<Settings> = {}) 
     layout: () => 'scene',
     keyHeld: () => false,
     now: () => clock,
-    on: () => {},
+    on: (e) => void (e.type === 'latency' && latencies.push(e)),
     trace,
   });
   /** A moment of the listening, its sound 20 ms before its decision. */
@@ -56,7 +57,7 @@ function setup(heard: string[] = ['Bonjour toi'], over: Partial<Settings> = {}) 
     convo.onLive({ type: 'speech', id, n: 1, text, why });
   const ends = (id: number) => convo.onLive({ type: 'speech-end', id, why: 'reply' });
   const advance = (ms: number) => (clock += ms);
-  return { convo, trace, sounds, hear, say, ends, advance };
+  return { convo, trace, sounds, latencies, hear, say, ends, advance };
 }
 
 /** Each event as its name (and step), its sentence, its try, its reply. */
@@ -207,7 +208,7 @@ describe('the trace of a turn', () => {
   });
 
   it('a clean cut: her sound stops at the hold, the sentence for her cuts the reply for good', async () => {
-    const t = setup(['Arrête']);
+    const t = setup(['ArrÃªte']);
     t.say(50, 'Une longue phrase.', 'ritual');
     await tick();
     t.hear({ type: 'start' });
@@ -255,5 +256,36 @@ describe('the trace of a turn', () => {
       'son:fin r40',
       'silence',
     ]);
+  });
+});
+
+describe('the blank of a turn, read from the trace', () => {
+  it('is the measure of today, which is still given, on a sentence sent at its end', async () => {
+    const t = setup();
+    t.hear({ type: 'start' });
+    t.advance(1200);
+    t.hear({ type: 'end', audio: AUDIO, lastVoiceAt: 1480 });
+    await tick();
+    t.say(110, 'Salut.');
+    t.advance(437);
+    await tick();
+    expect(t.latencies).toEqual([{ type: 'latency', ms: 1157, speculated: false }]);
+    expect(delays(t.trace.events)[0]).toMatchObject({ aLEssai: false, ms: { blanc_de_tour: 1157 } });
+  });
+
+  it('and on a sentence tried at a pause', async () => {
+    const t = setup();
+    t.hear({ type: 'start' });
+    t.advance(400);
+    t.hear({ type: 'pause', audio: AUDIO });
+    await tick();
+    t.say(110, 'Salut.');
+    await tick();
+    t.advance(540);
+    t.hear({ type: 'end', audio: AUDIO, lastVoiceAt: 1380 });
+    t.advance(90);
+    await tick();
+    expect(t.latencies).toEqual([{ type: 'latency', ms: 650, speculated: true }]);
+    expect(delays(t.trace.events)[0]).toMatchObject({ aLEssai: true, ms: { blanc_de_tour: 650 } });
   });
 });
