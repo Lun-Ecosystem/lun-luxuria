@@ -8,7 +8,10 @@ import type { DelayName, TraceEvent, TraceName, TraceValue } from '../trace.ts';
  * computed value): it goes through `JSON.stringify` as it is. Times are in ms from the start of the game.
  */
 
-/** The links of the chain, in its order: the judge looks there for the source of a failure. */
+/**
+ * The links of the chain, in its order: the source of a failure is the first of them a failure of the game names
+ * (the rule is on `juger`).
+ */
 export const RANG = {
   ecoute: 0,
   essai: 1,

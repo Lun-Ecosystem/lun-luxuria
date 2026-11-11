@@ -184,18 +184,108 @@ describe('judging a game', () => {
     expect(un({ ...tenue, depuis: { parole: 3, bord: 'fin' } }).espece).toBe('non_jouee');
   });
 
-  it('finds the source: the first link of the chain silent in the window, or its own link when all wrote', () => {
-    const coupee: Attendu = { ...commun, id: 'c', mecanisme: 'coupure', evenement: 'coupee' };
-    const chaine: Partial<Scenario> = { mecanismes: ['ecoute', 'transcription', 'coupure', 'voix'] };
-    const sans = { ...partie, page: page.filter((e) => e.name !== 'transcrite') };
-    expect(un(coupee, chaine, sans)).toMatchObject({
-      source: 'transcription',
-      couverture: ['ecoute', 'essai', 'filtre', 'serveur', 'voix'],
+  describe('the source of a failure', () => {
+    const chaine: Partial<Scenario> = {
+      mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'suspension', 'coupure', 'serveur', 'voix'],
+    };
+    const suspendue: Attendu = {
+      ...commun,
+      id: 's',
+      mecanisme: 'suspension',
+      evenement: 'suspendue',
+      depuis: { parole: 1, bord: 'debut' },
+      entre: [400, 400],
+    };
+
+    it('is its own link when a link before it wrote in its window, even if others did not', () => {
+      // At 1400 only the listening wrote (its tenue): the try, the transcription, the filter had nothing to write.
+      expect(un(suspendue, chaine)).toMatchObject({
+        espece: 'absent',
+        source: 'suspension',
+        couverture: ['ecoute'],
+      });
+      expect(un({ ...tenue, entre: [0, 300] }, { mecanismes: ['ecoute'] })).toMatchObject({
+        source: 'ecoute',
+      });
     });
-    expect(un(coupee, chaine)).toMatchObject({ source: 'coupure' });
-    expect(un({ ...tenue, entre: [0, 300] }, { mecanismes: ['ecoute'] })).toMatchObject({ source: 'ecoute' });
-    // Her voice wrote nothing in [1000, 1300]: the first silent link.
-    expect(un({ ...tenue, entre: [0, 300] })).toMatchObject({ source: 'voix' });
+
+    it('is the first link when nothing before it wrote in its window: the chain never started there', () => {
+      expect(un({ ...suspendue, entre: [100, 200] }, chaine)).toMatchObject({
+        source: 'ecoute',
+        couverture: [],
+      });
+    });
+
+    it('is its own link in an empty window anchored on another expectation: that anchor came late', () => {
+      // The tenue held at 1400; nothing is written 50 ms later.
+      const apres = { ...suspendue, depuis: { attendu: 'tenue' }, entre: [50, 60] } as Attendu;
+      expect(juger(scenario([tenue, apres], chaine), partie)[1]).toMatchObject({
+        couverture: [],
+        source: 'suspension',
+      });
+    });
+
+    it('is, for every failure of the game, the first link of the chain one of them names', () => {
+      const nom: Attendu = {
+        ...commun,
+        id: 'n',
+        mecanisme: 'filtre',
+        evenement: 'verdict',
+        ou: { valeurs: { par: 'nom' } },
+      };
+      const joue: Attendu = {
+        ...commun,
+        id: 'j',
+        mecanisme: 'voix',
+        evenement: 'joue',
+        ou: { valeurs: { texte: 'x' } },
+      };
+      const [v, j] = juger(scenario([nom, joue], chaine), partie);
+      expect([v!.source, j!.source]).toEqual(['filtre', 'filtre']);
+      // A known defect as known names nothing for the others.
+      const connu = { connus: [{ issue: 'lun-luxuria#0', attendu: 'n', espece: 'absent' as const }] };
+      expect(juger(scenario([nom, joue], { ...chaine, ...connu }), partie)[1]!.source).toBe('voix');
+    });
+
+    it("of one not played is its anchor's, with no window of its own", () => {
+      const coupee: Attendu = { ...commun, id: 'coupee', mecanisme: 'coupure', evenement: 'coupee' };
+      const apres: Attendu = {
+        ...commun,
+        id: 'apres',
+        mecanisme: 'voix',
+        evenement: 'son',
+        depuis: { attendu: 'coupee' },
+      };
+      const [a] = juger(scenario([apres, coupee], chaine), partie);
+      expect(a).toMatchObject({ etat: 'non_jouee', source: 'coupure', couverture: [], extrait: [] });
+      // A speech that never came: the listening; a reply that never came: the server.
+      expect(un({ ...apres, depuis: { parole: 3, bord: 'debut' } }, chaine).source).toBe('ecoute');
+      const reponse9: Attendu = {
+        ...commun,
+        id: 'r',
+        mecanisme: 'voix',
+        evenement: 'son',
+        ou: { reponse: 9 },
+      };
+      expect(un(reponse9, chaine).source).toBe('serveur');
+    });
+
+    it('of a delay looks in its turn only: a turn without a reply owns no event without one', () => {
+      const seul: Partie = {
+        ...partie,
+        page: [
+          { at: 1000, name: 'voix', phrase: 1, son: 1000 },
+          { at: 2704, name: 'fin', phrase: 1, dernier_son: 2000 },
+          { at: 5000, name: 'silence', coupee: false },
+        ],
+      };
+      const d: Attendu = { ...commun, id: 'd', delai: 'attente_fin', tour: { parole: 1 }, entre: [0, 0] };
+      expect(un(d, chaine, seul)).toMatchObject({
+        espece: 'hors_bornes',
+        trouve: 704,
+        couverture: ['ecoute'],
+      });
+    });
   });
 
   it('measures the overlap of a speech and a sentence that sounds', () => {

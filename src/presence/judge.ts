@@ -61,7 +61,16 @@ const ligne = (e: Ligne) => {
   return `${at}  ${de ? `${de} ` : ''}${name}${values ? `  ${values}` : ''}`;
 };
 
-/** Every expectation of the scenario against one game: `joueur` for all if the game threw. */
+/**
+ * Every expectation of the scenario against one game: `joueur` for all if the game threw.
+ *
+ * The source of a failure, in two steps. Its own link first: a failed one names its own `mecanisme`, unless no link
+ * of the scenario ranked before it wrote in its window, where the chain never started: then the scenario's first
+ * link. A window anchored on another expectation is never read so: empty, it says that anchor came late or early. One not played names the own link of its anchor that never came, the listening for a speech, the server for
+ * a reply or a word of her own. Then the game's: every failure names the own link of lowest rank among the game's
+ * failures (a known defect as known left out), when it is ranked before its own. One defect, one link named: the
+ * first in the chain that failed, not each consequence downstream of it.
+ */
 export function juger(s: Scenario, partie: Partie): Verdict[] {
   const base = (a: Attendu) => ({
     id: a.id,
@@ -143,6 +152,11 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
   // An event found for each expectation held: the instant another can be anchored on.
   const instants = new Map<string, number | undefined>();
   const verdicts = new Map<string, Verdict>();
+  /** Each failure's own link, or the expectation whose own link it takes. */
+  const propres = new Map<string, Mecanisme | { ancre: string }>();
+  /** The link that opens a turn that never came. */
+  const ouvreur = (t: Partial<Tour>): Mecanisme =>
+    'parole' in t && t.parole !== undefined ? 'ecoute' : 'serveur';
 
   const fenetre = (lo: number, hi: number) => lignes.filter((e) => e.at >= lo && e.at <= hi);
   const couverture = (lo: number, hi: number) => {
@@ -167,12 +181,20 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
     let r: Pick<Verdict, 'etat' | 'espece' | 'trouve'>;
     const hors = (x: number) => (a.entre && (x < a.entre[0] || x > a.entre[1])) || false;
     const nonJouee = { etat: 'non_jouee', espece: 'non_jouee' } as const;
+    let cause: Mecanisme | { ancre: string } | undefined;
 
     if ('evenement' in a) {
       const depuis = ancre(a.depuis);
       const tour = resoudre(a.ou ?? {});
-      if (depuis === undefined || tour === undefined) r = nonJouee;
-      else {
+      if (depuis === undefined || tour === undefined) {
+        r = nonJouee;
+        cause =
+          depuis !== undefined
+            ? ouvreur(a.ou ?? {})
+            : a.depuis && 'attendu' in a.depuis
+              ? { ancre: a.depuis.attendu }
+              : 'ecoute';
+      } else {
         [lo, hi] = a.entre ? [depuis + a.entre[0], depuis + a.entre[1]] : [depuis, finPartie];
         const ok = convient(a, tour);
         if (a.absent) {
@@ -195,10 +217,15 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
         delays(partie.page).find((t) =>
           tour.phrase !== undefined ? t.phrase === tour.phrase : t.reponse === tour.reponse,
         );
-      if (!tour || !turn) r = nonJouee;
-      else {
+      if (!tour || !turn) {
+        r = nonJouee;
+        cause = ouvreur(a.tour);
+      } else {
+        // A turn without a reply owns no event without one.
         const own = partie.page.filter(
-          (e) => (turn.phrase !== undefined && e.phrase === turn.phrase) || e.reponse === turn.reponse,
+          (e) =>
+            (turn.phrase !== undefined && e.phrase === turn.phrase) ||
+            (turn.reponse !== undefined && e.reponse === turn.reponse),
         );
         [lo, hi] = [Math.min(...own.map((e) => e.at)), Math.max(...own.map((e) => e.at))];
         const trouve = turn.ms[a.delai];
@@ -221,13 +248,18 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
       dit: a.dit,
       ...r,
       ...(a.entre ? { borne: a.entre } : {}),
-      couverture: couverture(lo, hi),
+      // Not played: it had no window.
+      couverture: r.etat === 'non_jouee' ? [] : couverture(lo, hi),
       extrait: [],
     };
-    if (v.etat !== 'tenue') {
-      v.source = s.mecanismes.find((m) => !v.couverture.includes(m)) ?? a.mecanisme;
+    if (v.etat === 'ratee') {
+      const amont = s.mecanismes.filter((m) => RANG[m] < RANG[a.mecanisme]);
+      // After an expectation held, an empty window says that anchor came late or early, not that nothing started.
+      const surAttendu = 'evenement' in a && a.depuis !== undefined && 'attendu' in a.depuis;
+      const muet = amont.length > 0 && !surAttendu && !amont.some((m) => v.couverture.includes(m));
+      propres.set(a.id, muet ? s.mecanismes[0]! : a.mecanisme);
       v.extrait = fenetre(lo - 500, hi + 500).map(ligne);
-    }
+    } else if (cause) propres.set(a.id, cause);
     const c = s.connus?.find((x) => x.attendu === a.id);
     if (c)
       v.connu = {
@@ -238,7 +270,22 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
     return v;
   };
 
-  return s.attendus.map(juge);
+  const tous = s.attendus.map(juge);
+  // No loop: `charger` refuses anchors in a loop, and an anchor not held has its own link.
+  const propre = (id: string): Mecanisme => {
+    const p = propres.get(id)!;
+    return typeof p === 'string' ? p : propre(p.ancre);
+  };
+  const premier = tous
+    .filter((v) => v.etat !== 'tenue' && !v.connu?.conforme)
+    .map((v) => propre(v.id))
+    .sort((x, y) => RANG[x] - RANG[y])[0];
+  for (const v of tous) {
+    if (v.etat === 'tenue') continue;
+    const own = propre(v.id);
+    v.source = premier !== undefined && RANG[premier] < RANG[own] ? premier : own;
+  }
+  return tous;
 }
 
 /** The time a `parole` and a `joue` overlap: each speech against each sentence until its `arrete`. */
