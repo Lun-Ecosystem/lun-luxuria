@@ -36,7 +36,7 @@ describe('the moments of a sentence', () => {
   it('the level between the thresholds keeps voice going, not starting', () => {
     const e = new Endpointer();
     expect(e.push(frame, 0.5, 0)).toEqual([]);
-    expect(e.push(frame, 0.9, F)).toEqual([{ type: 'start' }]);
+    expect(e.push(frame, 0.9, F, F + 5)).toEqual([{ type: 'start', at: F, decidedAt: F + 5 }]);
     for (let i = 0; i < n(1000); i++) expect(e.push(frame, 0.5, i).map((x) => x.type)).not.toContain('end');
   });
 

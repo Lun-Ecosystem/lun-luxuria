@@ -394,6 +394,29 @@ describe('everyday first', () => {
     expect(within(advanced()).getByText('Mesures de cette session')).toBeInTheDocument();
   });
 
+  it('in a browser tab, the trace of the turns leaves as a file, one line per event, after its format', async () => {
+    where.inWindow = false;
+    const files: Blob[] = [];
+    const names: string[] = [];
+    URL.createObjectURL = (file: Blob) => (files.push(file), 'blob:deroule');
+    URL.revokeObjectURL = () => {};
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      names.push(this.download);
+    });
+    const session = opened('ecoute');
+    session.turns.add('voix', { phrase: session.turns.phrase() }, { son: 12 });
+    await fireEvent.click(within(advanced()).getByRole('button', { name: 'Télécharger' }));
+    click.mockRestore();
+    expect(names[0]).toMatch(/^deroule-.*\.jsonl$/);
+    const lines = (await files[0]!.text()).trimEnd().split('\n');
+    expect(lines.map((l) => JSON.parse(l) as object)).toEqual([
+      { format: 1 },
+      expect.objectContaining({ name: 'voix', phrase: 1, son: 12 }),
+    ]);
+  });
+
   it('the voice: the volume, what is said, the service’s state; its programs and the microphone folded', () => {
     opened('voix', { brain: 'linked' });
     for (const label of ['Volume', 'Les urgences'])

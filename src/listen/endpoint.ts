@@ -37,6 +37,9 @@ export type EndpointEvent =
   | { type: 'end'; audio: Float32Array; lastVoiceAt: number }
   | { type: 'noise' };
 
+/** When the sound that decided it came, and when it was decided: a frame is judged after the model, later. */
+export type Moment = { at: number; decidedAt: number };
+
 function joined(frames: Float32Array[]): Float32Array {
   const out = new Float32Array(frames.reduce((n, f) => n + f.length, 0));
   let at = 0;
@@ -77,7 +80,12 @@ export class Endpointer {
     return this.#frames !== null;
   }
 
-  push(frame: Float32Array, voice: number, at: number): EndpointEvent[] {
+  /** `at` and `decidedAt` on the page's one clock; replayed, both are the frame's place in the sound. */
+  push(frame: Float32Array, voice: number, at: number, decidedAt = at): (EndpointEvent & Moment)[] {
+    return this.#push(frame, voice, at).map((e) => ({ ...e, at, decidedAt }));
+  }
+
+  #push(frame: Float32Array, voice: number, at: number): EndpointEvent[] {
     const p = this.#p;
     if (!this.#frames) {
       if (voice < p.on) {

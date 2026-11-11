@@ -18,6 +18,7 @@ const MAX_TAPE_FRAMES = (5 * 60 * 1000) / 32;
 import { presenceKeeper, watchPage } from './page.ts';
 import { readSettings, type Layout, type Settings } from './settings.ts';
 import { Speaker, type SpeakerEvent } from './speech/speaker.ts';
+import { Trace } from './trace.ts';
 import { appsOnMicrophone, busyWith, synthesize, transcribe } from './voice.ts';
 
 const SETTINGS_KEY = 'luxuria.settings';
@@ -32,6 +33,8 @@ const BEAT_MS = 30_000;
 const BUSY_POLL_MS = 3000;
 const SUBTITLE_STAYS_MS = 4000;
 const TRACE_STAYS_MS = 6000;
+/** The one clock of a turn, for the listening, the conversation and her voice: it never goes back, as `Date.now` may. */
+const clock = () => performance.now();
 
 function stored(key: string): string | null {
   try {
@@ -84,6 +87,8 @@ export class Session {
   failure = $state('');
   level = $state(0);
   latencies = $state<{ ms: number; speculated: boolean }[]>([]);
+  /** What each turn decided, on the same clock: in memory, written to a file only on his gesture. */
+  readonly turns = new Trace(clock);
   thread = $state<Message[]>([]);
   /** Read once at least: before, or unreachable since, an empty thread says nothing of what it holds. */
   threadRead = $state(false);
@@ -244,12 +249,14 @@ export class Session {
         (text) => synthesize(text, this.#net.voice),
         out,
         (e: SpeakerEvent) => this.#onSpeaker(e, convo),
+        this.turns,
       )),
+      trace: this.turns,
       settings: () => this.settings,
       layout: () => this.layout,
       keyHeld: () => this.#keyHeld || this.#keyInPhrase,
       silenced: () => this.silenced,
-      now: () => Date.now(),
+      now: clock,
       on: (e) => {
         if (e.type === 'thinking') this.thinking = e.on;
         else if (e.type === 'addressed') {
@@ -470,7 +477,7 @@ export class Session {
 
   #onFrame(frame: Float32Array): void {
     // What it is and when it came are read now; its turn to be judged comes after the frames before it.
-    const at = Date.now();
+    const at = clock();
     const epoch = this.#epoch;
     const { talk, key } = this.settings;
     const silent = talk[this.layout] === 'key' && (!key.on || !this.#keyHeld);
@@ -514,7 +521,7 @@ export class Session {
 
   #judged(frame: Float32Array, voice: number, at: number, keyHeld: boolean): void {
     if (keyHeld) this.#keyInPhrase = true;
-    for (const e of this.#endpointer.push(frame, voice, at)) {
+    for (const e of this.#endpointer.push(frame, voice, at, clock())) {
       if (e.type === 'start') {
         this.hearing = true;
         // The key as it was when this frame came, not now: its judgment may have waited.

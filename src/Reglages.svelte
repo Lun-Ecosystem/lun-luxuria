@@ -120,12 +120,17 @@
   async function tape(): Promise<void> {
     if (!session.recording) return session.record();
     const { echoCancellation, noiseSuppression } = session.settings.voice;
-    const url = URL.createObjectURL(
+    hand(
       new Blob([(await session.stopRecording()) as BlobPart], { type: 'audio/wav' }),
+      `essai-${stamp()}-echo-${echoCancellation ? 'oui' : 'non'}-bruit-${noiseSuppression ? 'oui' : 'non'}.wav`,
     );
+  }
+  const stamp = () => new Date().toISOString().slice(0, 19).replaceAll(':', '-');
+  function hand(file: Blob, name: string): void {
+    const url = URL.createObjectURL(file);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `essai-${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}-echo-${echoCancellation ? 'oui' : 'non'}-bruit-${noiseSuppression ? 'oui' : 'non'}.wav`;
+    link.download = name;
     link.click();
     // Not at once: some browsers start the download after this turn.
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
@@ -574,6 +579,24 @@
                 `${direct.length} tours, dernier ${secs(direct[0]!)} s.`
               : 'Latence par tour, pour régler la fin de phrase. Pas encore de tour à la voix.'}
           />
+          {#if !inWindow}
+            <SettingsRow
+              label="Déroulé des tours"
+              hint="Chaque décision des derniers tours, datée, une ligne par événement. Il contient ce que tu lui as dit et reste sur ce poste."
+            >
+              <Button
+                variant="fantome"
+                size="petit"
+                onclick={() =>
+                  hand(
+                    new Blob([session.turns.lines()], { type: 'application/x-ndjson' }),
+                    `deroule-${stamp()}.jsonl`,
+                  )}
+              >
+                Télécharger
+              </Button>
+            </SettingsRow>
+          {/if}
         </Avance>
       {:else if page.id === 'voix'}
         <SettingsCard title="Ce qu’on entend">

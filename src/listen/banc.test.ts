@@ -9,6 +9,7 @@ import { FRAME, loadSilero, SileroVoice } from './vad.ts';
 import { Conversation } from '../conversation.ts';
 import { DEFAULTS } from '../settings.ts';
 import { Speaker } from '../speech/speaker.ts';
+import { Trace, TRACE_FORMAT } from '../trace.ts';
 
 const MODEL = readFileSync('src/listen/silero/silero_vad.onnx');
 const byLevel = (frame: Float32Array) => levelToVoice(frame, DEFAULTS.endOfSpeech.floorDb);
@@ -106,6 +107,61 @@ describe('hearing a voice', () => {
     await late;
     await silero.voice(new Float32Array(FRAME), false);
     expect(states.at(-1)).toBe(0);
+  });
+});
+
+describe('the clock of a replay', () => {
+  it('is the place in the sound, for the listening and the conversation alike', async () => {
+    // A breath the level takes for a sentence, from 1 s to 3 s.
+    const sound = Float32Array.from([
+      ...new Float32Array(16000),
+      ...noise(2, 0.2),
+      ...new Float32Array(16000),
+    ]);
+    let soundAt = 0;
+    const latencies: number[] = [];
+    const ends: { at: number; decidedAt: number; lastVoiceAt: number; now: number }[] = [];
+    const convo: Conversation = new Conversation({
+      brain: {
+        send: async (_text, _opts, on) => {
+          on({ type: 'reply', id: 7 });
+          convo.onLive({ type: 'speech', id: 7, n: 1, text: 'Oui.', why: 'reply' });
+        },
+        cut: async () => {},
+        withdraw: async () => {},
+      },
+      stt: async () => ({ text: 'Bonjour', confidence: 0.9 }),
+      speaker: new Speaker(
+        async () => ({ samples: new Float32Array(1), rate: 16000 }),
+        { play: () => ({ stop: () => {}, heard: () => 1 }) },
+        (e) => convo.onSpeaker(e),
+      ),
+      settings: () => DEFAULTS,
+      layout: () => 'scene',
+      keyHeld: () => false,
+      now: () => soundAt,
+      on: (e) => void (e.type === 'latency' && latencies.push(e.ms)),
+    });
+    await replay(
+      sound,
+      byLevel,
+      ENDPOINT_DEFAULTS,
+      (e) => {
+        if (e.type === 'end')
+          ends.push({ at: e.at, decidedAt: e.decidedAt, lastVoiceAt: e.lastVoiceAt, now: soundAt });
+        convo.onEndpoint(e);
+      },
+      (at) => (soundAt = at),
+    );
+    expect(ends).toHaveLength(1);
+    const end = ends[0]!;
+    expect(end.lastVoiceAt).toBeGreaterThan(2900);
+    expect(end.at).toBe(end.now);
+    expect(end.decidedAt).toBe(end.at);
+    expect(end.at - end.lastVoiceAt).toBeGreaterThanOrEqual(ENDPOINT_DEFAULTS.silenceMs);
+    // The reply sounds at once, at the moment the sentence ended: no more a clock stuck at zero.
+    expect(latencies).toHaveLength(1);
+    expect(latencies[0]).toBeGreaterThanOrEqual(ENDPOINT_DEFAULTS.silenceMs);
   });
 });
 
@@ -214,12 +270,16 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
       nothing: { files: 0, suspended: 0, cut: 0 },
     };
     const missed: string[] = [];
+    // The trace of the chain, file by file, on the time of each sound: beside the report, out of the repository.
+    const turns = [JSON.stringify({ format: TRACE_FORMAT })];
     for (const file of wavs(DIR).sort()) {
       const fiche = { ...json(join(file, '..', 'fiche.json')), ...json(file.replace(/\.wav$/, '.json')) };
       if (fiche.phrases === undefined) continue;
       const said = fiche.phrases > 0;
       let stops = 0;
       let cut = false;
+      let soundAt = 0;
+      const trace = new Trace(() => soundAt);
       const convo: Conversation = new Conversation({
         brain: {
           send: async (_text, _opts, on) => on({ type: 'reply', id: 99 }),
@@ -231,12 +291,14 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
           async () => ({ samples: new Float32Array(1), rate: 16000 }),
           { play: () => ({ stop: () => void stops++, heard: () => 0.5 }) },
           (e) => convo.onSpeaker(e),
+          trace,
         ),
         settings: () => DEFAULTS,
         layout: () => 'small',
         keyHeld: () => false,
-        now: () => 0,
+        now: () => soundAt,
         on: () => {},
+        trace,
       });
       convo.onLive({
         type: 'speech',
@@ -246,16 +308,23 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
         why: 'reply',
       });
       await new Promise((r) => setTimeout(r));
-      await replay(readWav(readFileSync(file)), await byModel(), ENDPOINT_DEFAULTS, (e) =>
-        convo.onEndpoint(e),
+      await replay(
+        readWav(readFileSync(file)),
+        await byModel(),
+        ENDPOINT_DEFAULTS,
+        (e) => convo.onEndpoint(e),
+        (at) => (soundAt = at),
       );
       for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r));
       const t = tally[said ? 'sentence' : 'nothing'];
       t.files++;
       if (stops > 0) t.suspended++;
       if (cut) t.cut++;
-      if (cut !== said) missed.push(relative(DIR, file).replaceAll('\\', '/'));
+      const fichier = relative(DIR, file).replaceAll('\\', '/');
+      if (cut !== said) missed.push(fichier);
+      for (const e of trace.events) turns.push(JSON.stringify({ fichier, ...e }));
     }
+    writeFileSync(join(DIR, 'deroule.jsonl'), `${turns.join('\n')}\n`);
     const lines = [
       '',
       '## Un son pendant qu’elle parle',
@@ -265,6 +334,6 @@ describe.runIf(asked)('the bench: a sound while she speaks', () => {
       missed.length ? `À côté : ${missed.join(', ')}.` : 'Aucun à côté.',
     ];
     appendFileSync(join(DIR, 'releve.md'), `${lines.join('\n')}\n`);
-    console.log(lines.join('\n'));
+    console.log(lines.join('\n'), `\nDéroulé : ${join(DIR, 'deroule.jsonl')}`);
   }, 600_000);
 });

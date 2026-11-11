@@ -179,12 +179,17 @@ export class LocalBrain implements Brain {
     this.#save();
     const abort = new AbortController();
     this.#running.set(reply.id, abort);
+    /** Alone on a model, the page measures its first word itself; only the finished reply carries it. */
+    let firstWordMs: number | undefined;
     const finish = (status: 'ok' | 'error', error?: string) => {
       reply.status = status;
       if (error) reply.error = error;
       this.#save();
       this.#live?.({ type: 'speech-end', id: reply.id, why: 'reply' });
-      on({ type: 'done', message: { ...reply } });
+      on({
+        type: 'done',
+        message: { ...reply, ...(firstWordMs === undefined ? {} : { durations: { firstWordMs } }) },
+      });
       this.#live?.({ type: 'message', threadId: MAIN, id: reply.id });
     };
 
@@ -194,6 +199,7 @@ export class LocalBrain implements Brain {
     let usage: number | undefined;
     try {
       const { model } = this.#settings();
+      const asked = performance.now();
       const res = await this.#fetch(`${model.url.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         signal: AbortSignal.any([abort.signal, AbortSignal.timeout(TIMEOUT_MS)]),
@@ -224,6 +230,7 @@ export class LocalBrain implements Brain {
         usage = chunk.usage?.total_tokens ?? usage;
         const delta = chunk.choices?.[0]?.delta?.content;
         if (!delta) continue;
+        firstWordMs ??= performance.now() - asked;
         reply.text += delta;
         on({ type: 'delta', text: delta });
         const { done, rest } = sentences(pending + delta);

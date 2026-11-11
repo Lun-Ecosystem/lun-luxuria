@@ -1,3 +1,5 @@
+import type { Trace } from '../trace.ts';
+
 export interface Clip {
   samples: Float32Array;
   rate: number;
@@ -65,10 +67,22 @@ export class Speaker {
   #out: Output;
   #on: (e: SpeakerEvent) => void;
 
-  constructor(synth: (text: string) => Promise<Clip>, out: Output, on: (e: SpeakerEvent) => void) {
+  #trace: Trace | undefined;
+
+  /** `trace`: where each of its decisions is written; without it, nothing else changes. */
+  constructor(
+    synth: (text: string) => Promise<Clip>,
+    out: Output,
+    on: (e: SpeakerEvent) => void,
+    trace?: Trace,
+  ) {
     this.#synth = synth;
     this.#out = out;
-    this.#on = on;
+    this.#trace = trace;
+    this.#on = (e) => {
+      if (e.type === 'silent') trace?.add('silence', {}, { coupee: e.cut });
+      on(e);
+    };
   }
 
   /** True between two sentences of a turn already heard: the next one is only being made. */
@@ -108,9 +122,11 @@ export class Speaker {
     if (this.#gone.has(id)) return;
     // One at a time: a voice conversion takes one call at a time, and order matters more than speed.
     // shortcut: an urgency waits for the sentences already being made, give it its own lane if that is heard.
-    const clip = this.#chain.then(() => this.#oneClip(text));
+    const turn = this.#turn(id, urgent);
+    const rang = turn.pieces.length + 1;
+    const clip = this.#chain.then(() => this.#oneClip(text, id, rang));
     this.#chain = clip;
-    this.#turn(id, urgent).pieces.push({ text, clip });
+    turn.pieces.push({ text, clip });
     this.#pump();
   }
 
@@ -120,16 +136,21 @@ export class Speaker {
     this.#pump();
   }
 
-  async #oneClip(text: string): Promise<Clip | null> {
+  async #oneClip(text: string, id: number, rang: number): Promise<Clip | null> {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const write = (etape: string) => this.#trace?.add('synthese', { reponse: id }, { etape, rang });
+    write('debut');
     try {
-      return await Promise.race([
+      const clip = await Promise.race([
         this.#synth(text),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error('synthèse trop longue')), SYNTH_TIMEOUT_MS);
         }),
       ]);
+      write('fin');
+      return clip;
     } catch (err) {
+      write('echec');
       this.#on({
         type: 'failed',
         text: `Sa voix n’a pas pu dire une phrase : ${err instanceof Error ? err.message : String(err)}`,
@@ -173,8 +194,10 @@ export class Speaker {
         this.#on({ type: 'first-sound', id: turn.id });
       }
       this.#on({ type: 'subtitle', id: turn.id, text: piece.text });
+      this.#trace?.add('son', { reponse: turn.id }, { etape: 'debut' });
       const sound = this.#out.play(clip, () => {
         if (this.#playing?.sound !== sound) return;
+        this.#trace?.add('son', { reponse: this.#playing.turn.id }, { etape: 'fin' });
         // An urgency may have come in front meanwhile: the words go to the turn that said them.
         this.#playing.turn.said.push(piece.text);
         this.#playing = null;
@@ -201,16 +224,18 @@ export class Speaker {
    * A sound came over her voice, and nobody knows yet what it is: the turn that sounds falls silent and waits, at the
    * sentence it was in. The soft way lets that sentence end first. `resume` or `cutSuspended` tells what it was.
    */
-  suspend(soft = false): void {
+  suspend(soft = false, by?: number): void {
     const now = this.#playing;
     const turn = now?.turn ?? this.#turns[0];
     if (!turn || turn.suspended) return;
     turn.held = true;
     turn.suspended = { part: '' };
+    this.#trace?.add('suspendue', { reponse: turn.id }, { par: by, doux: soft });
     if (!now || soft) return;
     turn.suspended.part = wordsHeard(now.piece.text, now.sound.heard());
     this.#playing = null;
     now.sound.stop();
+    this.#trace?.add('son', { reponse: turn.id }, { etape: 'fin', arrete: true, par: by });
     // The sentence it was in is said again from its start.
     turn.next--;
     // An urgency that waited behind this sentence does not wait for the verdict.
@@ -223,6 +248,7 @@ export class Speaker {
     if (!turn) return;
     delete turn.suspended;
     turn.held = false;
+    this.#trace?.add('reprise_voix', { reponse: turn.id });
     this.#pump();
   }
 
@@ -246,10 +272,12 @@ export class Speaker {
       this.#gone.add(last.id);
     } else this.#on({ type: 'silent', cut: true });
     this.#pump();
-    return cut.map((t) => ({
+    const said = cut.map((t) => ({
       id: t.id,
       said: [...t.said, t === last ? this.#playing!.piece.text : t.suspended!.part].filter(Boolean).join(' '),
     }));
+    for (const c of said) this.#trace?.add('coupee', { reponse: c.id }, { entendu: c.said });
+    return said;
   }
 
   /**
@@ -272,8 +300,10 @@ export class Speaker {
     if (now) {
       const part = wordsHeard(now.piece.text, now.sound.heard());
       now.sound.stop();
+      this.#trace?.add('son', { reponse: now.turn.id }, { etape: 'fin', arrete: true });
       if (part) said.push(part);
     }
+    this.#trace?.add('arretee', { reponse: turn.id }, { entendu: said.join(' ') });
     return { id: turn.id, said: said.join(' ') };
   }
 }

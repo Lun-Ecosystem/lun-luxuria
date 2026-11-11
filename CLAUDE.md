@@ -42,4 +42,7 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
 - Les briques sous licence GPL ou propriétaire (Piper, Cubism) restent hors du dépôt, installées par la personne.
 - La latence se mesure sur la machine réelle. Un chiffre pris ailleurs ne compte pas.
 - L'écoute se rejoue : `npm run banc` passe chaque WAV de `../banc-sons` (ou `BANC_DIR`) dans la détection de voix, par le
-  niveau puis par le modèle, et écrit `releve.md` dans ce dossier. Aucun enregistrement de voix n'entre dans le dépôt.
+  niveau puis par le modèle, et écrit `releve.md` dans ce dossier, avec à côté `deroule.jsonl`, le déroulé daté de sa
+  chaîne (`src/trace.ts`). Aucun enregistrement de voix ni déroulé n'entre dans le dépôt.
+- Le déroulé des derniers tours s'exporte par un bouton des réglages avancés de l'écoute, dans un onglet de navigateur
+  seulement.

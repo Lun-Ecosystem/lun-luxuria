@@ -131,6 +131,24 @@ describe('LocalBrain', () => {
     ]);
   });
 
+  it('measures its first word itself, on the finished reply only, and keeps it nowhere', async () => {
+    const f = model(['Bonjour.']);
+    const { brain, store, turn } = harness(f as unknown as typeof fetch);
+    const done = (await turn('Salut')).at(-1);
+    if (done?.type !== 'done') throw new Error(String(done?.type));
+    expect(done.message.durations?.firstWordMs).toBeGreaterThanOrEqual(0);
+    expect(Object.keys(done.message.durations!)).toEqual(['firstWordMs']);
+    expect([...store.data.values()].join()).not.toMatch(/firstWordMs|durations/);
+    expect((await brain.thread()).some((m) => 'durations' in m)).toBe(false);
+  });
+
+  it('a reply without a word has no first word to say', async () => {
+    const { turn } = harness(model([]) as unknown as typeof fetch);
+    const done = (await turn('Salut')).at(-1);
+    expect(done).toMatchObject({ type: 'done' });
+    expect(done?.type === 'done' && done.message.durations).toBe(undefined);
+  });
+
   it('says the reply without its markdown, and the thread keeps it written', async () => {
     const text =
       '## Le temps\n**Il pleut.** Prends un `parapluie`.\n- _vraiment_ utile\n1. Voir [la carte](https://x.test/m)\n---\n> Bonne journée.';
