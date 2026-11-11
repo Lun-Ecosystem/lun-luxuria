@@ -6,7 +6,18 @@ const ctx = { layout: 'small' as const, keyHeld: false, lastSpokeAt: null, now: 
 
 describe('whether a sentence leaves the PC', () => {
   it('in the scene, by default, everything goes', () => {
-    expect(decide('Bonjour à tous', { ...ctx, layout: 'scene' }, DEFAULTS)).toEqual({ pass: true });
+    expect(decide('Bonjour à tous', { ...ctx, layout: 'scene' }, DEFAULTS)).toEqual({
+      pass: true,
+      by: 'off',
+    });
+  });
+
+  it('says which rule let the sentence through, the first that holds', () => {
+    const all = { ...ctx, keyHeld: true, lastSpokeAt: 99_000 };
+    expect(decide('Agent viens', { ...all, layout: 'scene' }, DEFAULTS)).toMatchObject({ by: 'off' });
+    expect(decide('Agent viens', all, DEFAULTS)).toMatchObject({ by: 'touche' });
+    expect(decide('Agent viens', { ...all, keyHeld: false }, DEFAULTS)).toMatchObject({ by: 'nom' });
+    expect(decide('Et demain ?', { ...all, keyHeld: false }, DEFAULTS)).toMatchObject({ by: 'fenetre' });
   });
 
   it('in small mode, by default, a sentence to someone else stays', () => {

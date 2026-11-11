@@ -35,7 +35,10 @@ export function isNoise(text: string): boolean {
   return !/\p{L}/u.test(t) || HALLUCINATIONS.some((h) => h.test(t));
 }
 
-export type Verdict = { pass: true } | { pass: false; reason: 'noise' | 'filtered' };
+/** The rule that let a sentence through: the filter off for this layout, the key, the name, the 15 s window. */
+export type PassedBy = 'off' | 'touche' | 'nom' | 'fenetre';
+
+export type Verdict = { pass: true; by: PassedBy } | { pass: false; reason: 'noise' | 'filtered' };
 
 export function decide(
   text: string,
@@ -43,10 +46,11 @@ export function decide(
   s: Pick<Settings, 'agent' | 'filter' | 'name' | 'window' | 'key'>,
 ): Verdict {
   if (isNoise(text)) return { pass: false, reason: 'noise' };
-  if (!s.filter[ctx.layout]) return { pass: true };
-  if (s.key.on && ctx.keyHeld) return { pass: true };
-  if (s.name.on && saysName(text, [s.agent.name, ...s.name.words], s.name.tolerance)) return { pass: true };
+  if (!s.filter[ctx.layout]) return { pass: true, by: 'off' };
+  if (s.key.on && ctx.keyHeld) return { pass: true, by: 'touche' };
+  if (s.name.on && saysName(text, [s.agent.name, ...s.name.words], s.name.tolerance))
+    return { pass: true, by: 'nom' };
   if (s.window.on && ctx.lastSpokeAt !== null && ctx.now - ctx.lastSpokeAt <= s.window.seconds * 1000)
-    return { pass: true };
+    return { pass: true, by: 'fenetre' };
   return { pass: false, reason: 'filtered' };
 }
