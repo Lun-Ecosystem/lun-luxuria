@@ -24,7 +24,8 @@ const echecs = (md) => {
     if (nom === undefined) continue;
     const c = l.split('|').map((x) => x.trim());
     if (c.length < 8 || c[1] === 'Attendu' || c[1].startsWith('---')) continue;
-    if (c[2] === 'tenue' || /^connue \(/.test(c[2])) continue;
+    // « tenue, connue ailleurs » : a known defect that no longer shows under the mutation, not a failure.
+    if (/^tenue\b/.test(c[2]) || /^connue \(/.test(c[2])) continue;
     out.push({ nom, id: c[1], espece: c[3], source: c[4].split(' (')[0] });
   }
   return out;
@@ -36,6 +37,7 @@ const exemple = [
   '|---|---|---|---|---|---|',
   '| x | ratee | absent | voix |  |  |',
   '| y | tenue |  |  |  |  |',
+  '| w | tenue, connue ailleurs (#63) |  |  |  |  |',
   '### Mesures',
   '| z | ratee | hors_bornes | serveur | 9 | [0, 1] |',
 ].join('\n');
