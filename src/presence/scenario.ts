@@ -324,6 +324,20 @@ export function ancre(apres: Apres, journal: readonly BancEvent[]): number | und
   return j && j.at + apres.ms;
 }
 
+/**
+ * For each call of the false model, the text received it answers: the first not yet taken with the same `texte` (the
+ * server writes the same raw string in both). A reply withdrawn or forgotten in the queue, or `fixed`, has no call.
+ */
+export function rattacher<E extends object>(appels: readonly E[], envois: readonly E[]): (E | undefined)[] {
+  const texte = (x: E) => (x as Record<string, unknown>)['texte'];
+  const pris = new Set<E>();
+  return appels.map((a) => {
+    const e = envois.find((x) => !pris.has(x) && texte(x) === texte(a));
+    if (e) pris.add(e);
+    return e;
+  });
+}
+
 /** The events that carry the person's words as heard: a transcribed text is never the same twice in the chain. */
 const MOTS_ENTENDUS: readonly string[] = ['transcrite', 'envoi_recu', 'modele_appele'];
 /** The server's lines: in the chain, merged by their numbers, not by their instant. */

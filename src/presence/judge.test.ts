@@ -426,15 +426,32 @@ describe('judging a game of the chain', () => {
     const modele = {
       reponses: [{ si: 'jardin', phrases: ['Il a plu cette nuit.'] }, { phrases: ['Pardon ?'] }],
     };
-    const appel = (reponse: number): Partie => ({
+    // The server writes the same raw text in the call and in what it received.
+    const appel = (reponse: number, avant: BancEvent[] = []): Partie => ({
       ...partie,
-      banc: [...banc, { de: 'banc', at: 2860, name: 'modele_appele', reponse, texte: '…' }],
+      banc: [
+        ...avant,
+        ...banc,
+        { de: 'banc', at: 2860, name: 'modele_appele', reponse, texte: 'Le jardin est mouillé' },
+      ],
     });
     const j = (p: Partie, lieu: 'exact' | 'chaine' = 'chaine') =>
       juger(scenario([joue], { mecanismes, modele }), p, lieu)[0]!;
 
     it('is named when the text heard made the false model choose another reply than what was said', () => {
       expect(j(appel(1))).toMatchObject({ source: 'transcription', propre: 'voix' });
+    });
+
+    it('reads each call against the text it answers, not the text of its rank', () => {
+      // A try withdrawn in the queue: received, never given to the model.
+      const retiree: BancEvent = {
+        de: 'banc',
+        at: 2800,
+        name: 'envoi_recu',
+        texte: 'Le jardin',
+        reponse: 100,
+      };
+      expect(j(appel(1, [retiree]))).toMatchObject({ source: 'transcription', propre: 'voix' });
     });
 
     it('is not named when the text heard differs but the reply is the same, nor at the exact level', () => {

@@ -17,6 +17,7 @@ import {
   charger,
   DEFAUTS,
   merged,
+  rattacher,
   type BancEvent,
   type BancNom,
   type Partie,
@@ -53,8 +54,8 @@ const decale = (e: TraceEvent, t0: number): TraceEvent => {
  * One game from what the page, the probe and the server wrote, shifted to `t0`. The server's clock is never converted:
  * each of its lines takes the instant of the page's event with the same number (`envoi_recu` on `numero`,
  * `coupure_recue` on `coupee`, or on `oubliee` for a reply forgotten unheard, which the page cuts without a `coupee`,
- * `retrait_recu` on the `retiree` of the message's try), `modele_appele` that of the `envoi_recu` of its rank (the
- * server writes them in either order). One the page never matched keeps the instant of the line before.
+ * or on `arretee` for a reply stopped by « Faire taire », `retrait_recu` on the `retiree` of the message's try),
+ * `modele_appele` that of the `envoi_recu` it reads (`rattacher`; the server writes them in either order). One the page never matched keeps the instant of the line before.
  * The probe's own `envoi_recu` (its anchors) gives way to the server's.
  */
 function fondre(
@@ -66,15 +67,19 @@ function fondre(
   fin: number,
 ): Partie {
   const lignes = serveur.filter((l) => DU_SERVEUR.includes(l.name));
-  const envois = lignes.filter((l) => l.name === 'envoi_recu');
   const appels = lignes.filter((l) => l.name === 'modele_appele');
+  const envois = rattacher(
+    appels,
+    lignes.filter((l) => l.name === 'envoi_recu'),
+  );
   const numero = (k: string, v: unknown) => trace.find((e) => e.name === 'numero' && e[k] === v);
   const instant = (l: LigneServeur | undefined): number | undefined => {
     if (!l) return undefined;
     if (l.name === 'envoi_recu') return numero('reponse', l['reponse'])?.at;
     if (l.name === 'coupure_recue') {
       const de = (n: string) => trace.find((e) => e.name === n && e.reponse === l['reponse']);
-      return (de('coupee') ?? de('oubliee'))?.at;
+      // `numero` carries the same number: never it.
+      return (de('coupee') ?? de('oubliee') ?? de('arretee'))?.at;
     }
     if (l.name === 'retrait_recu') {
       const n = numero('message', l['message']);
@@ -166,6 +171,34 @@ describe('le joueur réel, sans navigateur', () => {
       message: 7,
       reponse: 101,
     });
+  });
+
+  it("rattache chaque appel au texte reçu qu'il lit, même après un texte reçu sans appel", () => {
+    const trace: TraceEvent[] = [
+      { at: 1900, name: 'numero', phrase: 1, essai: 1, reponse: 101, message: 7 },
+      { at: 3100, name: 'numero', phrase: 2, essai: 1, reponse: 102, message: 8 },
+    ];
+    // 101 forgotten in the queue: the model never read it.
+    const serveur: LigneServeur[] = [
+      { partie: 'p', t: 5, name: 'envoi_recu', texte: 'bonjour', message: 7, reponse: 101 },
+      { partie: 'p', t: 900, name: 'modele_appele', reponse: 1, texte: 'encore' },
+      { partie: 'p', t: 905, name: 'envoi_recu', texte: 'encore', message: 8, reponse: 102 },
+    ];
+    const p = fondre(trace, 2, [], serveur, 1000, 9000);
+    expect(p.banc.find((e) => e.name === 'modele_appele')!.at).toBe(2100);
+  });
+
+  it('pose la coupure reçue sur la coupure de la page, arretee faute de coupee', () => {
+    const trace: TraceEvent[] = [
+      { at: 1900, name: 'numero', phrase: 1, essai: 1, reponse: 101, message: 7 },
+      { at: 4339, name: 'arretee', reponse: 101, entendu: 'Demain matin il' },
+    ];
+    const serveur: LigneServeur[] = [
+      { partie: 'p', t: 5, name: 'envoi_recu', texte: 'bonjour', message: 7, reponse: 101 },
+      { partie: 'p', t: 900, name: 'coupure_recue', reponse: 101, entendu: 'Demain matin il' },
+    ];
+    const p = fondre(trace, 2, [], serveur, 1000, 9000);
+    expect(p.banc.find((e) => e.name === 'coupure_recue')!.at).toBe(3339);
   });
 
   it("garde l'instant de la ligne d'avant à une ligne que la page n'a pas", () => {

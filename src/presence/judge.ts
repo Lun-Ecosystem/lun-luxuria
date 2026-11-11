@@ -4,6 +4,7 @@ import {
   choisir,
   ECRIT_PAR,
   RANG,
+  rattacher,
   ScenarioRefuse,
   type Ancre,
   type Attendu,
@@ -159,9 +160,9 @@ export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdic
    */
   const divergence = (): number | undefined => {
     const reponses = s.modele?.reponses ?? [];
-    const envois = bancDe('envoi_recu');
-    // shortcut: the k-th call answers the k-th text received; a ritual or a second call per text needs their link.
-    for (const [k, appel] of bancDe('modele_appele').entries()) {
+    const appels = bancDe('modele_appele');
+    const envois = rattacher(appels, bancDe('envoi_recu'));
+    for (const [k, appel] of appels.entries()) {
       const r = envois[k]?.reponse;
       const phrase = partie.page.find((e) => e.name === 'numero' && e.reponse === r)?.phrase;
       if (phrase === undefined) continue;
