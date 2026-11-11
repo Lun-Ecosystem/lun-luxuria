@@ -315,7 +315,12 @@ export function ancre(apres: Apres, journal: readonly BancEvent[]): number | und
   }
   const r = envois[apres.joue - 1]?.reponse;
   if (r === undefined) return undefined;
-  const j = journal.filter((e) => e.name === 'joue' && e.reponse === r)[(apres.phrase ?? 1) - 1];
+  const n = apres.phrase ?? 1;
+  const joues = journal.filter((e) => e.name === 'joue' && e.reponse === r);
+  // The probe numbers each sound's sentence; the exact level's `joue` has no number, its rank is the sentence.
+  const j = joues.some((e) => e['phrase'] !== undefined)
+    ? joues.find((e) => e['phrase'] === n)
+    : joues[n - 1];
   return j && j.at + apres.ms;
 }
 

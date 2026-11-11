@@ -228,6 +228,18 @@ describe('ancre', () => {
     expect(ancre({ envoi: 2, ms: 3000 }, journal)).toBe(4200);
   });
 
+  it('takes the sentence by its number when the log gives it: one played again after a suspension is not the next', () => {
+    const sonde: BancEvent[] = [
+      { de: 'banc', at: 100, name: 'envoi_recu', reponse: 101 },
+      { de: 'banc', at: 600, name: 'joue', reponse: 101, phrase: 1 },
+      { de: 'banc', at: 900, name: 'joue', reponse: 101, phrase: 1 },
+      { de: 'banc', at: 1500, name: 'joue', reponse: 101, phrase: 2 },
+    ];
+    expect(ancre({ joue: 1, phrase: 2, ms: 0 }, sonde)).toBe(1500);
+    expect(ancre({ joue: 1, ms: 0 }, sonde)).toBe(600);
+    expect(ancre({ joue: 1, phrase: 3, ms: 0 }, sonde)).toBeUndefined();
+  });
+
   it('gives nothing while the anchor has not come', () => {
     expect(ancre({ joue: 2, ms: 0 }, journal)).toBeUndefined();
     expect(ancre({ joue: 1, phrase: 3, ms: 0 }, journal)).toBeUndefined();
