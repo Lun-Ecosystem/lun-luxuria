@@ -213,6 +213,8 @@ export class Speaker {
     now.sound.stop();
     // The sentence it was in is said again from its start.
     turn.next--;
+    // An urgency that waited behind this sentence does not wait for the verdict.
+    this.#pump();
   }
 
   /** It was nothing: the suspended turn goes on. */
@@ -225,24 +227,29 @@ export class Speaker {
   }
 
   /**
-   * It was for her: the suspended turn is cut for good, and what waited behind it goes with it, but for the turn
-   * `keep`, the answer to what was just said. Answers what was heard before the suspension.
+   * It was for her: what was suspended is cut for good, and what waited behind goes with it, but for an urgency and
+   * for the turn `keep`, the answer to what was just said. Answers what was heard of each before its suspension.
    */
-  cutSuspended(keep?: number): { id: number; said: string } | undefined {
-    const turn = this.#turns.find((t) => t.suspended);
-    if (!turn) return undefined;
-    for (const t of this.#turns) if (t.id !== keep && t !== this.#playing?.turn) this.#gone.add(t.id);
-    this.#turns = this.#turns.filter((t) => t.id === keep || t === this.#playing?.turn);
+  cutSuspended(keep?: number): { id: number; said: string }[] {
+    const cut = this.#turns.filter((t) => t.suspended);
+    if (cut.length === 0) return [];
+    const last = this.#playing?.turn;
+    const stays = (t: Turn) => t.id === keep || (t.urgent && !t.suspended) || t === last;
+    for (const t of this.#turns) if (!stays(t)) this.#gone.add(t.id);
+    this.#turns = this.#turns.filter(stays);
     // The soft way: its sentence may still be sounding, and is the last.
-    if (this.#playing?.turn === turn) {
-      this.#playing.turn = { ...turn, pieces: [], next: 0, ended: true, held: false };
-      this.#turns[this.#turns.indexOf(turn)] = this.#playing.turn;
-      this.#gone.add(turn.id);
-      return { id: turn.id, said: [...turn.said, this.#playing.piece.text].join(' ') };
-    }
-    this.#on({ type: 'silent', cut: true });
+    if (last?.suspended) {
+      const kept: Turn = { ...last, pieces: [], next: 0, ended: true, held: false };
+      delete kept.suspended;
+      this.#turns[this.#turns.indexOf(last)] = kept;
+      this.#playing!.turn = kept;
+      this.#gone.add(last.id);
+    } else this.#on({ type: 'silent', cut: true });
     this.#pump();
-    return { id: turn.id, said: [...turn.said, turn.suspended!.part].filter(Boolean).join(' ') };
+    return cut.map((t) => ({
+      id: t.id,
+      said: [...t.said, t === last ? this.#playing!.piece.text : t.suspended!.part].filter(Boolean).join(' '),
+    }));
   }
 
   /**

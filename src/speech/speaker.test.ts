@@ -224,7 +224,7 @@ describe('suspended by a sound that may be nothing', () => {
     t.speaker.hold(8);
     t.speaker.add(9, 'Une autre, jamais dite.');
     t.speaker.suspend();
-    expect(t.speaker.cutSuspended(8)).toEqual({ id: 7, said: 'Une phrase entière. Celle-ci coupée' });
+    expect(t.speaker.cutSuspended(8)).toEqual([{ id: 7, said: 'Une phrase entière. Celle-ci coupée' }]);
     expect(t.events.at(-1)).toEqual({ type: 'silent', cut: true });
     t.speaker.add(8, 'La réponse.');
     t.speaker.release(8);
@@ -266,7 +266,11 @@ describe('suspended by a sound that may be nothing', () => {
     const t = await midSecond();
     t.speaker.suspend(true);
     expect(t.sounds[1]!.stopped).toBe(false);
-    expect(t.speaker.cutSuspended()).toEqual({ id: 7, said: 'Une phrase entière. Celle-ci coupée en deux.' });
+    expect(t.speaker.cutSuspended()).toEqual([
+      { id: 7, said: 'Une phrase entière. Celle-ci coupée en deux.' },
+    ]);
+    // Told once: neither a second verdict nor the button tells it again.
+    expect(t.speaker.cutSuspended()).toEqual([]);
     t.sounds[1]!.end();
     await tick();
     expect(t.sounds).toHaveLength(2);
@@ -302,6 +306,18 @@ describe('an urgency goes first', () => {
     }
     expect(t.subtitles()).toEqual(['Un.', 'Alerte.', 'Autre alerte.', 'Deux.']);
     expect(t.events.at(-1)).toEqual({ type: 'silent' });
+  });
+
+  it('one that waited is spared by the cut of the suspended reply', async () => {
+    const t = setup();
+    t.speaker.add(7, 'Un.');
+    await tick();
+    t.speaker.add(1, 'Alerte.', true);
+    t.speaker.suspend(true);
+    expect(t.speaker.cutSuspended()).toEqual([{ id: 7, said: 'Un.' }]);
+    t.sounds[0]!.end();
+    await tick();
+    expect(t.subtitles()).toEqual(['Un.', 'Alerte.']);
   });
 
   it('sounds during a suspension', async () => {

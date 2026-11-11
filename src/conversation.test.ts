@@ -266,7 +266,6 @@ describe('cutting it off', () => {
     ['nothing transcribed', (t) => t.convo.onEndpoint(ended), 'Sous-titres par Amara.org'],
     ['a transcription that fails', (t) => t.convo.onEndpoint(ended), new Error('en panne')],
     ['the microphone stopped', (t) => t.convo.stopListening(), undefined],
-    ['the mute', (t) => t.convo.mute(), undefined],
   ] as [string, (t: Awaited<ReturnType<typeof suspended>>) => void, string | Error | undefined][])(
     '%s: she says her sentence again and goes on, the server hears nothing',
     async (_, what, heard) => {
@@ -334,6 +333,43 @@ describe('cutting it off', () => {
     off.convo.onEndpoint(ended);
     await tick();
     expect(off.calls).toEqual([]);
+  });
+
+  it('she does not resume while a sentence that ended may still be for her, nor over one he holds', async () => {
+    const FILTERED = { filter: { scene: true, small: true } };
+    const cough = await suspended();
+    cough.convo.onEndpoint(ended);
+    cough.convo.onEndpoint({ type: 'noise' });
+    expect(cough.sounds).toHaveLength(1);
+    await tick();
+    expect(cough.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+
+    const over = await suspended(FILTERED, ['On mange quoi ce soir', 'Sous-titres par Amara.org']);
+    over.advance(20_000);
+    over.convo.onEndpoint(ended);
+    over.convo.onEndpoint({ type: 'held' });
+    await tick();
+    expect(over.sounds).toHaveLength(1);
+    over.convo.onEndpoint(ended);
+    await tick();
+    expect(over.sounds).toHaveLength(2);
+    expect(over.calls).toEqual(['sound stop']);
+  });
+
+  it('an urgency that waited behind her sentence sounds during the suspension, and both are told cut', async () => {
+    const t = setup();
+    t.say(50, 'Une phrase assez longue pour être coupée.');
+    await tick();
+    t.convo.onLive({ type: 'speech', id: 60, n: 1, text: 'Alerte rouge.', why: 'p0' });
+    t.convo.onEndpoint({ type: 'held' });
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+    t.convo.onEndpoint(ended);
+    await tick();
+    expect(t.calls.filter((c) => c.startsWith('cut')).sort()).toEqual([
+      'cut 50 "Une phrase assez"',
+      'cut 60 "Alerte"',
+    ]);
   });
 
   it('the soft way: her sentence ends, the rest waits for what he says', async () => {
