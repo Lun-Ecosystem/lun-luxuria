@@ -57,6 +57,7 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
   PowerShell, une commande par ligne (chaque bloc retire ses variables, qui resteraient sinon dans la session) :
 
   ```powershell
+  Remove-Item Env:CHAINE_VOIX -ErrorAction SilentlyContinue
   $env:CHAINE_REPETITIONS = '30'
   npm run chaine
   Remove-Item Env:CHAINE_REPETITIONS

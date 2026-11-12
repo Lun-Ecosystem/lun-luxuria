@@ -275,7 +275,7 @@ describe('voixDe', () => {
 describe('synthPiper', () => {
   afterEach(() => vi.useRealTimers());
 
-  it('rejects past its limit once the killed child has closed, not before: its WAV is removed after it', async () => {
+  it('rejects past its limit once the killed child has exited, not before', async () => {
     vi.useFakeTimers();
     const enfant = Object.assign(new EventEmitter(), {
       stdin: new PassThrough(),
@@ -293,7 +293,7 @@ describe('synthPiper', () => {
     // Longer than a removal of a file that is not there.
     await new Promise((r) => setTimeout(r, 100));
     expect(fini).not.toHaveBeenCalled();
-    enfant.emit('close', null);
+    enfant.emit('exit', null);
     await expect(dit).rejects.toThrow('rien après 30 s, arrêté');
   });
 });

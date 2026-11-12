@@ -280,7 +280,8 @@ function lancer(
     let err = '';
     let ecriture: Error | undefined;
     let arrete = false;
-    // Rejected at `close`, once the child is gone: until then, Windows refuses to remove the file it writes.
+    // Rejected at `exit`, once the child is dead: until then, Windows refuses to remove the file it writes. Not at
+    // `close`, which a grandchild holding the pipes would delay.
     const limite = setTimeout(() => {
       arrete = true;
       p.kill();
@@ -293,10 +294,13 @@ function lancer(
       clearTimeout(limite);
       ko(new Error(`${quoi} : ${e.message}`));
     });
+    p.on('exit', () => {
+      if (arrete) ko(new Error(`${quoi} : rien après ${LIMITE_MS / 1000} s, arrêté`));
+    });
     p.on('close', (code) => {
       clearTimeout(limite);
-      if (arrete) ko(new Error(`${quoi} : rien après ${LIMITE_MS / 1000} s, arrêté`));
-      else if (code !== 0) ko(new Error(`${quoi} : ${err.trim() || `code ${code}`}`));
+      if (arrete) return;
+      if (code !== 0) ko(new Error(`${quoi} : ${err.trim() || `code ${code}`}`));
       else if (ecriture) ko(new Error(`${quoi} : ${ecriture.message}`));
       else ok(out);
     });
