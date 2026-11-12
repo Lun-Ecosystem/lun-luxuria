@@ -351,12 +351,12 @@ describe('the report of the rates', () => {
       '',
       "La course (hortense) : zéro échec sur 3 parties met l'échec sous 100 %, à 95 % (règle de trois).",
       '',
-      // A known defect that changed counts, as in the report of the scenarios.
-      'Échecs par espèce : en_trop 2, connu_change 1, absent 1.',
+      // A known defect counts nowhere here, whatever its state, as in a game held: its own table says it.
+      'Échecs par espèce : en_trop 2.',
       '',
-      'Échecs par source : ecoute 1, voix 2, transcription 1.',
+      'Échecs par source : ecoute 1, transcription 1.',
       '',
-      'Échecs par voix : hortense 3, julie 1.',
+      'Échecs par voix : hortense 1, julie 1.',
       '',
       'Demandes sans réponse : transcription 1.',
       '',

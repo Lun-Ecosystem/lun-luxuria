@@ -173,8 +173,9 @@ export function releveTaux(lignes: readonly Resultat[]): string {
   const de = (nom: string, vx: string) => jouees.filter((r) => r.scenario === nom && r.voix === vx);
   const groupes = (nom: string) =>
     voix.map((vx) => [vx, de(nom, vx)] as const).filter(([, rs]) => rs.length > 0);
+  // As in a game held: a known defect counts nowhere, whatever its state; its own table says it.
   const echecs = jouees.flatMap((r) =>
-    r.verdicts.filter((v) => !passe(v)).map((v) => ({ ...v, voix: r.voix })),
+    r.verdicts.filter((v) => !v.connu && !passe(v)).map((v) => ({ ...v, voix: r.voix })),
   );
   const transcription = unique(lignes.map((r) => r.transcription)).join(', ');
   const duree = jouees.reduce((t, r) => t + (r.dureeMs ?? 0), 0);
@@ -198,8 +199,7 @@ export function releveTaux(lignes: readonly Resultat[]): string {
     );
   }
   out.push(
-    // A known defect that holds now has no species: it failed by changing.
-    `Échecs par espèce : ${parCle(echecs, (v) => v.espece ?? 'connu_change')}.`,
+    `Échecs par espèce : ${parCle(echecs, (v) => v.espece ?? v.etat)}.`,
     '',
     `Échecs par source : ${parCle(echecs, (v) => v.source ?? v.mecanisme)}.`,
     '',
