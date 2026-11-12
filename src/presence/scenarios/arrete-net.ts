@@ -24,7 +24,7 @@ export default {
   ],
   modele: {
     reponses: [
-      { si: 'arrete', phrases: ["D'accord."] },
+      { si: 'arret', phrases: ["D'accord."] },
       {
         phrases: [
           'Demain matin il fera frais, puis le soleil reviendra vers midi avec un peu de vent.',

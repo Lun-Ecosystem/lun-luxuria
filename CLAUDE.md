@@ -51,6 +51,27 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
   touché) et rejoue les scénarios : chaque mutation doit faire échouer son maillon. Un motif changé : la table suit.
 - `npm run chaine` joue les scénarios sur la page construite dans Chrome, le service de voix et le serveur de la chaîne
   (`npm run chaine` de Lun'Anima, lancé avant), en temps réel ; il écrit `releve-chaine.md` et les
-  `deroule-chaine-<nom>.jsonl` dans `BANC_DIR/chaine`. Sur le poste seulement, jamais en CI.
+  `deroule-chaine-<nom>.jsonl` dans `BANC_DIR/chaine`. Sur le poste seulement, jamais en CI. Son
+  `--reporter=default` est voulu : sous un agent, Vitest prend `minimal`, qui tait la ligne de résumé.
+- La course, chaque scénario trente fois avec Hortense, puis la robustesse, deux fois par voix, jamais la sienne ; sous
+  PowerShell, une commande par ligne (chaque bloc retire ses variables, qui resteraient sinon dans la session) :
+
+  ```powershell
+  Remove-Item Env:CHAINE_VOIX -ErrorAction SilentlyContinue
+  $env:CHAINE_REPETITIONS = '30'
+  npm run chaine
+  Remove-Item Env:CHAINE_REPETITIONS
+  ```
+
+  ```powershell
+  $env:CHAINE_VOIX = 'julie,paul,piper:<piper.exe>|<fr_FR-upmc-medium.onnx>#jessica,piper:<piper.exe>|<fr_FR-upmc-medium.onnx>#pierre'
+  $env:CHAINE_REPETITIONS = '2'
+  npm run chaine
+  Remove-Item Env:CHAINE_REPETITIONS
+  Remove-Item Env:CHAINE_VOIX
+  ```
+
+  Chaque partie ajoute sa ligne à `resultats.jsonl` ; la suite écrit `releve-taux.md` et des `deroule-chaine-<nom>-<k>.jsonl`.
+  Seules les parties d'Hortense la font échouer, et l'erreur du joueur dans toute voix (`echoue`, `src/presence/taux.ts`).
 - Le déroulé des derniers tours s'exporte par un bouton des réglages avancés de l'écoute, dans un onglet de navigateur
   seulement.

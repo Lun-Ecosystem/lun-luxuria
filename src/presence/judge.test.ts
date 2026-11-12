@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TraceEvent } from '../trace.ts';
 import { juger, passe, type Verdict } from './judge.ts';
-import { releve, releveChaine } from './releve.ts';
+import { releve, releveChaine, type Jouee } from './releve.ts';
 import type { Apres, Attendu, BancEvent, Partie, Scenario } from './scenario.ts';
 
 // One turn, written by hand: the person speaks from 1000 to 2000, the reply 101 sounds at 3424.
@@ -484,6 +484,180 @@ describe('judging a game of the chain', () => {
       expect(j(appel(1), 'exact').source).toBe('voix');
     });
   });
+
+  // The three games task 0 lost (lun-docs plan « Les données et les taux »), in small: the instants of their trace.
+  describe('a speech lost before the false model', () => {
+    const demande = 'Raconte-moi la journée de demain';
+    // `non-court`: « Non » on the long reply's second sentence; the listening closes it as a noise.
+    const nonCourt: Partial<Scenario> = {
+      mecanismes,
+      personne: [
+        { a: 320, dit: demande, duree: 1280 },
+        { a: 5617, dit: 'Non', duree: 300 },
+      ],
+      modele: { reponses: [{ si: 'non', phrases: ["D'accord."] }, { phrases: ['Demain, du soleil.'] }] },
+    };
+    const pourDeBon: Attendu = {
+      ...commun,
+      niveau: 'tous',
+      id: 'pour-de-bon',
+      mecanisme: 'voix',
+      evenement: 'joue',
+      ou: { reponse: 1 },
+      depuis: { parole: 2, bord: 'debut' },
+      absent: true,
+    };
+    const nonPerdu: Partie = {
+      format: 2,
+      fin: 11067,
+      page: [
+        { at: 408, name: 'voix', phrase: 1, son: 407 },
+        { at: 2749, name: 'fin', phrase: 1, dernier_son: 2036 },
+        { at: 2749, name: 'essai', phrase: 1, essai: 1, final: true },
+        { at: 2763, name: 'numero', phrase: 1, essai: 1, reponse: 24 },
+        { at: 5718, name: 'voix', phrase: 2, son: 5717 },
+        { at: 6618, name: 'bruit', phrase: 2, son: 6617 },
+      ],
+      banc: [
+        { de: 'banc', at: 320, name: 'parole', etape: 'debut', parole: 1 },
+        { de: 'banc', at: 1997, name: 'parole', etape: 'fin', parole: 1 },
+        { de: 'banc', at: 2763, name: 'modele_appele', reponse: 1, texte: demande },
+        { de: 'banc', at: 2763, name: 'envoi_recu', texte: demande, reponse: 24 },
+        { de: 'banc', at: 3478, name: 'joue', reponse: 24, phrase: 1, texte: 'Demain,' },
+        { de: 'banc', at: 5617, name: 'parole', etape: 'debut', parole: 2 },
+        { de: 'banc', at: 5887, name: 'parole', etape: 'fin', parole: 2 },
+        { de: 'banc', at: 8468, name: 'joue', reponse: 24, phrase: 2, texte: 'du soleil.' },
+      ],
+    };
+
+    // `oui-puis-reparler`: the « Oui » lost, so no reply 1, and the speech anchored on it never sounds.
+    const ouiPuisReparler: Partial<Scenario> = {
+      mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'retenue', 'coupure', 'serveur', 'voix'],
+      personne: [
+        { a: 320, dit: 'Oui', duree: 448 },
+        { apres: { envoi: 1, ms: 458 }, dit: 'Attends, en fait je préfère demain', duree: 1600 },
+      ],
+      modele: {
+        reponses: [
+          { si: 'demain', phrases: ['Très bien.'] },
+          { si: 'oui', phrases: ['Tu as 5 secondes.'] },
+        ],
+      },
+    };
+    const surLaReponse1: Attendu[] = [
+      {
+        ...commun,
+        niveau: 'tous',
+        id: 'oubliee',
+        mecanisme: 'retenue',
+        evenement: 'oubliee',
+        ou: { reponse: 1 },
+      },
+      {
+        ...commun,
+        niveau: 'tous',
+        id: 'coupure-vide',
+        mecanisme: 'coupure',
+        evenement: 'coupure_recue',
+        ou: { reponse: 1, valeurs: { entendu: '' } },
+      },
+      {
+        ...commun,
+        niveau: 'tous',
+        id: 'oui-muet',
+        mecanisme: 'voix',
+        evenement: 'joue',
+        ou: { reponse: 1 },
+        absent: true,
+      },
+    ];
+    const ouiPerdu = (page: TraceEvent[]): Partie => ({
+      format: 2,
+      fin: 6000,
+      page: [{ at: 413, name: 'voix', phrase: 1, son: 411 }, ...page],
+      banc: [
+        { de: 'banc', at: 320, name: 'parole', etape: 'debut', parole: 1 },
+        { de: 'banc', at: 542, name: 'parole', etape: 'fin', parole: 1 },
+        { de: 'banc', at: 6000, name: 'parole_sautee', parole: 2 },
+      ],
+    });
+    // The listening judged it a noise: no try, no transcription (Julie, `v-julie-1`).
+    const ouiBruit = ouiPerdu([{ at: 1283, name: 'bruit', phrase: 1, son: 1281 }]);
+    // Transcribed without a letter: the filter's noise, no reply (pierre, `v-pierre-1`).
+    const ouiSansLettre = ouiPerdu([
+      { at: 848, name: 'pause', phrase: 1, son: 846 },
+      { at: 848, name: 'essai', phrase: 1, essai: 1, final: false },
+      { at: 1385, name: 'fin', phrase: 1, dernier_son: 685, son: 1385 },
+      { at: 1386, name: 'confirmee', phrase: 1, essai: 1 },
+      { at: 1842, name: 'transcrite', phrase: 1, essai: 1, longueur: 1 },
+      { at: 1842, name: 'verdict', phrase: 1, essai: 1, resultat: 'bruit' },
+      { at: 1842, name: 'sans_reponse', phrase: 1, essai: 1 },
+    ]);
+    const sources = (
+      s: Partial<Scenario>,
+      attendus: Attendu[],
+      p: Partie,
+      lieu: 'exact' | 'chaine' = 'chaine',
+    ) => juger(scenario(attendus, s), p, lieu).map((v) => v.source);
+
+    it('names the listening for a « Non » it judged a noise, not the link where the failure shows', () => {
+      expect(juger(scenario([pourDeBon], nonCourt), nonPerdu, 'chaine')[0]).toMatchObject({
+        espece: 'en_trop',
+        source: 'ecoute',
+        propre: 'voix',
+      });
+    });
+
+    it('names the listening for a « Oui » it judged a noise, for the expectations never played', () => {
+      expect(sources(ouiPuisReparler, surLaReponse1, ouiBruit)).toEqual(['ecoute', 'ecoute', 'ecoute']);
+    });
+
+    it('names the transcription for a « Oui » transcribed without a letter', () => {
+      expect(sources(ouiPuisReparler, surLaReponse1, ouiSansLettre)).toEqual([
+        'transcription',
+        'transcription',
+        'transcription',
+      ]);
+    });
+
+    it('names nothing for a cough judged a noise, even where a reply without `si` would answer it', () => {
+      const toux = {
+        ...nonCourt,
+        personne: [nonCourt.personne![0]!, { a: 5617, dit: '(toux)', duree: 300 }],
+      };
+      expect(sources(toux, [pourDeBon], nonPerdu)).toEqual(['voix']);
+    });
+
+    it('keeps the sources of today at the exact level', () => {
+      expect(sources(nonCourt, [pourDeBon], nonPerdu, 'exact')).toEqual(['voix']);
+      expect(sources(ouiPuisReparler, surLaReponse1, ouiBruit, 'exact')).toEqual([
+        'serveur',
+        'serveur',
+        'serveur',
+      ]);
+      expect(sources(ouiPuisReparler, surLaReponse1, ouiSansLettre, 'exact')).toEqual([
+        'serveur',
+        'serveur',
+        'serveur',
+      ]);
+    });
+  });
+
+  it('passes a known defect on its species alone in the chain, on its value too at the exact level', () => {
+    const hors: Attendu = { ...tenue, niveau: 'tous', entre: [0, 300] };
+    const connus = [
+      { issue: 'lun-luxuria#63', attendu: 'tenue', espece: 'hors_bornes' as const, trouve: 384 },
+    ];
+    // The same failure, found at 400 and not at 384.
+    expect(juger(scenario([hors], { connus }), partie, 'chaine')[0]!.connu).toEqual({
+      issue: 'lun-luxuria#63',
+      conforme: true,
+    });
+    expect(juger(scenario([hors], { connus }), partie)[0]!.connu!.conforme).toBe(false);
+    // Another species is no defect as known, in the chain either.
+    const absent: Attendu = { ...commun, niveau: 'tous', id: 'tenue', evenement: 'coupee' };
+    expect(juger(scenario([absent], { connus }), partie, 'chaine')[0]!.connu!.conforme).toBe(false);
+  });
 });
 
 describe('the report', () => {
@@ -632,6 +806,8 @@ describe('the report', () => {
         exacte: partie,
         transcription: 'faster:tiny',
         synthese: 'piper',
+        voix: 'julie',
+        sons: [{ source: 'cache:julie', duree: 1635 }],
         latenceSortieMs: 52,
         temoin,
       },
@@ -646,7 +822,7 @@ describe('the report', () => {
       '',
       'Échecs par source : aucun.',
       '',
-      '## a-la-main',
+      '## a-la-main (julie)',
       '',
       '| Attendu | État | Espèce | Source | Trouvé | Borne |',
       '|---|---|---|---|---|---|',
@@ -662,9 +838,9 @@ describe('the report', () => {
       '',
       'Transcription : faster:tiny. Sa voix : piper. Latence de sortie annoncée : 52 ms.',
       '',
-      '| Parole | Dit | Entendu | Confiance | Capture |',
-      '|---|---|---|---|---|',
-      '| 1 | Le jardin est mouillé | Le jardin est mouille | 0.7 | 25 |',
+      '| Parole | Dit | Son | Entendu | Confiance | Capture |',
+      '|---|---|---|---|---|---|',
+      '| 1 | Le jardin est mouillé | cache:julie | Le jardin est mouille | 0.7 | 25 |',
       '',
       '| Tour | Délai | Exact | Chaîne | Écart | Maillon |',
       '|---|---|---|---|---|---|',
@@ -714,6 +890,8 @@ describe('the report', () => {
           exacte: partie,
           transcription: 'faster:tiny',
           synthese: 'piper',
+          voix: 'hortense',
+          sons: [],
         },
       ])
         .split('\n')
@@ -724,5 +902,25 @@ describe('the report', () => {
     );
     // What was said chose none either: the scenario's.
     expect(ligne('film')).toMatch(/source : scenario\.$/);
+  });
+
+  it('of the chain: each scenario titled with its voice, unless Hortense is the only one', () => {
+    const jouee = (voix: string): Jouee => ({
+      scenario: scenario([]),
+      verdicts: [v({})],
+      chaine: partie,
+      exacte: partie,
+      transcription: 'faster:tiny',
+      synthese: 'piper',
+      voix,
+      sons: [],
+    });
+    const titres = (voix: string[]) =>
+      releveChaine(voix.map(jouee))
+        .split('\n')
+        .filter((l) => l.startsWith('## '));
+    expect(titres(['hortense', 'hortense'])).toEqual(['## a-la-main', '## a-la-main']);
+    expect(titres(['hortense', 'julie'])).toEqual(['## a-la-main (hortense)', '## a-la-main (julie)']);
+    expect(titres(['julie'])).toEqual(['## a-la-main (julie)']);
   });
 });

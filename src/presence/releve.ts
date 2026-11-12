@@ -10,9 +10,9 @@ export interface Juge {
   annexe?: string[];
 }
 
-const compte = (n: number, un: string, plusieurs: string) => `${n} ${n > 1 ? plusieurs : un}`;
+export const compte = (n: number, un: string, plusieurs: string) => `${n} ${n > 1 ? plusieurs : un}`;
 
-const parCle = (vs: Verdict[], cle: (v: Verdict) => string) => {
+export const parCle = <T>(vs: readonly T[], cle: (v: T) => string): string => {
   const n = new Map<string, number>();
   for (const v of vs) n.set(cle(v), (n.get(cle(v)) ?? 0) + 1);
   return n.size === 0 ? 'aucun' : [...n].map(([k, c]) => `${k} ${c}`).join(', ');
@@ -24,10 +24,10 @@ const etat = (v: Verdict) =>
   v.connu ? `${v.connu.conforme ? 'connue' : `${v.etat}, connue ailleurs`} (${v.connu.issue})` : v.etat;
 
 // The link it names on its own, when the game's first failure is named instead: a second defect is not hidden.
-const source = (v: Verdict) =>
+export const source = (v: Pick<Verdict, 'source' | 'propre'>) =>
   v.propre && v.propre !== v.source ? `${v.source} (propre : ${v.propre})` : v.source;
 
-const table = (tete: string[], lignes: unknown[][]) => [
+export const table = (tete: string[], lignes: unknown[][]): string[] => [
   `| ${tete.join(' | ')} |`,
   `|${tete.map(() => '---|').join('')}`,
   ...lignes.map((l) => `| ${l.map(cellule).join(' | ')} |`),
@@ -92,8 +92,12 @@ export interface Jouee {
   exacte: Partie;
   /** The transcription model the voice service runs (`faster:tiny`). */
   transcription: string;
-  /** Her voice: Piper by the service, or the false synthesis the player serves. */
-  synthese: 'piper' | 'fausse';
+  /** Her voice: the service's, without its path (`piper:fr_FR-siwis-medium`), or `fausse`, the player's. */
+  synthese: string;
+  /** The person's: `hortense`, `julie`, `piper:fr_FR-upmc-medium#pierre`… */
+  voix: string;
+  /** In the order of `personne`: where each speech's sound comes from (`pose:non.wav`, `cache:julie`…), its length. */
+  sons: readonly { source: string; duree: number }[];
   /** What `getOutputTimestamp` announces, once a game: never added to an instant (« Les deux horloges »). */
   latenceSortieMs?: number;
   /** The same scenario through Chromium's false device, re-timed on its first frame of sound. */
@@ -112,7 +116,7 @@ const MAILLON: Partial<Record<DelayName, Mecanisme>> = {
   premiere_phrase: 'serveur',
   arret_coupure: 'suspension',
 };
-const DELAIS: DelayName[] = [
+export const DELAIS: DelayName[] = [
   'attente_fin',
   'transcription',
   'file_serveur',
@@ -128,13 +132,21 @@ const num = (v: TraceValue | undefined) => (typeof v === 'number' ? v : undefine
 const ecart = (a?: number, b?: number) => (a === undefined || b === undefined ? undefined : b - a);
 const son = (e: TraceEvent) => num(e['son']) ?? e.at;
 
-/** The report of the chain: the scenarios' report, each with what the chain measured, then those not played. */
+/**
+ * The report of the chain: the scenarios' report, each with what the chain measured, then those not played. Each
+ * title says the person's voice, unless it is Hortense's alone.
+ */
 export function releveChaine(parties: PartieChaine[]): string {
   const jouees = parties.filter((p): p is Jouee => 'chaine' in p);
   const manquent = parties.filter((p) => 'raison' in p);
+  const seule = jouees.every((p) => p.voix === 'hortense');
   const out = [
     releve(
-      jouees.map((p) => ({ nom: p.scenario.nom, verdicts: p.verdicts, annexe: annexe(p) })),
+      jouees.map((p) => ({
+        nom: seule ? p.scenario.nom : `${p.scenario.nom} (${p.voix})`,
+        verdicts: p.verdicts,
+        annexe: annexe(p),
+      })),
       'Relevé de la chaîne',
     ),
   ];
@@ -151,31 +163,57 @@ export function releveChaine(parties: PartieChaine[]): string {
   return out.join('\n');
 }
 
-function annexe(p: Jouee): string[] {
-  const { scenario: s, chaine: c } = p;
+/** The sentence of the trace a speech sounds in: the first `voix` from its start (see the shortcut in `annexe`). */
+const voixDe = (c: Partie, i: number) => {
+  const d = c.banc.find((e) => e.name === 'parole' && e['etape'] === 'debut' && e['parole'] === i + 1);
+  return d && c.page.find((e) => e.name === 'voix' && son(e) >= d.at);
+};
+
+/** The last transcription of the sentence the n-th speech (from 0) sounds in: what was heard of it. */
+export const transcrite = (c: Partie, i: number): TraceEvent | undefined => {
+  const voix = voixDe(c, i);
+  return voix && c.page.filter((e) => e.name === 'transcrite' && e.phrase === voix.phrase).at(-1);
+};
+
+/**
+ * Each request the false model had no reply for, with the text received and its source, as `juger` names it: the
+ * transcription when what was said would have chosen a reply, else the scenario. One rule, for every report.
+ */
+export function sansReponse(
+  s: Scenario,
+  c: Partie,
+): { sorte: string; texte: string; extrait: string; source: 'transcription' | 'scenario' }[] {
   const banc = (name: string) => c.banc.filter((e) => e.name === name);
-  const debuts = banc('parole').filter((e) => e['etape'] === 'debut');
-  const voixDe = (i: number) => {
-    const d = debuts.find((e) => e['parole'] === i + 1);
-    return d && c.page.find((e) => e.name === 'voix' && son(e) >= d.at);
-  };
-  // A request refused fails the game (`chaine.test.ts`) even with every verdict held: said here, its source as `juger`.
   const appels = c.banc.filter(
     (e) => e.name === 'modele_appele' || (e.name === 'modele_inattendu' && e['sorte'] === 'stream'),
   );
   const envois = rattacher(appels, banc('envoi_recu'));
-  const refus = banc('modele_inattendu').map((e) => {
+  return banc('modele_inattendu').map((e) => {
     const envoi = envois[appels.indexOf(e)];
     const phrase = envoi && c.page.find((x) => x.name === 'numero' && x.reponse === envoi.reponse)?.phrase;
-    const dits = s.personne.filter((_, i) => phrase !== undefined && voixDe(i)?.phrase === phrase);
+    const dits = s.personne.filter((_, i) => phrase !== undefined && voixDe(c, i)?.phrase === phrase);
     const source =
       dits.length && choisir(s.modele?.reponses ?? [], dits.map((x) => x.dit).join(' ')) >= 0
         ? 'transcription'
         : 'scenario';
-    return `Échec : demande au modèle sans réponse prévue (${String(e['sorte'])}), texte reçu « ${String(
-      envoi?.['texte'] ?? '',
-    )} », extrait « ${String(e['extrait'] ?? '')} », source : ${source}.`;
+    return {
+      sorte: String(e['sorte']),
+      texte: String(envoi?.['texte'] ?? ''),
+      extrait: String(e['extrait'] ?? ''),
+      source,
+    };
   });
+}
+
+function annexe(p: Jouee): string[] {
+  const { scenario: s, chaine: c } = p;
+  const banc = (name: string) => c.banc.filter((e) => e.name === name);
+  const debuts = banc('parole').filter((e) => e['etape'] === 'debut');
+  // A request refused fails the game (`chaine.test.ts`) even with every verdict held: said here, its source as `juger`.
+  const refus = sansReponse(s, c).map(
+    (r) =>
+      `Échec : demande au modèle sans réponse prévue (${r.sorte}), texte reçu « ${r.texte} », extrait « ${r.extrait} », source : ${r.source}.`,
+  );
   const out = [
     ...refus.flatMap((l) => [l, '']),
     '### La chaîne',
@@ -189,13 +227,13 @@ function annexe(p: Jouee): string[] {
   // shortcut: a speech is the sentence of the first `voix` from its start; one that goes on an open sentence shows none.
   out.push(
     ...table(
-      ['Parole', 'Dit', 'Entendu', 'Confiance', 'Capture'],
+      ['Parole', 'Dit', 'Son', 'Entendu', 'Confiance', 'Capture'],
       s.personne.map((x, i) => {
         const d = debuts.find((e) => e['parole'] === i + 1);
-        if (!d) return [i + 1, x.dit, '(sautée)'];
-        const voix = voixDe(i);
-        const t = voix && c.page.filter((e) => e.name === 'transcrite' && e.phrase === voix.phrase).at(-1);
-        return [i + 1, x.dit, t?.['texte'], t?.['confiance'], voix && son(voix) - d.at];
+        const source = p.sons[i]?.source;
+        if (!d) return [i + 1, x.dit, source, '(sautée)'];
+        const [voix, t] = [voixDe(c, i), transcrite(c, i)];
+        return [i + 1, x.dit, source, t?.['texte'], t?.['confiance'], voix && son(voix) - d.at];
       }),
     ),
     '',
@@ -258,7 +296,7 @@ function annexe(p: Jouee): string[] {
     ),
     ...(s.bruits ?? []).map((_, i) => `bruits[${i + 1}].voix`),
     ...(s.modeleMs !== undefined ? ['modeleMs'] : []),
-    ...(p.synthese === 'piper'
+    ...(p.synthese !== 'fausse'
       ? (['syntheseMs', 'msParCaractere', 'echoue'] as const)
           .filter((k) => s.voix?.[k] !== undefined)
           .map((k) => `voix.${k}`)

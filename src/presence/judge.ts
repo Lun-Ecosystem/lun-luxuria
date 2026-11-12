@@ -1,4 +1,4 @@
-import { delays, type TraceEvent, type TraceValue } from '../trace.ts';
+import { delays, type TraceEvent, type TraceName, type TraceValue } from '../trace.ts';
 import {
   charger,
   choisir,
@@ -49,7 +49,7 @@ export interface Verdict {
  * The verdict lets the CI pass: held and not a known defect, or a known defect as it is known, or a measure out of
  * its level.
  */
-export const passe = (v: Verdict): boolean =>
+export const passe = (v: Pick<Verdict, 'etat' | 'connu' | 'horsNiveau'>): boolean =>
   v.horsNiveau === true || (v.connu ? v.connu.conforme : v.etat === 'tenue');
 
 type Ligne = TraceEvent | BancEvent;
@@ -82,9 +82,12 @@ const ligne = (e: Ligne) => {
  * failures (a known defect as known left out), when it is ranked before its own. One defect, one link named: the
  * first in the chain that failed, not each consequence downstream of it.
  *
- * In the chain (`lieu`), two more: a speech whose anchor never came names the link of its anchor (`voix` for a
- * sound, `serveur` for a text received); and when the false model chose another reply on the text it received than
- * on what the person said (none, a request it refused, counts as a choice), the transcription is the first link of every failure whose window reaches that call.
+ * In the chain (`lieu`), three more: a speech whose anchor never came names the link of its anchor (`voix` for a
+ * sound, `serveur` for a text received); the first speech lost before the false model (`perdue`: the listening judged
+ * it a noise, the filter judged its transcription one, or the false model chose another reply on the text it received
+ * than on what the person said, none, a request it refused, counting as a choice) names its link, the listening or
+ * the transcription, as the first of every failure whose window reaches that instant; and a known defect is as known
+ * on its species alone.
  */
 export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdict[] {
   const base = (a: Attendu) => ({
@@ -153,13 +156,38 @@ export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdic
     return {};
   };
 
+  const reponses = s.modele?.reponses ?? [];
+  /**
+   * The first speech lost before the false model, in the order of the game: one said (not a cough in brackets) whose
+   * words choose a reply, and whose sentence the listening closed as a noise without a try (`ecoute`), or whose
+   * transcription the filter judged a noise that nothing answered (`transcription`); or the first call `divergence`
+   * finds (`transcription`).
+   */
+  const perdue = (): { at: number; source: Mecanisme } | undefined => {
+    const appel = divergence();
+    const pertes: { at: number; source: Mecanisme }[] =
+      appel === undefined ? [] : [{ at: appel, source: 'transcription' }];
+    for (const [i, p] of s.personne.entries()) {
+      const phrase = resoudre({ parole: i + 1 })?.phrase;
+      if (phrase === undefined || /^\(.*\)$/.test(p.dit.trim()) || choisir(reponses, p.dit) < 0) continue;
+      const de = (name: TraceName) => partie.page.filter((e) => e.phrase === phrase && e.name === name);
+      const bruit = de('bruit')[0];
+      const filtre = de('verdict').find(
+        (v) =>
+          v['resultat'] === 'bruit' && de('sans_reponse').some((x) => x.essai === v.essai && x.at >= v.at),
+      );
+      if (bruit && de('essai').length === 0) pertes.push({ at: bruit.at, source: 'ecoute' });
+      else if (filtre) pertes.push({ at: filtre.at, source: 'transcription' });
+    }
+    return pertes.sort((x, y) => x.at - y.at)[0];
+  };
+
   /**
    * The first call where the false model chose, on the text it received, another reply than its rule chooses on
    * what the person said (the speeches of the sentence sent, joined as the false transcription joins them). A text
    * heard otherwise that changes nothing (« demand » for « demain ») names nothing.
    */
   const divergence = (): number | undefined => {
-    const reponses = s.modele?.reponses ?? [];
     // A request refused chose no reply: -1, as `choisir` says it.
     const appels = partie.banc.filter(
       (e) => e.name === 'modele_appele' || (e.name === 'modele_inattendu' && e['sorte'] === 'stream'),
@@ -311,10 +339,11 @@ export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdic
       v.extrait = fenetre(lo - 500, hi + 500).map(ligne);
     } else if (cause) propres.set(a.id, cause);
     const c = s.connus?.find((x) => x.attendu === a.id);
+    // In the chain a value is never the same twice: the species alone says the defect is the one known.
     if (c)
       v.connu = {
         issue: c.issue,
-        conforme: v.etat !== 'tenue' && v.espece === c.espece && v.trouve === c.trouve,
+        conforme: v.etat !== 'tenue' && v.espece === c.espece && (lieu === 'chaine' || v.trouve === c.trouve),
       };
     verdicts.set(a.id, v);
     return v;
@@ -331,16 +360,16 @@ export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdic
     .filter((v) => v.etat !== 'tenue' && !v.connu?.conforme && !v.horsNiveau)
     .map((v) => propre(v.id))
     .sort((x, y) => RANG[x] - RANG[y])[0];
-  const transcrit = lieu === 'chaine' ? divergence() : undefined;
+  const perte = lieu === 'chaine' ? perdue() : undefined;
   for (const v of tous) {
     if (v.etat === 'tenue') continue;
     const own = propre(v.id);
     v.propre = own;
     const amont =
-      transcrit !== undefined &&
-      finFenetre.get(v.id)! >= transcrit &&
-      (premier === undefined || RANG[premier] > RANG.transcription)
-        ? 'transcription'
+      perte !== undefined &&
+      finFenetre.get(v.id)! >= perte.at &&
+      (premier === undefined || RANG[premier] > RANG[perte.source])
+        ? perte.source
         : premier;
     v.source = amont !== undefined && RANG[amont] < RANG[own] ? amont : own;
   }

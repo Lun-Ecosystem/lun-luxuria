@@ -11,4 +11,6 @@ graphify-out/
 deroule*.jsonl
 releve-scenarios.md
 releve-chaine.md
+releve-taux.md
+resultats.jsonl
 temoin-*.wav

@@ -1,17 +1,28 @@
 // @vitest-environment node
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { cpus, hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Browser, Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULTS } from '../settings.ts';
 import type { TraceEvent, TraceValue } from '../trace.ts';
-import { fichiers, planDePartie, sonsDe, synthSapi, temoin, type Sons } from './chaine/sons.ts';
+import {
+  fichiers,
+  planDePartie,
+  sonsDe,
+  temoin,
+  voixDe,
+  type SonPret,
+  type Sons,
+  type Voix,
+} from './chaine/sons.ts';
 import type { Banc, Plan } from './chaine/sonde.ts';
-import { juger, passe } from './judge.ts';
+import { juger, passe, type Verdict } from './judge.ts';
 import { jouer } from './player.ts';
 import { releveChaine, type Jouee, type PartieChaine } from './releve.ts';
+import { echoue, releveTaux, resultat, type Resultat } from './taux.ts';
 import {
   ancre,
   charger,
@@ -127,6 +138,62 @@ function pourquoiPas(s: Scenario): string | undefined {
     return (err as Error).message;
   }
   return undefined;
+}
+
+/** A game of the launch: its round `r`, and `k`, the count of the scenario's games over the launch, both from 1. */
+interface Jeu<S, V> {
+  r: number;
+  s: S;
+  v: V;
+  k: number;
+}
+
+/** The games of a launch, ordered as Pipecat's: each round plays each voice, then each scenario, once. */
+function grille<S, V>(scenarios: readonly S[], voix: readonly V[], n: number): Jeu<S, V>[] {
+  const jeux: Jeu<S, V>[] = [];
+  for (let r = 1; r <= n; r++)
+    voix.forEach((v, i) =>
+      scenarios.forEach((s) => jeux.push({ r, s, v, k: (r - 1) * voix.length + i + 1 })),
+    );
+  return jeux;
+}
+
+/** The suite of today: one game per scenario, hers. Any other is repeated: lines, rates, no `expect` per game. */
+const uneParScenario = (n: number, voix: readonly string[]) =>
+  n === 1 && voix.length === 1 && voix[0] === 'hortense';
+
+/** A game's test, its name in `partie.json` (the server's journal carries it), and its trace's file. */
+const nomsDe = (nom: string, k: number, voix: string, une: boolean) => ({
+  test: `${nom} #${k} ${voix}`,
+  partie: `${nom}#${k}`,
+  deroule: `deroule-chaine-${une ? nom : `${nom}-${k}`}.jsonl`,
+});
+
+/** Her voice as the report names it: `CHAINE_TTS` without its path nor `.onnx` (`piper:fr_FR-siwis-medium`). */
+const sansChemin = (tts: string) => tts.replace(/:.*[\\/]/, ':').replace(/\.onnx$/i, '');
+
+/**
+ * The suite's last line: each expectation `tous` under 100 % in a voice, a known defect left out as in a game held,
+ * then those only the transcription brought under.
+ */
+function resume(lignes: readonly Resultat[]): string {
+  const n = new Map<string, { tenues: number; jouees: number; transcription: boolean }>();
+  for (const r of lignes)
+    for (const v of r.verdicts.filter((x) => x.niveau === 'tous' && !x.connu)) {
+      const cle = `${r.scenario}/${v.id} (${r.voix})`;
+      const x = n.get(cle) ?? { tenues: 0, jouees: 0, transcription: true };
+      x.jouees++;
+      if (v.etat === 'tenue') x.tenues++;
+      else x.transcription &&= v.source === 'transcription';
+      n.set(cle, x);
+    }
+  const sous = [...n].filter(([, x]) => x.tenues < x.jouees);
+  if (!sous.length) return 'Chaque attente tous tient à 100 %.';
+  const par = sous.filter(([, x]) => x.transcription).map(([cle]) => cle);
+  return (
+    `Sous 100 % : ${sous.map(([cle, x]) => `${cle} ${x.tenues}/${x.jouees}`).join(', ')}. ` +
+    `Par la transcription : ${par.join(', ') || 'aucune'}.`
+  );
 }
 
 const scenarios = import.meta.glob<Scenario>('./scenarios/*.ts', { eager: true, import: 'default' });
@@ -286,6 +353,95 @@ describe('le joueur réel, sans navigateur', () => {
       ['phrase-ecartee', 'petit mode, la fenêtre seule (session.svelte.ts:69)'],
     ]);
   });
+
+  it('joue chaque tour voix par voix, puis scénario par scénario, k compté par scénario sur le lancement', () => {
+    expect(grille(['a', 'b'], ['julie', 'paul'], 2).map((j) => [j.r, j.s, j.v, j.k])).toEqual([
+      [1, 'a', 'julie', 1],
+      [1, 'b', 'julie', 1],
+      [1, 'a', 'paul', 2],
+      [1, 'b', 'paul', 2],
+      [2, 'a', 'julie', 3],
+      [2, 'b', 'julie', 3],
+      [2, 'a', 'paul', 4],
+      [2, 'b', 'paul', 4],
+    ]);
+  });
+
+  it('nomme chaque partie, son test et son déroulé, suffixé de k dans une suite répétée', () => {
+    expect(nomsDe('non-court', 3, 'piper:fr_FR-upmc-medium#pierre', false)).toEqual({
+      test: 'non-court #3 piper:fr_FR-upmc-medium#pierre',
+      partie: 'non-court#3',
+      deroule: 'deroule-chaine-non-court-3.jsonl',
+    });
+    expect(sansChemin('piper:C:\\dev\\piper\\fr_FR-siwis-medium.onnx')).toBe('piper:fr_FR-siwis-medium');
+    expect(sansChemin('piper:/home/x/fr_FR-siwis-medium.onnx')).toBe('piper:fr_FR-siwis-medium');
+  });
+
+  it("garde une partie par scénario et les noms d'aujourd'hui sans répétition ni autre voix qu'Hortense", () => {
+    expect(uneParScenario(1, ['hortense'])).toBe(true);
+    expect(uneParScenario(2, ['hortense'])).toBe(false);
+    expect(uneParScenario(1, ['julie'])).toBe(false);
+    expect(uneParScenario(1, ['hortense', 'julie'])).toBe(false);
+    expect(grille(['a', 'b'], ['hortense'], 1).map((j) => [j.r, j.s, j.k])).toEqual([
+      [1, 'a', 1],
+      [1, 'b', 1],
+    ]);
+    expect(nomsDe('non-court', 1, 'hortense', true)).toEqual({
+      test: 'non-court #1 hortense',
+      partie: 'non-court#1',
+      deroule: 'deroule-chaine-non-court.jsonl',
+    });
+  });
+
+  it('dit en une ligne les attentes tous sous 100 %, et celles que la seule transcription y met', () => {
+    const v = (id: string, etat: Verdict['etat'], x: Partial<Verdict> = {}) => ({
+      id,
+      niveau: 'tous' as const,
+      mecanisme: 'voix' as const,
+      dit: '',
+      etat,
+      ...x,
+    });
+    const l = (voix: string, verdicts: Resultat['verdicts'], x: Partial<Resultat> = {}): Resultat => ({
+      suite: '',
+      scenario: 'non-court',
+      partie: '',
+      rang: 1,
+      voix,
+      transcription: 'faster:tiny',
+      synthese: 'piper:fr_FR-siwis-medium',
+      poste: '',
+      verdicts,
+      delais: [],
+      inattendus: [],
+      ...x,
+    });
+    expect(resume([l('hortense', [v('a', 'tenue')])])).toBe('Chaque attente tous tient à 100 %.');
+    const connu = { connu: { issue: 'lun-luxuria#63', conforme: false } };
+    expect(
+      resume([
+        l('hortense', [
+          v('a', 'tenue'),
+          v('b', 'ratee', { source: 'transcription' }),
+          v('c', 'ratee', { source: 'transcription' }),
+          v('d', 'ratee', connu),
+          v('e', 'ratee', { niveau: 'exact', horsNiveau: true }),
+        ]),
+        l('hortense', [
+          v('a', 'non_jouee', { source: 'ecoute' }),
+          v('b', 'tenue'),
+          v('c', 'ratee', { source: 'voix' }),
+          v('d', 'tenue', connu),
+          v('e', 'tenue', { niveau: 'exact' }),
+        ]),
+        l('julie', [v('a', 'ratee', { source: 'transcription' })]),
+        l('hortense', [], { scenario: 'echo-fort', raison: "l'écho" }),
+      ]),
+    ).toBe(
+      'Sous 100 % : non-court/a (hortense) 1/2, non-court/b (hortense) 1/2, non-court/c (hortense) 0/2, ' +
+        'non-court/a (julie) 0/1. Par la transcription : non-court/b (hortense), non-court/a (julie).',
+    );
+  });
 });
 
 // ——— The real game: `npm run chaine` only. ———
@@ -295,8 +451,25 @@ const DIR = resolve(process.env['BANC_DIR'] ?? '../banc-sons', 'chaine');
 const STT = `faster:${process.env['CHAINE_STT'] ?? 'tiny'}`;
 // shortcut: the siwis voice where the laptop keeps it; another poste sets CHAINE_TTS.
 const TTS = process.env['CHAINE_TTS'] ?? `piper:${resolve('../../piper/fr_FR-siwis-medium.onnx')}`;
+const SYNTHESE = sansChemin(TTS);
 const SERVEUR = 'http://127.0.0.1:8798';
 const CHOISIS = process.env['CHAINE_SCENARIOS']?.split(',');
+const REPETITIONS = Number(process.env['CHAINE_REPETITIONS'] ?? 1);
+if (enChaine && !(Number.isInteger(REPETITIONS) && REPETITIONS >= 1))
+  throw new Error(`CHAINE_REPETITIONS : un entier d'au moins 1, pas ${process.env['CHAINE_REPETITIONS']}`);
+// Read in the chain only: a Piper voice reads its model's `.json` as it is named.
+const VOIX: Voix[] = (enChaine ? (process.env['CHAINE_VOIX'] ?? 'hortense') : 'hortense')
+  .split(',')
+  .map((v) => voixDe(v, TTS));
+// Her voices given, each says every speech: the « Non » laid by hand is no voice's (plan, « Le son posé »).
+const POSES = process.env['CHAINE_VOIX'] === undefined;
+const UNE = uneParScenario(
+  REPETITIONS,
+  VOIX.map((v) => v.nom),
+);
+const SUITE = new Date().toISOString();
+const POSTE = `${hostname()} (${cpus()[0]?.model.trim() ?? '?'})`;
+const RESULTATS = join(DIR, 'resultats.jsonl');
 const VITE = resolve('node_modules/vite/bin/vite.js');
 /** A game never lasts longer, whatever its anchors wait for. */
 const PLAFOND_MS = 90_000;
@@ -358,7 +531,10 @@ describe.runIf(enChaine)('la chaîne', () => {
   let PAGE = '';
   let jeton = '';
   let SONDE = '';
+  /** The games of the first round, for `releve-chaine.md`. */
   const parties: PartieChaine[] = [];
+  /** Every game's line, as written in `resultats.jsonl`. */
+  const lignes: Resultat[] = [];
 
   beforeAll(async () => {
     if (
@@ -371,6 +547,8 @@ describe.runIf(enChaine)('la chaîne', () => {
         `Le serveur de la chaîne ne répond pas sur ${SERVEUR} : lance « npm run chaine » dans Lun'Anima, ` +
           `avec CHAINE_DIR=${DIR}.`,
       );
+    mkdirSync(DIR, { recursive: true });
+    writeFileSync(RESULTATS, '');
     // The page empties `dist`: it is built before the probe.
     construire([]);
     construire(['--config', 'vite.sonde.config.ts']);
@@ -407,10 +585,9 @@ describe.runIf(enChaine)('la chaîne', () => {
     arreter(voix);
     mkdirSync(DIR, { recursive: true });
     writeFileSync(join(DIR, 'releve-chaine.md'), releveChaine(parties));
-    for (const p of parties)
-      if ('chaine' in p)
-        writeFileSync(join(DIR, `deroule-chaine-${p.scenario.nom}.jsonl`), deroule(p.chaine));
-    console.log(`Relevé et déroulés écrits dans ${DIR}.`);
+    if (!UNE) writeFileSync(join(DIR, 'releve-taux.md'), releveTaux(lignes));
+    console.log(`Relevés, déroulés et resultats.jsonl écrits dans ${DIR}.`);
+    if (!UNE) console.log(resume(lignes));
   });
 
   /** One game in a fresh context: the probe plays `plan`, or Chromium's fake device plays `fichier`. */
@@ -418,9 +595,9 @@ describe.runIf(enChaine)('la chaîne', () => {
     s: Scenario,
     plan: Plan,
     sons: Sons,
+    nom: string,
     temoinDe?: { fichier: string; premier: number; fin: number },
   ): Promise<{ partie: Partie; sortieMs?: number; inattendus: LigneServeur[] }> {
-    const nom = temoinDe ? `${s.nom}-temoin` : s.nom;
     writeFileSync(join(DIR, 'serveur', 'partie.json'), JSON.stringify({ nom, reponses: plan.reponses }));
     // The server empties its journal only when it starts: a suite before this one wrote the same `partie`.
     const JOURNAL = join(DIR, 'serveur', 'journal.jsonl');
@@ -539,36 +716,112 @@ describe.runIf(enChaine)('la chaîne', () => {
     }
   }
 
+  /** One game of `s` in voice `v`, named `nom` in `partie.json`; the witness in the launch's first game of it. */
+  async function jeu(
+    s: Scenario,
+    v: Voix,
+    nom: string,
+    k: number,
+  ): Promise<{ raison: string } | { jouee: Jouee; inattendus: LigneServeur[] }> {
+    const raison = pourquoiPas(s);
+    if (raison) return { raison };
+    const sons = await sonsDe(s, DIR, v, POSES);
+    const plan = planDePartie(s, sons);
+    if ('manque' in plan) return { raison: plan.manque.join(', ') };
+    const j = await partie(s, plan, sons, nom);
+    const exacte = await jouer(s);
+    const jouee: Jouee = {
+      scenario: s,
+      verdicts: juger(s, j.partie, 'chaine'),
+      chaine: j.partie,
+      exacte,
+      transcription: STT,
+      synthese: s.voix ? 'fausse' : SYNTHESE,
+      voix: v.nom,
+      sons: sons.personne as SonPret[],
+      ...(j.sortieMs === undefined ? {} : { latenceSortieMs: j.sortieMs }),
+    };
+    if (s.nom === 'deux-phrases' && k === 1)
+      jouee.temoin = await temoinDeuxPhrases(s, sons, j.partie, exacte, plan);
+    return { jouee, inattendus: j.inattendus };
+  }
+
   it.each(
-    Object.values(scenarios)
-      .filter((s) => !CHOISIS || CHOISIS.includes(s.nom))
-      .map((s) => [s.nom, s] as const),
+    grille(
+      Object.values(scenarios).filter((s) => !CHOISIS || CHOISIS.includes(s.nom)),
+      VOIX,
+      REPETITIONS,
+    )
+      // One the chain never plays is said once.
+      .filter((j) => j.k === 1 || !pourquoiPas(j.s))
+      .map((j) => [nomsDe(j.s.nom, j.k, j.v.nom, UNE).test, j] as const),
   )(
     '%s',
-    async (_, s) => {
-      const raison = pourquoiPas(s);
-      if (raison) return void parties.push({ scenario: s, raison });
-      const sons = await sonsDe(s, DIR, synthSapi);
-      const plan = planDePartie(s, sons);
-      if ('manque' in plan) return void parties.push({ scenario: s, raison: plan.manque.join(', ') });
-      const jeu = await partie(s, plan, sons);
-      const exacte = await jouer(s);
-      const jouee: Jouee = {
-        scenario: s,
-        verdicts: juger(s, jeu.partie, 'chaine'),
-        chaine: jeu.partie,
-        exacte,
-        transcription: STT,
-        synthese: s.voix ? 'fausse' : 'piper',
-        ...(jeu.sortieMs === undefined ? {} : { latenceSortieMs: jeu.sortieMs }),
+    async (_, { r, s, v, k }) => {
+      const noms = nomsDe(s.nom, k, v.nom, UNE);
+      const contexte = { suite: SUITE, partie: noms.partie, rang: k, poste: POSTE };
+      const synthese = s.voix ? 'fausse' : SYNTHESE;
+      // As soon as the game ends: a suite stopped keeps the lines of its games.
+      const ecrire = (l: Resultat) => {
+        lignes.push(l);
+        appendFileSync(RESULTATS, `${JSON.stringify(l)}\n`);
       };
-      if (s.nom === 'deux-phrases') jouee.temoin = await temoinDeuxPhrases(s, sons, jeu.partie, exacte, plan);
-      parties.push(jouee);
-      expect(jeu.inattendus, 'demandes au modèle sans réponse prévue').toEqual([]);
+      let fait: Awaited<ReturnType<typeof jeu>>;
+      try {
+        fait = await jeu(s, v, noms.partie, k);
+      } catch (err) {
+        // An error out of the judge: the game failed, `joueur`; a repeated suite goes on.
+        const chaine: Partie = { format: 2, page: [], banc: [], fin: 0, erreur: (err as Error).message };
+        const verdicts = juger(s, chaine, 'chaine');
+        ecrire(
+          resultat(
+            {
+              scenario: s,
+              verdicts,
+              chaine,
+              exacte: chaine,
+              transcription: STT,
+              synthese,
+              voix: v.nom,
+              sons: [],
+            },
+            contexte,
+          ),
+        );
+        if (UNE) throw err;
+        return;
+      }
+      if ('raison' in fait) {
+        const { raison } = fait;
+        if (k === 1) parties.push({ scenario: s, raison });
+        // Nothing of a game: no verdict, delay or request.
+        return ecrire({
+          ...contexte,
+          scenario: s.nom,
+          voix: v.nom,
+          transcription: STT,
+          synthese,
+          raison,
+          verdicts: [],
+          delais: [],
+          inattendus: [],
+        });
+      }
+      const { jouee, inattendus } = fait;
+      writeFileSync(join(DIR, noms.deroule), deroule(jouee.chaine));
+      ecrire(resultat(jouee, { ...contexte, deroule: noms.deroule }));
+      if (r === 1) parties.push(jouee);
+      if (!UNE) return;
+      expect(inattendus, 'demandes au modèle sans réponse prévue').toEqual([]);
       expect(jouee.verdicts.every(passe), releveChaine([jouee])).toBe(true);
     },
     240_000,
   );
+
+  // A repeated suite: one `expect`, on the rule CrOliX chose (taux.ts, `echoue`).
+  it.runIf(!UNE)('la suite répétée', () => {
+    expect(echoue(lignes), 'parties qui font échouer la suite, voir releve-taux.md').toEqual([]);
+  });
 
   /**
    * The witness: the same speeches at the instants the probe's game gave them (its anchors resolved), in one file
@@ -589,7 +842,7 @@ describe.runIf(enChaine)('la chaîne', () => {
     const ends = absolu.personne.map((p, i) => p.a! + (sons.personne[i] as { duree: number }).duree);
     const premier = Math.min(...absolu.personne.map((p) => p.a!));
     const fin = Math.max(...ends) + DEFAUTS.finApresMs;
-    return (await partie(absolu, plan, sons, { fichier, premier, fin })).partie;
+    return (await partie(absolu, plan, sons, `${s.nom}-temoin`, { fichier, premier, fin })).partie;
   }
 });
 
