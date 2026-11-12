@@ -548,7 +548,7 @@ describe.runIf(enChaine)('la chaîne', () => {
     async (_, s) => {
       const raison = pourquoiPas(s);
       if (raison) return void parties.push({ scenario: s, raison });
-      const sons = await sonsDe(s, DIR, synthSapi);
+      const sons = await sonsDe(s, DIR, { nom: 'hortense', synth: synthSapi }, true);
       const plan = planDePartie(s, sons);
       if ('manque' in plan) return void parties.push({ scenario: s, raison: plan.manque.join(', ') });
       const jeu = await partie(s, plan, sons);

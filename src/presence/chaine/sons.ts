@@ -1,19 +1,24 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { readWav, writeWav } from '../../listen/replay.ts';
 import { DEFAUTS, type Apres, type Geste, type Parole, type Reponse, type Scenario } from '../scenario.ts';
 
 /**
  * The person's sounds for the chain, and the game plan the probe reads. Nothing here goes in the repository: the
- * sounds live in `dir/sons/` (`CHAINE_DIR`), laid by hand or synthesized by Windows and cached there.
+ * sounds live in `dir/sons/` (`CHAINE_DIR`), laid by hand or synthesized by a voice and cached there, one folder
+ * per voice.
  */
 
-/** 16 kHz mono samples from -1 to 1, as `readWav` gives them. */
-export type Synth = (texte: string) => Promise<Float32Array>;
+/** 16 kHz mono samples from -1 to 1, as `readWav` gives them; `dossier` is the voice's cache folder. */
+export type Synth = (texte: string, dossier: string) => Promise<Float32Array>;
+/** A voice for the person: `nom` names it in the cache and the report, without a path. */
+export type Voix = { nom: string; synth: Synth };
 
-export type SonPret = { samples: Float32Array; duree: number; source: 'pose' | 'cache' | 'synthese' };
+/** `source`: `pose:<fichier>`, `cache:<voix>` or `synthese:<voix>`. */
+export type SonPret = { samples: Float32Array; duree: number; source: string };
 export type SonDe = SonPret | { manque: string };
 export interface Sons {
   personne: SonDe[];
@@ -27,6 +32,8 @@ const MS = 16; // samples per ms at 16 kHz
  */
 const SILENCE = 0.01;
 const VOIX_SAPI = 'sapi-hortense-16k';
+/** Kept on each side of a trimmed sound, as AIRI does: without it, `tiny` eats the first word (plan, task 0). */
+const MARGE = 100 * MS;
 
 /** The file name of a `dit`: lower case, no accents, words joined by dashes. */
 export function nomDe(dit: string): string {
@@ -58,7 +65,10 @@ export function couper(texte: string, trous: NonNullable<Parole['trous']>, duree
 /** The envelope's step: a click of a few samples is no louder than silence over it. */
 const BLOC = 20 * MS;
 
-/** The sound between the first and the last 20 ms whose RMS reaches `SILENCE`, cut at their samples that reach it. */
+/**
+ * The sound between the first and the last 20 ms whose RMS reaches `SILENCE`, cut at their samples that reach it,
+ * with `MARGE` on each side, within the sound; nothing of a silent one.
+ */
 function rogner(x: Float32Array): Float32Array {
   const fort = (k: number) => {
     const [de, a] = [k * BLOC, Math.min(x.length, (k + 1) * BLOC)];
@@ -74,7 +84,8 @@ function rogner(x: Float32Array): Float32Array {
   let b = Math.min(x.length, d * BLOC);
   while (a < b && Math.abs(x[a]!) < SILENCE) a++;
   while (b > a && Math.abs(x[b - 1]!) < SILENCE) b--;
-  return x.subarray(a, b);
+  if (a >= b) return x.subarray(0, 0);
+  return x.subarray(Math.max(0, a - MARGE), Math.min(x.length, b + MARGE));
 }
 
 const pret = (samples: Float32Array, source: SonPret['source']): SonPret => ({
@@ -92,56 +103,72 @@ async function lire(path: string): Promise<Float32Array | undefined> {
   }
 }
 
-/** One text through the cache, then the synthesis, whose result is kept. */
+/**
+ * One text through the voice's cache, then its synthesis, whose raw sound is kept: trimmed before it is written, the
+ * key would have to carry the margin.
+ */
 async function dire(
   texte: string,
   dir: string,
-  synth: Synth,
+  voix: Voix,
 ): Promise<{ samples: Float32Array; cache: boolean }> {
-  const empreinte = createHash('sha256').update(`${VOIX_SAPI}\n${texte}`).digest('hex').slice(0, 16);
-  const path = join(dir, 'sons', 'sapi', `${empreinte}.wav`);
+  // Hortense keeps the key and the folder her cache already has.
+  const sapi = voix.nom === 'hortense';
+  const dossier = join(dir, 'sons', sapi ? 'sapi' : nomDe(voix.nom));
+  const cle = `${sapi ? VOIX_SAPI : voix.nom}\n${texte}`;
+  const path = join(dossier, `${createHash('sha256').update(cle).digest('hex').slice(0, 16)}.wav`);
   const cached = await lire(path);
   if (cached) return { samples: rogner(cached), cache: true };
-  const samples = await synth(texte);
-  await mkdir(join(dir, 'sons', 'sapi'), { recursive: true });
+  await mkdir(dossier, { recursive: true });
+  const samples = await voix.synth(texte, dossier);
   await writeFile(path, writeWav([samples]));
   return { samples: rogner(samples), cache: false };
 }
 
-async function sonDeParole(p: Parole, dir: string, synth: Synth): Promise<SonDe> {
+async function sonDeParole(p: Parole, dir: string, voix: Voix, poses: boolean): Promise<SonDe> {
   const nom = `${nomDe(p.dit)}.wav`;
-  const pose = await lire(join(dir, 'sons', nom));
-  if (pose) return pret(rogner(pose), 'pose');
-  // A cough or a sound between parentheses is not a text.
-  if (/^\(.*\)$/.test(p.dit.trim())) return { manque: `son manquant : ${nom}` };
+  // A cough or a sound between parentheses is not a text: its file always, cut to its duration.
+  const bruit = /^\(.*\)$/.test(p.dit.trim());
+  const pose = bruit || poses ? await lire(join(dir, 'sons', nom)) : undefined;
+  if (pose && bruit) {
+    const son = rogner(pose);
+    if (son.length < p.duree * MS)
+      throw new Error(`${nom} : ${Math.round(son.length / MS)} ms, plus court que sa durée (${p.duree} ms)`);
+    return pret(son.subarray(0, p.duree * MS), `pose:${nom}`);
+  }
+  if (pose) return pret(rogner(pose), `pose:${nom}`);
+  if (bruit) return { manque: `son manquant : ${nom}` };
   const trous = [...(p.trous ?? [])].sort((x, y) => x.a - y.a);
   const pieces = couper(p.dit, trous, p.duree);
   const parts: Float32Array[] = [];
   let cache = true;
   for (const [i, piece] of pieces.entries()) {
     if (i > 0) parts.push(new Float32Array(trous[i - 1]!.duree * MS));
-    const said = await dire(piece, dir, synth);
+    const said = await dire(piece, dir, voix);
     parts.push(said.samples);
     cache &&= said.cache;
   }
   const out = new Float32Array(parts.reduce((n, x) => n + x.length, 0));
   parts.reduce((at, x) => (out.set(x, at), at + x.length), 0);
-  return pret(out, cache ? 'cache' : 'synthese');
+  return pret(out, `${cache ? 'cache' : 'synthese'}:${voix.nom}`);
 }
 
 /**
  * For each speech and each noise, a sound and its real length (kept when longer than `duree`), or why it is missing.
- * A speech: `dir/sons/<nom>.wav`, then the cache `dir/sons/sapi/`, then `synth`. A noise: `bruit.wav`, cut to its
- * duration. Leading and trailing silences are removed.
+ * A speech: `dir/sons/<nom>.wav` when `poses`, then the voice's cache, then its synthesis; one between parentheses,
+ * its file whatever `poses`, cut to its duration and refused shorter. A noise: `bruit.wav`, cut to its duration.
+ * Leading and trailing silences are removed, but for 100 ms on each side.
  */
-export async function sonsDe(s: Scenario, dir: string, synth: Synth): Promise<Sons> {
+export async function sonsDe(s: Scenario, dir: string, voix: Voix, poses: boolean): Promise<Sons> {
   const personne: SonDe[] = [];
-  for (const p of s.personne) personne.push(await sonDeParole(p, dir, synth));
+  for (const p of s.personne) personne.push(await sonDeParole(p, dir, voix, poses));
   const bruits: SonDe[] = [];
   for (const b of s.bruits ?? []) {
     const son = await lire(join(dir, 'sons', 'bruit.wav'));
     bruits.push(
-      son ? pret(rogner(son).subarray(0, b.duree * MS), 'pose') : { manque: 'son manquant : bruit.wav' },
+      son
+        ? pret(rogner(son).subarray(0, b.duree * MS), 'pose:bruit.wav')
+        : { manque: 'son manquant : bruit.wav' },
     );
   }
   return { personne, bruits };
@@ -232,26 +259,128 @@ function pcm(bytes: Uint8Array): Float32Array {
   return out;
 }
 
+/** A program at a fixed path, without a shell, the text on its standard input: what it writes on its output. */
+function lancer(
+  quoi: string,
+  exe: string,
+  args: string[],
+  texte: string,
+  cwd = process.cwd(),
+): Promise<string> {
+  return new Promise((ok, ko) => {
+    const p = spawn(exe, args, { windowsHide: true, cwd });
+    let out = '';
+    let err = '';
+    p.stdout.setEncoding('ascii').on('data', (d: string) => (out += d));
+    p.stderr.setEncoding('utf8').on('data', (d: string) => (err += d));
+    p.on('error', ko);
+    p.on('close', (code) => {
+      if (code !== 0) ko(new Error(`${quoi} : ${err.trim() || `code ${code}`}`));
+      else ok(out);
+    });
+    p.stdin.end(texte, 'utf8');
+  });
+}
+
+/** A fixed PowerShell script by `-EncodedCommand`: the bytes it writes in base64. */
+async function powershell(quoi: string, script: string, texte: string): Promise<Buffer> {
+  if (process.platform !== 'win32') throw new Error(`${quoi} : Windows seulement`);
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  const args = ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded];
+  return Buffer.from(await lancer(quoi, 'powershell.exe', args, texte), 'base64');
+}
+
 /**
  * Windows' French voice Hortense, through `System.Speech`, 16 kHz mono. The script is fixed and the text goes on the
  * standard input, never on the command line.
  */
-export const synthSapi: Synth = (texte) => {
-  if (process.platform !== 'win32') return Promise.reject(new Error('synthSapi : Windows seulement'));
-  return new Promise((resolve, reject) => {
-    const encoded = Buffer.from(SCRIPT_SAPI, 'utf16le').toString('base64');
-    const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
-      windowsHide: true,
-    });
-    let out = '';
-    let err = '';
-    ps.stdout.setEncoding('ascii').on('data', (d: string) => (out += d));
-    ps.stderr.setEncoding('utf8').on('data', (d: string) => (err += d));
-    ps.on('error', reject);
-    ps.on('close', (code) => {
-      if (code !== 0) reject(new Error(`synthSapi : ${err.trim() || `code ${code}`}`));
-      else resolve(pcm(Buffer.from(out, 'base64')));
-    });
-    ps.stdin.end(texte, 'utf8');
-  });
-};
+export const synthSapi: Synth = async (texte) => pcm(await powershell('synthSapi', SCRIPT_SAPI, texte));
+
+/** The voices `System.Speech` does not see, reached through WinRT: a fixed list, since the name is in the script. */
+const WINRT = ['Julie', 'Paul'] as const;
+
+const scriptWinRT = (nom: (typeof WINRT)[number]) => `
+$ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = [Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Media.SpeechSynthesis.SpeechSynthesizer, Windows.Media.SpeechSynthesis, ContentType = WindowsRuntime]
+$null = [Windows.Storage.Streams.DataReader, Windows.Storage.Streams, ContentType = WindowsRuntime]
+$asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' } | Select-Object -First 1
+function Await($op, $type) { $t = $asTask.MakeGenericMethod($type).Invoke($null, @($op)); $t.Wait(-1) | Out-Null; $t.Result }
+$v = [Windows.Media.SpeechSynthesis.SpeechSynthesizer]::AllVoices | Where-Object { $_.DisplayName -like '*${nom}*' } | Select-Object -First 1
+if (-not $v) { [Console]::Error.Write('${nom} absente'); exit 3 }
+$s = New-Object Windows.Media.SpeechSynthesis.SpeechSynthesizer
+$s.Voice = $v
+$texte = [Console]::In.ReadToEnd()
+$st = Await ($s.SynthesizeTextToStreamAsync($texte)) ([Windows.Media.SpeechSynthesis.SpeechSynthesisStream])
+$r = New-Object Windows.Storage.Streams.DataReader($st.GetInputStreamAt(0))
+$null = Await ($r.LoadAsync([uint32]$st.Size)) ([uint32])
+$b = New-Object byte[] $st.Size
+$r.ReadBytes($b)
+$s.Dispose()
+[Console]::Out.Write([Convert]::ToBase64String($b))
+`;
+
+/**
+ * Julie or Paul, Windows' OneCore voices, through WinRT: a WAV at 16 kHz, mono, its `fmt` of 18 bytes. The script is
+ * fixed, the name from `WINRT` only, the text on the standard input.
+ */
+export function synthWinRT(nom: (typeof WINRT)[number]): Synth {
+  if (!WINRT.includes(nom)) throw new Error(`synthWinRT : ${String(nom)} hors de la liste`);
+  const script = scriptWinRT(nom);
+  return async (texte) => readWav(await powershell('synthWinRT', script, texte));
+}
+
+/** The speaker's number in `speaker_id_map` of `<modele>.json`, the file Piper reads beside its model. */
+export function locuteurDe(modele: string, locuteur: string): number {
+  const config = JSON.parse(readFileSync(`${modele}.json`, 'utf8')) as {
+    speaker_id_map?: Record<string, unknown>;
+  };
+  const n = config.speaker_id_map?.[locuteur];
+  if (typeof n !== 'number') throw new Error(`synthPiper : ${locuteur} absent de ${basename(modele)}`);
+  return n;
+}
+
+/**
+ * A Piper voice through `piper.exe` (the C++ one, not the service's package) at the path given, without a shell: the
+ * text on the standard input, the WAV in a file of the voice's folder, read (22 050 Hz, resampled by `readWav`), then
+ * removed.
+ */
+export function synthPiper(exe: string, modele: string, locuteur?: string): Synth {
+  const s = locuteur === undefined ? [] : ['-s', String(locuteurDe(modele, locuteur))];
+  return async (texte, dossier) => {
+    const fichier = resolve(dossier, `piper-${randomUUID()}.wav`);
+    const args = ['-q', '-m', resolve(modele), ...s, '-f', fichier];
+    try {
+      // In its own folder, where it finds espeak-ng's data.
+      await lancer('synthPiper', exe, args, texte, dirname(exe));
+      return readWav(await readFile(fichier));
+    } finally {
+      await rm(fichier, { force: true });
+    }
+  };
+}
+
+/**
+ * One entry of `CHAINE_VOIX`: `hortense`, `julie`, `paul` or `piper:<exe>|<modèle>[#<locuteur>]`, the speaker after
+ * the last `#`, past `.onnx`. Refuses her own voice, `tts` (`CHAINE_TTS`): the same model, and the same speaker, the
+ * first one, with which her service speaks.
+ */
+export function voixDe(spec: string, tts: string): Voix {
+  const entree = spec.trim();
+  if (entree === 'hortense') return { nom: entree, synth: synthSapi };
+  const winrt = WINRT.find((n) => n.toLowerCase() === entree);
+  if (winrt) return { nom: entree, synth: synthWinRT(winrt) };
+  if (!entree.startsWith('piper:')) throw new Error(`voixDe : voix inconnue : ${entree}`);
+  const barre = entree.indexOf('|');
+  if (barre < 0) throw new Error(`voixDe : une voix de Piper s'écrit piper:<exe>|<modèle> : ${entree}`);
+  const m = /^(.+\.onnx)(?:#([^#]+))?$/i.exec(entree.slice(barre + 1));
+  if (!m) throw new Error(`voixDe : le modèle de Piper finit par .onnx : ${entree}`);
+  const [modele, locuteur] = [m[1]!, m[2]];
+  const nom = `piper:${basename(modele).replace(/\.onnx$/i, '')}${locuteur ? `#${locuteur}` : ''}`;
+  const sienne =
+    tts.startsWith('piper:') && basename(tts.slice(6)).toLowerCase() === basename(modele).toLowerCase();
+  if (sienne && (locuteur === undefined || locuteurDe(modele, locuteur) === 0))
+    throw new Error(`voixDe : ${nom} est sa voix (CHAINE_TTS)`);
+  return { nom, synth: synthPiper(entree.slice(6, barre), modele, locuteur) };
+}
