@@ -53,7 +53,6 @@ export interface Contexte {
   suite: string;
   partie: string;
   rang: number;
-  voix: string;
   poste: string;
   deroule?: string;
 }
@@ -67,7 +66,7 @@ export function resultat(j: Jouee, o: Contexte): Resultat {
     scenario: s.nom,
     partie: o.partie,
     rang: o.rang,
-    voix: o.voix,
+    voix: j.voix,
     transcription: j.transcription,
     synthese: j.synthese,
     poste: o.poste,

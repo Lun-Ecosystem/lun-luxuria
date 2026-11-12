@@ -76,6 +76,7 @@ describe('a line per game', () => {
       exacte: chaine,
       transcription: 'faster:tiny',
       synthese: 'piper:fr_FR-siwis-medium',
+      voix: 'hortense',
       sons: [
         { source: 'cache:hortense', duree: 1635 },
         { source: 'pose:oui.wav', duree: 300 },
@@ -86,7 +87,6 @@ describe('a line per game', () => {
         suite: '2026-11-12T10:00:00.000Z',
         partie: 'a-la-main#2',
         rang: 2,
-        voix: 'hortense',
         poste: 'PC (i7)',
         deroule: 'deroule-chaine-a-la-main-2.jsonl',
       }),

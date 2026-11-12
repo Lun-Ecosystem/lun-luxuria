@@ -94,6 +94,8 @@ export interface Jouee {
   transcription: string;
   /** Her voice: the service's, without its path (`piper:fr_FR-siwis-medium`), or `fausse`, the player's. */
   synthese: string;
+  /** The person's: `hortense`, `julie`, `piper:fr_FR-upmc-medium#pierre`… */
+  voix: string;
   /** In the order of `personne`: where each speech's sound comes from (`pose:non.wav`, `cache:julie`…), its length. */
   sons: readonly { source: string; duree: number }[];
   /** What `getOutputTimestamp` announces, once a game: never added to an instant (« Les deux horloges »). */
@@ -130,13 +132,21 @@ const num = (v: TraceValue | undefined) => (typeof v === 'number' ? v : undefine
 const ecart = (a?: number, b?: number) => (a === undefined || b === undefined ? undefined : b - a);
 const son = (e: TraceEvent) => num(e['son']) ?? e.at;
 
-/** The report of the chain: the scenarios' report, each with what the chain measured, then those not played. */
+/**
+ * The report of the chain: the scenarios' report, each with what the chain measured, then those not played. Each
+ * title says the person's voice, unless it is Hortense's alone.
+ */
 export function releveChaine(parties: PartieChaine[]): string {
   const jouees = parties.filter((p): p is Jouee => 'chaine' in p);
   const manquent = parties.filter((p) => 'raison' in p);
+  const seule = jouees.every((p) => p.voix === 'hortense');
   const out = [
     releve(
-      jouees.map((p) => ({ nom: p.scenario.nom, verdicts: p.verdicts, annexe: annexe(p) })),
+      jouees.map((p) => ({
+        nom: seule ? p.scenario.nom : `${p.scenario.nom} (${p.voix})`,
+        verdicts: p.verdicts,
+        annexe: annexe(p),
+      })),
       'Relevé de la chaîne',
     ),
   ];

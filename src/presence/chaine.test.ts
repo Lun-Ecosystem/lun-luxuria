@@ -737,6 +737,7 @@ describe.runIf(enChaine)('la chaîne', () => {
       exacte,
       transcription: STT,
       synthese: s.voix ? 'fausse' : SYNTHESE,
+      voix: v.nom,
       sons: sons.personne as SonPret[],
       ...(j.sortieMs === undefined ? {} : { latenceSortieMs: j.sortieMs }),
     };
@@ -758,7 +759,7 @@ describe.runIf(enChaine)('la chaîne', () => {
     '%s',
     async (_, { r, s, v, k }) => {
       const noms = nomsDe(s.nom, k, v.nom, UNE);
-      const contexte = { suite: SUITE, partie: noms.partie, rang: k, voix: v.nom, poste: POSTE };
+      const contexte = { suite: SUITE, partie: noms.partie, rang: k, poste: POSTE };
       const synthese = s.voix ? 'fausse' : SYNTHESE;
       // As soon as the game ends: a suite stopped keeps the lines of its games.
       const ecrire = (l: Resultat) => {
@@ -774,7 +775,16 @@ describe.runIf(enChaine)('la chaîne', () => {
         const verdicts = juger(s, chaine, 'chaine');
         ecrire(
           resultat(
-            { scenario: s, verdicts, chaine, exacte: chaine, transcription: STT, synthese, sons: [] },
+            {
+              scenario: s,
+              verdicts,
+              chaine,
+              exacte: chaine,
+              transcription: STT,
+              synthese,
+              voix: v.nom,
+              sons: [],
+            },
             contexte,
           ),
         );
@@ -788,6 +798,7 @@ describe.runIf(enChaine)('la chaîne', () => {
         return ecrire({
           ...contexte,
           scenario: s.nom,
+          voix: v.nom,
           transcription: STT,
           synthese,
           raison,

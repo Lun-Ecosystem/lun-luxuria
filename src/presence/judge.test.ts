@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TraceEvent } from '../trace.ts';
 import { juger, passe, type Verdict } from './judge.ts';
-import { releve, releveChaine } from './releve.ts';
+import { releve, releveChaine, type Jouee } from './releve.ts';
 import type { Apres, Attendu, BancEvent, Partie, Scenario } from './scenario.ts';
 
 // One turn, written by hand: the person speaks from 1000 to 2000, the reply 101 sounds at 3424.
@@ -806,6 +806,7 @@ describe('the report', () => {
         exacte: partie,
         transcription: 'faster:tiny',
         synthese: 'piper',
+        voix: 'julie',
         sons: [{ source: 'cache:julie', duree: 1635 }],
         latenceSortieMs: 52,
         temoin,
@@ -821,7 +822,7 @@ describe('the report', () => {
       '',
       'Échecs par source : aucun.',
       '',
-      '## a-la-main',
+      '## a-la-main (julie)',
       '',
       '| Attendu | État | Espèce | Source | Trouvé | Borne |',
       '|---|---|---|---|---|---|',
@@ -889,6 +890,7 @@ describe('the report', () => {
           exacte: partie,
           transcription: 'faster:tiny',
           synthese: 'piper',
+          voix: 'hortense',
           sons: [],
         },
       ])
@@ -900,5 +902,25 @@ describe('the report', () => {
     );
     // What was said chose none either: the scenario's.
     expect(ligne('film')).toMatch(/source : scenario\.$/);
+  });
+
+  it('of the chain: each scenario titled with its voice, unless Hortense is the only one', () => {
+    const jouee = (voix: string): Jouee => ({
+      scenario: scenario([]),
+      verdicts: [v({})],
+      chaine: partie,
+      exacte: partie,
+      transcription: 'faster:tiny',
+      synthese: 'piper',
+      voix,
+      sons: [],
+    });
+    const titres = (voix: string[]) =>
+      releveChaine(voix.map(jouee))
+        .split('\n')
+        .filter((l) => l.startsWith('## '));
+    expect(titres(['hortense', 'hortense'])).toEqual(['## a-la-main', '## a-la-main']);
+    expect(titres(['hortense', 'julie'])).toEqual(['## a-la-main (hortense)', '## a-la-main (julie)']);
+    expect(titres(['julie'])).toEqual(['## a-la-main (julie)']);
   });
 });
