@@ -51,14 +51,15 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
   touché) et rejoue les scénarios : chaque mutation doit faire échouer son maillon. Un motif changé : la table suit.
 - `npm run chaine` joue les scénarios sur la page construite dans Chrome, le service de voix et le serveur de la chaîne
   (`npm run chaine` de Lun'Anima, lancé avant), en temps réel ; il écrit `releve-chaine.md` et les
-  `deroule-chaine-<nom>.jsonl` dans `BANC_DIR/chaine`. Sur le poste seulement, jamais en CI.
+  `deroule-chaine-<nom>.jsonl` dans `BANC_DIR/chaine`. Sur le poste seulement, jamais en CI. Son
+  `--reporter=default` est voulu : sous un agent, Vitest prend `minimal`, qui tait la ligne de résumé.
 - La course, chaque scénario trente fois avec Hortense, puis la robustesse, deux fois par voix, jamais la sienne ; sous
-  PowerShell, une commande par ligne (la variable reste dans la session : `Remove-Item Env:CHAINE_VOIX` avant une
-  course) :
+  PowerShell, une commande par ligne (chaque bloc retire ses variables, qui resteraient sinon dans la session) :
 
   ```powershell
   $env:CHAINE_REPETITIONS = '30'
   npm run chaine
+  Remove-Item Env:CHAINE_REPETITIONS
   ```
 
   ```powershell
