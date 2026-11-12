@@ -17,6 +17,7 @@ import {
   synthWinRT,
   temoin,
   voixDe,
+  type SonDe,
   type Synth,
   type Voix,
 } from './sons.ts';
@@ -162,28 +163,37 @@ describe('sonsDe', () => {
     expect(dits).toEqual([]);
   });
 
-  it('cuts a cough laid by hand to its duration, with or without `poses`, and refuses it shorter', async () => {
+  /** Sound in each of its ms: no silence at its head, nor anywhere. */
+  const plein = (son: SonDe | undefined) => {
+    if (!son || !('samples' in son)) return false;
+    for (let i = 0; i < son.samples.length; i += 16)
+      if (!son.samples.subarray(i, i + 16).some((x) => Math.abs(x) >= 0.01)) return false;
+    return true;
+  };
+
+  it('cuts a cough laid by hand to its duration of sound, with or without `poses`, and refuses it shorter', async () => {
+    // 200 ms of silence at its head: none of it is kept, the 450 ms are of sound.
     await writeFile(join(dir, 'sons', 'toux.wav'), writeWav([ton(600, 200)]));
     const s = (duree: number) => ({ ...base, personne: [{ a: 0, dit: '(toux)', duree }] });
-    for (const poses of [true, false])
-      expect((await sonsDe(s(450), dir, hortense, poses)).personne[0]).toMatchObject({
-        source: 'pose:toux.wav',
-        duree: 450,
-      });
-    // 600 ms of sound and 100 ms of margin on each side: 800 ms.
-    await expect(sonsDe(s(900), dir, hortense, true)).rejects.toThrow(/toux\.wav.*800.*900/);
+    for (const poses of [true, false]) {
+      const [toux] = (await sonsDe(s(450), dir, hortense, poses)).personne;
+      expect(toux).toMatchObject({ source: 'pose:toux.wav', duree: 450 });
+      expect(plein(toux)).toBe(true);
+    }
+    // 600 ms of sound, no margin at the head, 100 ms at the end: 700 ms.
+    await expect(sonsDe(s(900), dir, hortense, true)).rejects.toThrow(/toux\.wav.*700.*900/);
     expect(dits).toEqual([]);
   });
 
-  it('cuts a noise to its duration, and says when bruit.wav is missing', async () => {
+  it('cuts a noise to its duration of sound, and says when bruit.wav is missing', async () => {
     const s = { ...base, bruits: [{ a: 0, duree: 200, voix: 0.9 }] };
     expect((await sonsDe(s, dir, hortense, true)).bruits).toEqual([{ manque: 'son manquant : bruit.wav' }]);
-    await writeFile(join(dir, 'sons', 'bruit.wav'), writeWav([ton(1000)]));
-    for (const poses of [true, false])
-      expect((await sonsDe(s, dir, hortense, poses)).bruits[0]).toMatchObject({
-        source: 'pose:bruit.wav',
-        duree: 200,
-      });
+    await writeFile(join(dir, 'sons', 'bruit.wav'), writeWav([ton(1000, 200)]));
+    for (const poses of [true, false]) {
+      const [bruit] = (await sonsDe(s, dir, hortense, poses)).bruits;
+      expect(bruit).toMatchObject({ source: 'pose:bruit.wav', duree: 200 });
+      expect(plein(bruit)).toBe(true);
+    }
   });
 
   it('synthesizes each piece around the silences, each with its margin, and inserts them', async () => {

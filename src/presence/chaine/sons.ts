@@ -67,9 +67,10 @@ const BLOC = 20 * MS;
 
 /**
  * The sound between the first and the last 20 ms whose RMS reaches `SILENCE`, cut at their samples that reach it,
- * with `MARGE` on each side, within the sound; nothing of a silent one.
+ * with `tete` before and `MARGE` after, within the sound; nothing of a silent one. A sound cut to its `duree` keeps no
+ * margin at its head, so that its `duree` is all sound.
  */
-function rogner(x: Float32Array): Float32Array {
+function rogner(x: Float32Array, tete = MARGE): Float32Array {
   const fort = (k: number) => {
     const [de, a] = [k * BLOC, Math.min(x.length, (k + 1) * BLOC)];
     let s = 0;
@@ -85,7 +86,7 @@ function rogner(x: Float32Array): Float32Array {
   while (a < b && Math.abs(x[a]!) < SILENCE) a++;
   while (b > a && Math.abs(x[b - 1]!) < SILENCE) b--;
   if (a >= b) return x.subarray(0, 0);
-  return x.subarray(Math.max(0, a - MARGE), Math.min(x.length, b + MARGE));
+  return x.subarray(Math.max(0, a - tete), Math.min(x.length, b + MARGE));
 }
 
 const pret = (samples: Float32Array, source: SonPret['source']): SonPret => ({
@@ -131,7 +132,7 @@ async function sonDeParole(p: Parole, dir: string, voix: Voix, poses: boolean): 
   const bruit = /^\(.*\)$/.test(p.dit.trim());
   const pose = bruit || poses ? await lire(join(dir, 'sons', nom)) : undefined;
   if (pose && bruit) {
-    const son = rogner(pose);
+    const son = rogner(pose, 0);
     if (son.length < p.duree * MS)
       throw new Error(`${nom} : ${Math.round(son.length / MS)} ms, plus court que sa durée (${p.duree} ms)`);
     return pret(son.subarray(0, p.duree * MS), `pose:${nom}`);
@@ -157,7 +158,8 @@ async function sonDeParole(p: Parole, dir: string, voix: Voix, poses: boolean): 
  * For each speech and each noise, a sound and its real length (kept when longer than `duree`), or why it is missing.
  * A speech: `dir/sons/<nom>.wav` when `poses`, then the voice's cache, then its synthesis; one between parentheses,
  * its file whatever `poses`, cut to its duration and refused shorter. A noise: `bruit.wav`, cut to its duration.
- * Leading and trailing silences are removed, but for 100 ms on each side.
+ * Leading and trailing silences are removed, but for 100 ms on each side; none is kept at the head of a sound cut to
+ * its duration.
  */
 export async function sonsDe(s: Scenario, dir: string, voix: Voix, poses: boolean): Promise<Sons> {
   const personne: SonDe[] = [];
@@ -167,7 +169,7 @@ export async function sonsDe(s: Scenario, dir: string, voix: Voix, poses: boolea
     const son = await lire(join(dir, 'sons', 'bruit.wav'));
     bruits.push(
       son
-        ? pret(rogner(son).subarray(0, b.duree * MS), 'pose:bruit.wav')
+        ? pret(rogner(son, 0).subarray(0, b.duree * MS), 'pose:bruit.wav')
         : { manque: 'son manquant : bruit.wav' },
     );
   }
