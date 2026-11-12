@@ -10,9 +10,10 @@
 // - « Tu peux me lire, » : dernière trame de voix 1184 ; 5 trames de silence (1216 → 1344) = 160 ms, pause 1184 + 160
 //   = 1344 → essai 1 ; la voix revient à 1376 (« euh ») → reprise → essai 1 retiré, avant sa transcription (1494) :
 //   il n'est jamais envoyé.
-// - « euh » : dernière trame 1568 ; pause 1728 → essai 2 ; transcrite 1878 → envoyé (message 1) ; la voix revient à
-//   2000, première trame de voix 2016 (2000 n'est pas un multiple de 32) → reprise → essai 2 retiré, son retrait
-//   reçu à 2016. Le silence a duré 2016 − 1568 = 448 ms < 704 : pas de fin.
+// - « euh » : dernière trame 1568 ; pause 1728 → essai 2 ; transcrite 1878 → envoyé (message 1, au niveau exact) ;
+//   la voix revient à 2000, première trame de voix 2016 (2000 n'est pas un multiple de 32) → reprise → essai 2 retiré,
+//   son retrait reçu à 2016 (au niveau exact : à la chaîne, l'essai 2 peut être retiré avant sa transcription).
+//   Le silence a duré 2016 − 1568 = 448 ms < 704 : pas de fin.
 // - « la liste des courses » : dernière trame 3168 ; pause 3328 → essai 3 ; transcrite 3478 → envoyé, tenu ; fin
 //   3168 + 704 = 3872 → confirmée ; phrase reçue 3478 + 400 = 3878 ; synthèse → premier son 4028.
 //   attente_fin = 704 ; blanc_de_tour = 4028 − 3168 = 860 = 160 + 150 + 400 + 150, comme sans « euh »
@@ -51,7 +52,7 @@ export default {
     {
       id: 'pas-un-bruit',
       niveau: 'tous',
-      mecanisme: 'filtre',
+      mecanisme: 'ecoute',
       dit: "aucune phrase n'est jugée bruit",
       evenement: 'bruit',
       absent: true,
@@ -66,7 +67,9 @@ export default {
     },
     {
       id: 'retrait-recu',
-      niveau: 'tous',
+      // Au niveau exact seulement : à la chaîne, `message` est le numéro réel de la base, et que l'essai parte avant
+      // son retrait tient à la vitesse de `tiny` (retiré avant sa transcription, il n'est jamais envoyé).
+      niveau: 'exact',
       mecanisme: 'serveur',
       dit: "l'essai envoyé puis retiré a son retrait au serveur",
       evenement: 'retrait_recu',
@@ -92,9 +95,11 @@ export default {
       id: 'rien-de-l-essai-retire',
       niveau: 'tous',
       mecanisme: 'voix',
-      dit: "rien de la réponse à l'essai retiré ne sonne",
+      dit: 'rien ne sonne pendant la parole : la réponse à un essai retiré, envoyé avant la fin, y sonnerait',
       evenement: 'joue',
-      ou: { reponse: 1 },
+      depuis: { parole: 1, bord: 'debut' },
+      // la parole dure 2880 ms ; sans numéro de réponse, la seule qui sonne après est celle de l'essai confirmé
+      entre: [0, 2880],
       absent: true,
     },
     {
