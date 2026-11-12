@@ -25,7 +25,7 @@ export default {
   ],
   modele: {
     reponses: [
-      { si: 'arrete', phrases: ["D'accord."] },
+      { si: 'arret', phrases: ["D'accord."] },
       {
         si: 'messages',
         phrases: ['Je regarde tes messages.', 'Tu as trois nouveaux messages.'],
