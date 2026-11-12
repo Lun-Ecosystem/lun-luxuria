@@ -126,17 +126,20 @@ async function dire(
   return { samples: rogner(samples), cache: false };
 }
 
+/** A sound laid by hand cut to `duree` of sound, without margin; shorter, it would play shorter: an error names it. */
+function coupe(pose: Float32Array, duree: number, nom: string): SonPret {
+  const son = rogner(pose, 0);
+  if (son.length < duree * MS)
+    throw new Error(`${nom} : ${Math.round(son.length / MS)} ms, plus court que sa durée (${duree} ms)`);
+  return pret(son.subarray(0, duree * MS), `pose:${nom}`);
+}
+
 async function sonDeParole(p: Parole, dir: string, voix: Voix, poses: boolean): Promise<SonDe> {
   const nom = `${nomDe(p.dit)}.wav`;
   // A cough or a sound between parentheses is not a text: its file always, cut to its duration.
   const bruit = /^\(.*\)$/.test(p.dit.trim());
   const pose = bruit || poses ? await lire(join(dir, 'sons', nom)) : undefined;
-  if (pose && bruit) {
-    const son = rogner(pose, 0);
-    if (son.length < p.duree * MS)
-      throw new Error(`${nom} : ${Math.round(son.length / MS)} ms, plus court que sa durée (${p.duree} ms)`);
-    return pret(son.subarray(0, p.duree * MS), `pose:${nom}`);
-  }
+  if (pose && bruit) return coupe(pose, p.duree, nom);
   if (pose) return pret(rogner(pose), `pose:${nom}`);
   if (bruit) return { manque: `son manquant : ${nom}` };
   const trous = [...(p.trous ?? [])].sort((x, y) => x.a - y.a);
@@ -157,7 +160,7 @@ async function sonDeParole(p: Parole, dir: string, voix: Voix, poses: boolean): 
 /**
  * For each speech and each noise, a sound and its real length (kept when longer than `duree`), or why it is missing.
  * A speech: `dir/sons/<nom>.wav` when `poses`, then the voice's cache, then its synthesis; one between parentheses,
- * its file whatever `poses`, cut to its duration and refused shorter. A noise: `bruit.wav`, cut to its duration.
+ * its file whatever `poses`, cut to its duration and refused shorter. A noise: `bruit.wav`, the same way.
  * Leading and trailing silences are removed, but for 100 ms on each side; none is kept around a sound cut to its
  * duration.
  */
@@ -167,11 +170,7 @@ export async function sonsDe(s: Scenario, dir: string, voix: Voix, poses: boolea
   const bruits: SonDe[] = [];
   for (const b of s.bruits ?? []) {
     const son = await lire(join(dir, 'sons', 'bruit.wav'));
-    bruits.push(
-      son
-        ? pret(rogner(son, 0).subarray(0, b.duree * MS), 'pose:bruit.wav')
-        : { manque: 'son manquant : bruit.wav' },
-    );
+    bruits.push(son ? coupe(son, b.duree, 'bruit.wav') : { manque: 'son manquant : bruit.wav' });
   }
   return { personne, bruits };
 }

@@ -188,15 +188,20 @@ describe('sonsDe', () => {
     expect(dits).toEqual([]);
   });
 
-  it('cuts a noise to its duration of sound, and says when bruit.wav is missing', async () => {
-    const s = { ...base, bruits: [{ a: 0, duree: 200, voix: 0.9 }] };
-    expect((await sonsDe(s, dir, hortense, true)).bruits).toEqual([{ manque: 'son manquant : bruit.wav' }]);
+  it('cuts a noise to its duration of sound, refuses it shorter, and says when bruit.wav is missing', async () => {
+    const s = (duree: number) => ({ ...base, bruits: [{ a: 0, duree, voix: 0.9 }] });
+    expect((await sonsDe(s(200), dir, hortense, true)).bruits).toEqual([
+      { manque: 'son manquant : bruit.wav' },
+    ]);
     await writeFile(join(dir, 'sons', 'bruit.wav'), writeWav([ton(1000, 200)]));
     for (const poses of [true, false]) {
-      const [bruit] = (await sonsDe(s, dir, hortense, poses)).bruits;
+      const [bruit] = (await sonsDe(s(200), dir, hortense, poses)).bruits;
       expect(bruit).toMatchObject({ source: 'pose:bruit.wav', duree: 200 });
       expect(plein(bruit)).toBe(true);
     }
+    // 300 ms of sound, its silences aside, would play shorter than 450: refused, as a cough is.
+    await writeFile(join(dir, 'sons', 'bruit.wav'), writeWav([ton(300, 200)]));
+    await expect(sonsDe(s(450), dir, hortense, true)).rejects.toThrow(/bruit\.wav.*300.*450/);
   });
 
   it('synthesizes each piece around the silences, each with its margin, and inserts them', async () => {
