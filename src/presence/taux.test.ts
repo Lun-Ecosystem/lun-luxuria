@@ -254,6 +254,7 @@ describe('the report of the rates', () => {
     expect(texte).toEqual(
       expect.arrayContaining([
         'Échecs par espèce : joueur 1.',
+        'Échecs par source : joueur 1.',
         'Échecs par voix : hortense 1.',
         '| non-court | hortense | 2 | 3 | 67 % |',
         '| pour-de-bon | hortense | 2 | 0 | 0 | 100 % |',

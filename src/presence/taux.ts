@@ -209,7 +209,7 @@ export function releveTaux(lignes: readonly Resultat[]): string {
   out.push(
     `Échecs par espèce : ${parCle(echecs, (v) => v.espece ?? v.etat)}.`,
     '',
-    `Échecs par source : ${parCle(echecs, (v) => v.source ?? v.mecanisme)}.`,
+    `Échecs par source : ${parCle(echecs, (v) => (v.espece === 'joueur' ? 'joueur' : (v.source ?? v.mecanisme)))}.`,
     '',
     `Échecs par voix : ${parCle(echecs, (v) => v.voix)}.`,
     '',
