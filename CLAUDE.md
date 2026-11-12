@@ -65,6 +65,8 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
   $env:CHAINE_VOIX = 'julie,paul,piper:<piper.exe>|<fr_FR-upmc-medium.onnx>#jessica,piper:<piper.exe>|<fr_FR-upmc-medium.onnx>#pierre'
   $env:CHAINE_REPETITIONS = '2'
   npm run chaine
+  Remove-Item Env:CHAINE_REPETITIONS
+  Remove-Item Env:CHAINE_VOIX
   ```
 
   Chaque partie ajoute sa ligne à `resultats.jsonl` ; la suite écrit `releve-taux.md` et des `deroule-chaine-<nom>-<k>.jsonl`.
