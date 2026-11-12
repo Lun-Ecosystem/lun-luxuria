@@ -121,9 +121,9 @@ describe('le faux modèle devant ce que la chaîne a entendu', () => {
     ]),
   )('%# %j : %j', ({ scenario, parole }, entendu, echec) => {
     const s = Object.values(scenarios).find((x) => x.nom === scenario)!;
-    const voulue = choisir(s.modele.reponses ?? [], s.personne[parole - 1]!.dit);
+    const voulue = choisir(s.modele?.reponses ?? [], s.personne[parole - 1]!.dit);
     expect(voulue).toBeGreaterThanOrEqual(0);
-    const choisie = choisir(s.modele.reponses ?? [], entendu);
+    const choisie = choisir(s.modele?.reponses ?? [], entendu);
     if (echec) expect(choisie).not.toBe(voulue);
     else expect(choisie).toBe(voulue);
   });

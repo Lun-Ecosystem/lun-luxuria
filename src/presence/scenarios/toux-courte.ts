@@ -16,7 +16,7 @@ export default {
   personne: [
     { a: 320, dit: 'Raconte-moi la journée de demain', duree: 1280 },
     // 3008 − 2428, le premier son de la réponse 1
-    { apres: { joue: 1, ms: 580 }, dit: '(toux)', duree: 300, entendu: '' },
+    { apres: { joue: 1, ms: 580 }, dit: '(toux courte)', duree: 300, entendu: '' },
   ],
   modele: {
     reponses: [

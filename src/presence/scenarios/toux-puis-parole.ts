@@ -67,7 +67,7 @@ export default {
     },
     {
       id: 'chevauchement-garanti',
-      niveau: 'tous',
+      niveau: 'exact',
       mecanisme: 'suspension',
       dit: "elle ne parle pas par-dessus plus d'une tenue et une trame",
       mesure: 'chevauchement',
