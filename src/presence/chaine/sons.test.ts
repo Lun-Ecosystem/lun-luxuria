@@ -1,9 +1,11 @@
 // @vitest-environment node
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { PassThrough } from 'node:stream';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readWav, writeWav } from '../../listen/replay.ts';
 import type { Scenario } from '../scenario.ts';
 import {
@@ -13,6 +15,7 @@ import {
   nomDe,
   planDePartie,
   sonsDe,
+  synthPiper,
   synthSapi,
   synthWinRT,
   temoin,
@@ -21,6 +24,10 @@ import {
   type Synth,
   type Voix,
 } from './sons.ts';
+
+// No child is ever launched here: the launcher's own test sets what `spawn` returns.
+const { spawn } = vi.hoisted(() => ({ spawn: vi.fn() }));
+vi.mock('node:child_process', () => ({ spawn }));
 
 /** A tone, never a voice: `ms` of sound at 0.5, with `blanc` ms of silence on each side. */
 const ton = (ms: number, blanc = 0) => {
@@ -262,6 +269,32 @@ describe('voixDe', () => {
 
   it('takes the name of a Windows voice from its fixed list only', () => {
     expect(() => synthWinRT('Zira' as 'Julie')).toThrow(/Zira/);
+  });
+});
+
+describe('synthPiper', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('rejects past its limit once the killed child has closed, not before: its WAV is removed after it', async () => {
+    vi.useFakeTimers();
+    const enfant = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(() => true),
+    });
+    spawn.mockReturnValueOnce(enfant);
+    const dit = synthPiper(join(dir, 'piper.exe'), join(dir, 'voix.onnx'))('Bonjour.', dir);
+    const fini = vi.fn();
+    dit.then(fini, fini);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(enfant.kill).toHaveBeenCalled();
+    vi.useRealTimers();
+    // Longer than a removal of a file that is not there.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(fini).not.toHaveBeenCalled();
+    enfant.emit('close', null);
+    await expect(dit).rejects.toThrow('rien après 30 s, arrêté');
   });
 });
 

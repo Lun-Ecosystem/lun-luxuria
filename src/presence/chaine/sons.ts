@@ -279,9 +279,11 @@ function lancer(
     let out = '';
     let err = '';
     let ecriture: Error | undefined;
+    let arrete = false;
+    // Rejected at `close`, once the child is gone: until then, Windows refuses to remove the file it writes.
     const limite = setTimeout(() => {
+      arrete = true;
       p.kill();
-      ko(new Error(`${quoi} : rien après ${LIMITE_MS / 1000} s, arrêté`));
     }, LIMITE_MS);
     p.stdout.setEncoding('ascii').on('data', (d: string) => (out += d));
     p.stderr.setEncoding('utf8').on('data', (d: string) => (err += d));
@@ -293,7 +295,8 @@ function lancer(
     });
     p.on('close', (code) => {
       clearTimeout(limite);
-      if (code !== 0) ko(new Error(`${quoi} : ${err.trim() || `code ${code}`}`));
+      if (arrete) ko(new Error(`${quoi} : rien après ${LIMITE_MS / 1000} s, arrêté`));
+      else if (code !== 0) ko(new Error(`${quoi} : ${err.trim() || `code ${code}`}`));
       else if (ecriture) ko(new Error(`${quoi} : ${ecriture.message}`));
       else ok(out);
     });
