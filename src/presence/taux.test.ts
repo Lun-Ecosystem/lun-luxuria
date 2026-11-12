@@ -220,6 +220,54 @@ describe('the report of the rates', () => {
     expect(avec(20)).toBe('| 1 | transcription | hortense | 310 | 318 | 300 | 319 |');
   });
 
+  it('gives the rule of three for the race without a failure only, else how many of its games failed', () => {
+    const course = (vs: V[][]) =>
+      releveTaux(vs.map((verdicts, k) => ligne({ partie: `non-court#${k + 1}`, rang: k + 1, verdicts })))
+        .split('\n')
+        .find((l) => l.startsWith('La course'));
+    expect(course(Array.from({ length: 30 }, () => [v({})]))).toBe(
+      "La course (hortense) : zéro échec sur 30 parties met l'échec sous 10 %, à 95 % (règle de trois).",
+    );
+    expect(course([[v({})], [v({ etat: 'ratee', espece: 'absent' })], [v({})]])).toBe(
+      'La course (hortense) : 1 partie ratée sur 3.',
+    );
+  });
+
+  it("counts an error of the player once a game, keeps the known defect's line, and leaves it out of the drift", () => {
+    const tenues = (k: number, transcription: number) =>
+      ligne({
+        partie: `non-court#${k}`,
+        rang: k,
+        verdicts: [v({ id: 'pour-de-bon' }), v({ id: 'nul', etat: 'ratee', espece: 'hors_bornes', connu })],
+        delais: [{ tour: 1, ms: { transcription }, synthese: [] }],
+      });
+    const casse = { etat: 'ratee', espece: 'joueur', trouve: 'la page a cassé' } as const;
+    const texte = releveTaux([
+      tenues(1, 300),
+      tenues(2, 500),
+      ligne({
+        partie: 'non-court#3',
+        rang: 3,
+        verdicts: [v({ id: 'pour-de-bon', ...casse }), v({ id: 'nul', ...casse })],
+      }),
+    ]).split('\n');
+    expect(texte).toEqual(
+      expect.arrayContaining([
+        'Échecs par espèce : joueur 1.',
+        'Échecs par voix : hortense 1.',
+        '| non-court | hortense | 2 | 3 | 67 % |',
+        '| pour-de-bon | hortense | 2 | 0 | 0 | 100 % |',
+        '| nul | lun-luxuria#63 | hortense | 2 | 0 | 0 |',
+        '| Voix | Délai | Premier passage | Dernier passage |',
+        '| hortense | transcription | 300 | 500 |',
+        '### non-court#3 (hortense)',
+        'Erreur du joueur : la page a cassé.',
+      ]),
+    );
+    // Once, not as each expectation's failure.
+    expect(texte.filter((l) => l.includes('la page a cassé'))).toHaveLength(1);
+  });
+
   it('says it all, line by line', () => {
     const lignes = [
       ligne({
@@ -348,7 +396,7 @@ describe('the report of the rates', () => {
       '',
       'Ces taux valent pour faster:tiny sur ce poste, pas pour un autre modèle ni un autre poste.',
       '',
-      "La course (hortense) : zéro échec sur 3 parties met l'échec sous 100 %, à 95 % (règle de trois).",
+      'La course (hortense) : 2 parties ratées sur 3.',
       '',
       // A known defect counts nowhere here, whatever its state, as in a game held: its own table says it.
       'Échecs par espèce : en_trop 2.',
@@ -408,7 +456,7 @@ describe('the report of the rates', () => {
       '',
       '## Dérive',
       '',
-      '| Voix | Délai | Premier tour | Dernier tour |',
+      '| Voix | Délai | Premier passage | Dernier passage |',
       '|---|---|---|---|',
       '| hortense | transcription | 375 | 600 |',
       '| hortense | synthese | 150 | 190 |',

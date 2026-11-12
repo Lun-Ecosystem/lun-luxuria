@@ -99,6 +99,15 @@ export function resultat(j: Jouee, o: Contexte): Resultat {
   };
 }
 
+/** A game's error of the player: the judge gives it to each expectation, it is one for the game. */
+const joueurDe = (r: Resultat) => r.verdicts.find((v) => v.espece === 'joueur');
+
+/** What failed in a game: its error of the player alone, or each verdict out of a known defect that does not pass. */
+const fautesDe = (r: Resultat) => {
+  const joueur = joueurDe(r);
+  return joueur ? [joueur] : r.verdicts.filter((v) => !v.connu && !passe(v));
+};
+
 /**
  * A game held, the one definition: every verdict out of a known defect passes, and the false model had no request it
  * had no reply for. A known defect counts nowhere here, whatever its state.
@@ -117,7 +126,7 @@ export function echoue(lignes: readonly Resultat[]): string[] {
   return lignes.flatMap((r) => {
     if (r.raison !== undefined) return [];
     const qui = `${r.partie} (${r.voix})`;
-    const joueur = r.verdicts.find((v) => v.espece === 'joueur');
+    const joueur = joueurDe(r);
     if (joueur) return [`${qui} : erreur du joueur, ${String(joueur.trouve)}`];
     if (r.voix !== COURSE) return [];
     return [
@@ -160,7 +169,7 @@ const delaisDe = (d: Resultat['delais'][number]): [string, number][] => [
 
 /**
  * The report of the rates, from the lines alone: what they are worth, then by scenario, by expectation and by voice
- * every rate « Ce qu'est un taux » defines, the drift of the delays from the first round to the last, and each game
+ * every rate « Ce qu'est un taux » defines, the drift of the delays from the first pass to the last, and each game
  * failed with its file and its extracts.
  */
 export function releveTaux(lignes: readonly Resultat[]): string {
@@ -171,12 +180,11 @@ export function releveTaux(lignes: readonly Resultat[]): string {
   const groupes = (nom: string) =>
     voix.map((vx) => [vx, de(nom, vx)] as const).filter(([, rs]) => rs.length > 0);
   // As in a game held: a known defect counts nowhere, whatever its state; its own table says it.
-  const echecs = jouees.flatMap((r) =>
-    r.verdicts.filter((v) => !v.connu && !passe(v)).map((v) => ({ ...v, voix: r.voix })),
-  );
+  const echecs = jouees.flatMap((r) => fautesDe(r).map((v) => ({ ...v, voix: r.voix })));
   const transcription = unique(lignes.map((r) => r.transcription)).join(', ');
   const duree = jouees.reduce((t, r) => t + (r.dureeMs ?? 0), 0);
   const course = noms.map((nom) => de(nom, COURSE).length).filter((n) => n > 0);
+  const siennes = jouees.filter((r) => r.voix === COURSE);
 
   const out = [
     '# Relevé des taux',
@@ -190,8 +198,11 @@ export function releveTaux(lignes: readonly Resultat[]): string {
   ];
   if (course.length) {
     const n = Math.min(...course);
+    const echouees = siennes.filter((r) => !tenue(r)).length;
     out.push(
-      `La course (${COURSE}) : zéro échec sur ${n} parties met l'échec sous ${Math.min(100, Math.round(300 / n))} %, à 95 % (règle de trois).`,
+      echouees
+        ? `La course (${COURSE}) : ${compte(echouees, 'partie ratée', 'parties ratées')} sur ${siennes.length}.`
+        : `La course (${COURSE}) : zéro échec sur ${n} parties met l'échec sous ${Math.min(100, Math.round(300 / n))} %, à 95 % (règle de trois).`,
       '',
     );
   }
@@ -231,8 +242,10 @@ export function releveTaux(lignes: readonly Resultat[]): string {
     ) =>
       ids.flatMap((id) =>
         groupes(nom).flatMap(([vx, rs]) => {
-          const vs = rs.flatMap((r) => r.verdicts.filter((v) => v.id === id));
-          return vs.length && vs.every(garde) ? [f(id, vx, vs, rs.length)] : [];
+          // A game the player broke is in no expectation's count: its verdicts are the error's, once.
+          const sans = rs.filter((r) => !joueurDe(r));
+          const vs = sans.flatMap((r) => r.verdicts.filter((v) => v.id === id));
+          return vs.length && vs.every(garde) ? [f(id, vx, vs, sans.length)] : [];
         }),
       );
     const section = (titre: string, tete: string[], rangs: unknown[][]) => {
@@ -335,10 +348,16 @@ export function releveTaux(lignes: readonly Resultat[]): string {
     );
   }
 
-  // A round: the k-th game of each scenario in a voice. The drift compares the first round with the last.
+  // A pass: the k-th game of each scenario in a voice, by `rang`. The drift compares the first pass with the last,
+  // out of the games the player broke, which have no delay.
+  // shortcut: the medians pool every scenario, so a drift of one scenario alone is diluted; split them if one drifts.
   const derive = voix.flatMap((vx) => {
     const parRang = noms
-      .map((nom) => [...de(nom, vx)].sort((a, b) => a.rang - b.rang))
+      .map((nom) =>
+        de(nom, vx)
+          .filter((r) => !joueurDe(r))
+          .sort((a, b) => a.rang - b.rang),
+      )
       .filter((rs) => rs.length > 1);
     const valeurs = (rs: Resultat[], n: string) =>
       rs
@@ -352,7 +371,7 @@ export function releveTaux(lignes: readonly Resultat[]): string {
     });
   });
   if (derive.length)
-    out.push('## Dérive', '', ...table(['Voix', 'Délai', 'Premier tour', 'Dernier tour'], derive), '');
+    out.push('## Dérive', '', ...table(['Voix', 'Délai', 'Premier passage', 'Dernier passage'], derive), '');
 
   const manquent = unique(
     lignes.filter((r) => r.raison !== undefined).map((r) => `${r.scenario}\t${r.raison}`),
@@ -371,9 +390,10 @@ export function releveTaux(lignes: readonly Resultat[]): string {
   const ratees = jouees.filter((r) => !tenue(r));
   if (ratees.length) out.push('## Parties ratées', '');
   for (const r of ratees) {
-    const fautes = r.verdicts.filter((v) => !v.connu && !passe(v));
+    const fautes = fautesDe(r);
     out.push(`### ${r.partie} (${r.voix})`, '', `Déroulé : ${r.deroule ?? 'aucun'}.`, '');
-    if (fautes.length)
+    if (joueurDe(r)) out.push(`Erreur du joueur : ${String(fautes[0]!.trouve)}.`, '');
+    else if (fautes.length)
       out.push(
         ...table(
           ['Attendu', 'Espèce', 'Source', 'Trouvé'],
