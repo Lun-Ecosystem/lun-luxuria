@@ -49,7 +49,7 @@ export interface Verdict {
  * The verdict lets the CI pass: held and not a known defect, or a known defect as it is known, or a measure out of
  * its level.
  */
-export const passe = (v: Verdict): boolean =>
+export const passe = (v: Pick<Verdict, 'etat' | 'connu' | 'horsNiveau'>): boolean =>
   v.horsNiveau === true || (v.connu ? v.connu.conforme : v.etat === 'tenue');
 
 type Ligne = TraceEvent | BancEvent;

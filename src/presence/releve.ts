@@ -24,7 +24,7 @@ const etat = (v: Verdict) =>
   v.connu ? `${v.connu.conforme ? 'connue' : `${v.etat}, connue ailleurs`} (${v.connu.issue})` : v.etat;
 
 // The link it names on its own, when the game's first failure is named instead: a second defect is not hidden.
-const source = (v: Verdict) =>
+export const source = (v: Pick<Verdict, 'source' | 'propre'>) =>
   v.propre && v.propre !== v.source ? `${v.source} (propre : ${v.propre})` : v.source;
 
 export const table = (tete: string[], lignes: unknown[][]): string[] => [
@@ -112,7 +112,7 @@ const MAILLON: Partial<Record<DelayName, Mecanisme>> = {
   premiere_phrase: 'serveur',
   arret_coupure: 'suspension',
 };
-const DELAIS: DelayName[] = [
+export const DELAIS: DelayName[] = [
   'attente_fin',
   'transcription',
   'file_serveur',
@@ -155,6 +155,12 @@ export function releveChaine(parties: PartieChaine[]): string {
 const voixDe = (c: Partie, i: number) => {
   const d = c.banc.find((e) => e.name === 'parole' && e['etape'] === 'debut' && e['parole'] === i + 1);
   return d && c.page.find((e) => e.name === 'voix' && son(e) >= d.at);
+};
+
+/** The last transcription of the sentence the n-th speech (from 0) sounds in: what was heard of it. */
+export const transcrite = (c: Partie, i: number): TraceEvent | undefined => {
+  const voix = voixDe(c, i);
+  return voix && c.page.filter((e) => e.name === 'transcrite' && e.phrase === voix.phrase).at(-1);
 };
 
 /**
@@ -213,8 +219,7 @@ function annexe(p: Jouee): string[] {
       s.personne.map((x, i) => {
         const d = debuts.find((e) => e['parole'] === i + 1);
         if (!d) return [i + 1, x.dit, '(sautée)'];
-        const voix = voixDe(c, i);
-        const t = voix && c.page.filter((e) => e.name === 'transcrite' && e.phrase === voix.phrase).at(-1);
+        const [voix, t] = [voixDe(c, i), transcrite(c, i)];
         return [i + 1, x.dit, t?.['texte'], t?.['confiance'], voix && son(voix) - d.at];
       }),
     ),
