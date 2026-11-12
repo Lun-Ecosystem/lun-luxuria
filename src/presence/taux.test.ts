@@ -76,11 +76,11 @@ describe('a line per game', () => {
       exacte: chaine,
       transcription: 'faster:tiny',
       synthese: 'piper:fr_FR-siwis-medium',
+      sons: [
+        { source: 'cache:hortense', duree: 1635 },
+        { source: 'pose:oui.wav', duree: 300 },
+      ],
     };
-    const sons = [
-      { source: 'cache:hortense', duree: 1635 },
-      { source: 'pose:oui.wav', duree: 300 },
-    ];
     expect(
       resultat(jouee, {
         suite: '2026-11-12T10:00:00.000Z',
@@ -89,7 +89,6 @@ describe('a line per game', () => {
         voix: 'hortense',
         poste: 'PC (i7)',
         deroule: 'deroule-chaine-a-la-main-2.jsonl',
-        sons,
       }),
     ).toEqual({
       suite: '2026-11-12T10:00:00.000Z',

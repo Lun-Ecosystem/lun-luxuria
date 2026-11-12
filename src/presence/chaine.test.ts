@@ -722,7 +722,7 @@ describe.runIf(enChaine)('la chaîne', () => {
     v: Voix,
     nom: string,
     k: number,
-  ): Promise<{ raison: string } | { jouee: Jouee; inattendus: LigneServeur[]; sons: SonPret[] }> {
+  ): Promise<{ raison: string } | { jouee: Jouee; inattendus: LigneServeur[] }> {
     const raison = pourquoiPas(s);
     if (raison) return { raison };
     const sons = await sonsDe(s, DIR, v, POSES);
@@ -730,7 +730,6 @@ describe.runIf(enChaine)('la chaîne', () => {
     if ('manque' in plan) return { raison: plan.manque.join(', ') };
     const j = await partie(s, plan, sons, nom);
     const exacte = await jouer(s);
-    const prets = sons.personne as SonPret[];
     const jouee: Jouee = {
       scenario: s,
       verdicts: juger(s, j.partie, 'chaine'),
@@ -738,12 +737,12 @@ describe.runIf(enChaine)('la chaîne', () => {
       exacte,
       transcription: STT,
       synthese: s.voix ? 'fausse' : SYNTHESE,
-      sons: prets,
+      sons: sons.personne as SonPret[],
       ...(j.sortieMs === undefined ? {} : { latenceSortieMs: j.sortieMs }),
     };
     if (s.nom === 'deux-phrases' && k === 1)
       jouee.temoin = await temoinDeuxPhrases(s, sons, j.partie, exacte, plan);
-    return { jouee, inattendus: j.inattendus, sons: prets };
+    return { jouee, inattendus: j.inattendus };
   }
 
   it.each(
@@ -775,8 +774,8 @@ describe.runIf(enChaine)('la chaîne', () => {
         const verdicts = juger(s, chaine, 'chaine');
         ecrire(
           resultat(
-            { scenario: s, verdicts, chaine, exacte: chaine, transcription: STT, synthese },
-            { ...contexte, sons: [] },
+            { scenario: s, verdicts, chaine, exacte: chaine, transcription: STT, synthese, sons: [] },
+            contexte,
           ),
         );
         if (UNE) throw err;
@@ -799,7 +798,7 @@ describe.runIf(enChaine)('la chaîne', () => {
       }
       const { jouee, inattendus } = fait;
       writeFileSync(join(DIR, noms.deroule), deroule(jouee.chaine));
-      ecrire(resultat(jouee, { ...contexte, deroule: noms.deroule, sons: fait.sons }));
+      ecrire(resultat(jouee, { ...contexte, deroule: noms.deroule }));
       if (r === 1) parties.push(jouee);
       if (!UNE) return;
       expect(inattendus, 'demandes au modèle sans réponse prévue').toEqual([]);

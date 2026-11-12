@@ -806,7 +806,7 @@ describe('the report', () => {
         exacte: partie,
         transcription: 'faster:tiny',
         synthese: 'piper',
-        sons: [{ source: 'cache:julie' }],
+        sons: [{ source: 'cache:julie', duree: 1635 }],
         latenceSortieMs: 52,
         temoin,
       },
@@ -889,6 +889,7 @@ describe('the report', () => {
           exacte: partie,
           transcription: 'faster:tiny',
           synthese: 'piper',
+          sons: [],
         },
       ])
         .split('\n')

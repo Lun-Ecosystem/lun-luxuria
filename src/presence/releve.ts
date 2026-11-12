@@ -94,8 +94,8 @@ export interface Jouee {
   transcription: string;
   /** Her voice: the service's, without its path (`piper:fr_FR-siwis-medium`), or `fausse`, the player's. */
   synthese: string;
-  /** Where each speech's sound comes from, in the order of `personne`: `pose:non.wav`, `cache:julie`… */
-  sons?: readonly { source: string }[];
+  /** In the order of `personne`: where each speech's sound comes from (`pose:non.wav`, `cache:julie`…), its length. */
+  sons: readonly { source: string; duree: number }[];
   /** What `getOutputTimestamp` announces, once a game: never added to an instant (« Les deux horloges »). */
   latenceSortieMs?: number;
   /** The same scenario through Chromium's false device, re-timed on its first frame of sound. */
@@ -220,7 +220,7 @@ function annexe(p: Jouee): string[] {
       ['Parole', 'Dit', 'Son', 'Entendu', 'Confiance', 'Capture'],
       s.personne.map((x, i) => {
         const d = debuts.find((e) => e['parole'] === i + 1);
-        const source = p.sons?.[i]?.source;
+        const source = p.sons[i]?.source;
         if (!d) return [i + 1, x.dit, source, '(sautée)'];
         const [voix, t] = [voixDe(c, i), transcrite(c, i)];
         return [i + 1, x.dit, source, t?.['texte'], t?.['confiance'], voix && son(voix) - d.at];

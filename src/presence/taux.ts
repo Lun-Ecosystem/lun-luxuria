@@ -48,7 +48,7 @@ export interface Resultat {
 /** The race is hers: the voice whose failures fail the suite. */
 const COURSE = 'hortense';
 
-/** What a game's line needs beside the game: its place in the launch, and the sound of each speech. */
+/** What a game's line needs beside the game: its place in the launch. */
 export interface Contexte {
   suite: string;
   partie: string;
@@ -56,8 +56,6 @@ export interface Contexte {
   voix: string;
   poste: string;
   deroule?: string;
-  /** In the order of `personne`: where each sound comes from (`pose:non.wav`, `cache:julie`…) and its real length. */
-  sons: readonly { source: string; duree: number }[];
 }
 
 /** The line of a game played. */
@@ -92,8 +90,8 @@ export function resultat(j: Jouee, o: Contexte): Resultat {
           dit: p.dit,
           ...(typeof entendu === 'string' ? { entendu } : {}),
           ...(typeof confiance === 'number' ? { confiance } : {}),
-          son: o.sons[i]!.source,
-          dureeMs: o.sons[i]!.duree,
+          son: j.sons[i]!.source,
+          dureeMs: j.sons[i]!.duree,
         },
       ];
     }),
