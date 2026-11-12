@@ -5,6 +5,8 @@
 1. La voix : `uv run voix/service.py --stt faster:small --tts piper:<voix.onnx> [--rvc <url>]`. Autres briques :
    `--stt whisper-server:<url>` (whisper.cpp par Vulkan), `--tts kokoro:<modèle.onnx>:<voix.bin>`. `--lang` règle la
    langue transcrite (`fr` par défaut). Dans un onglet, c'est la seule façon de le lancer : l'écran renvoie ici.
+   - **Sans synthèse** : `--tts aucun`, ou sans `--tts`. `/tts` répond 503 et `/ping` dit `"tts": "aucun"` ; la
+     chaîne du banc s'en sert quand sa voix est servie par le joueur.
    - **Confiance** : avec faster-whisper, l'exponentielle de la moyenne d'`avg_logprob`, qui compte aussi horodatages
      et fin de texte. Avec whisper-server, la moyenne géométrique des probabilités des seuls jetons de texte
      (`verbose_json`), car son `avg_logprob` divise par un compte qui inclut les jetons spéciaux. Les deux ne se

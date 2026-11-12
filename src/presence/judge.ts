@@ -1,8 +1,10 @@
 import { delays, type TraceEvent, type TraceValue } from '../trace.ts';
 import {
   charger,
+  choisir,
   ECRIT_PAR,
   RANG,
+  rattacher,
   ScenarioRefuse,
   type Ancre,
   type Attendu,
@@ -10,6 +12,7 @@ import {
   type BancEvent,
   type Espece,
   type Filtre,
+  type Lieu,
   type Mecanisme,
   type Niveau,
   type Partie,
@@ -38,10 +41,16 @@ export interface Verdict {
   extrait: string[];
   /** A known defect: `conforme` while it gives its species and its value. */
   connu?: { issue: string; conforme: boolean };
+  /** An `exact` judged in the chain: a measure, it never fails and names no source of the others. */
+  horsNiveau?: true;
 }
 
-/** The verdict lets the CI pass: held and not a known defect, or a known defect as it is known. */
-export const passe = (v: Verdict): boolean => (v.connu ? v.connu.conforme : v.etat === 'tenue');
+/**
+ * The verdict lets the CI pass: held and not a known defect, or a known defect as it is known, or a measure out of
+ * its level.
+ */
+export const passe = (v: Verdict): boolean =>
+  v.horsNiveau === true || (v.connu ? v.connu.conforme : v.etat === 'tenue');
 
 type Ligne = TraceEvent | BancEvent;
 
@@ -72,8 +81,12 @@ const ligne = (e: Ligne) => {
  * a reply or a word of her own. Then the game's: every failure names the own link of lowest rank among the game's
  * failures (a known defect as known left out), when it is ranked before its own. One defect, one link named: the
  * first in the chain that failed, not each consequence downstream of it.
+ *
+ * In the chain (`lieu`), two more: a speech whose anchor never came names the link of its anchor (`voix` for a
+ * sound, `serveur` for a text received); and when the false model chose another reply on the text it received than
+ * on what the person said (none, a request it refused, counts as a choice), the transcription is the first link of every failure whose window reaches that call.
  */
-export function juger(s: Scenario, partie: Partie): Verdict[] {
+export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdict[] {
   const base = (a: Attendu) => ({
     id: a.id,
     niveau: a.niveau,
@@ -86,7 +99,7 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
   const tout = (espece: Espece, trouve: string): Verdict[] =>
     s.attendus.map((a) => ({ ...base(a), etat: 'ratee', espece, trouve }));
   try {
-    charger(s);
+    charger(s, lieu);
   } catch (err) {
     if (err instanceof ScenarioRefuse) return tout('scenario', err.raisons.join(' ; '));
     throw err;
@@ -140,6 +153,31 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
     return {};
   };
 
+  /**
+   * The first call where the false model chose, on the text it received, another reply than its rule chooses on
+   * what the person said (the speeches of the sentence sent, joined as the false transcription joins them). A text
+   * heard otherwise that changes nothing (« demand » for « demain ») names nothing.
+   */
+  const divergence = (): number | undefined => {
+    const reponses = s.modele?.reponses ?? [];
+    // A request refused chose no reply: -1, as `choisir` says it.
+    const appels = partie.banc.filter(
+      (e) => e.name === 'modele_appele' || (e.name === 'modele_inattendu' && e['sorte'] === 'stream'),
+    );
+    const envois = rattacher(appels, bancDe('envoi_recu'));
+    for (const [k, appel] of appels.entries()) {
+      const choisie = appel.name === 'modele_inattendu' ? -1 : appel.reponse;
+      const r = envois[k]?.reponse;
+      const phrase = partie.page.find((e) => e.name === 'numero' && e.reponse === r)?.phrase;
+      if (phrase === undefined) continue;
+      const dits = s.personne
+        .filter((_, i) => resoudre({ parole: i + 1 })?.phrase === phrase)
+        .map((p) => p.dit);
+      if (dits.length > 0 && choisir(reponses, dits.join(' ')) !== choisie) return appel.at;
+    }
+    return undefined;
+  };
+
   const convient = (a: AttenduEvenement, tour: { phrase?: number; reponse?: number }) => (e: Ligne) => {
     const ou: Filtre = a.ou ?? {};
     if (e.name !== a.evenement) return false;
@@ -156,9 +194,17 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
   const verdicts = new Map<string, Verdict>();
   /** Each failure's own link, or the expectation whose own link it takes. */
   const propres = new Map<string, Mecanisme | { ancre: string }>();
+  /** The end of each expectation's window: the whole game for one not played. */
+  const finFenetre = new Map<string, number>();
+  /** The link a speech that never sounded names: its anchor's, if it was skipped, else the listening. */
+  const muette = (n: number): Mecanisme => {
+    const apres = s.personne[n - 1]?.apres;
+    if (!apres || bancDe('parole_sautee', (e) => e['parole'] === n).length === 0) return 'ecoute';
+    return 'joue' in apres ? 'voix' : 'serveur';
+  };
   /** The link that opens a turn that never came. */
   const ouvreur = (t: Partial<Tour>): Mecanisme =>
-    'parole' in t && t.parole !== undefined ? 'ecoute' : 'serveur';
+    'parole' in t && t.parole !== undefined ? muette(t.parole) : 'serveur';
 
   const fenetre = (lo: number, hi: number) => lignes.filter((e) => e.at >= lo && e.at <= hi);
   const couverture = (lo: number, hi: number) => {
@@ -195,7 +241,7 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
             ? ouvreur(a.ou ?? {})
             : a.depuis && 'attendu' in a.depuis
               ? { ancre: a.depuis.attendu }
-              : 'ecoute';
+              : muette(a.depuis!.parole);
       } else {
         [lo, hi] = a.entre ? [depuis + a.entre[0], depuis + a.entre[1]] : [depuis, finPartie];
         const ok = convient(a, tour);
@@ -253,7 +299,9 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
       // Not played: it had no window.
       couverture: r.etat === 'non_jouee' ? [] : couverture(lo, hi),
       extrait: [],
+      ...(lieu === 'chaine' && a.niveau === 'exact' && { horsNiveau: true as const }),
     };
+    finFenetre.set(a.id, hi);
     if (v.etat === 'ratee') {
       const amont = s.mecanismes.filter((m) => RANG[m] < RANG[a.mecanisme]);
       // After an expectation held, an empty window says that anchor came late or early, not that nothing started.
@@ -280,14 +328,21 @@ export function juger(s: Scenario, partie: Partie): Verdict[] {
     return typeof p === 'string' ? p : propre(p.ancre);
   };
   const premier = tous
-    .filter((v) => v.etat !== 'tenue' && !v.connu?.conforme)
+    .filter((v) => v.etat !== 'tenue' && !v.connu?.conforme && !v.horsNiveau)
     .map((v) => propre(v.id))
     .sort((x, y) => RANG[x] - RANG[y])[0];
+  const transcrit = lieu === 'chaine' ? divergence() : undefined;
   for (const v of tous) {
     if (v.etat === 'tenue') continue;
     const own = propre(v.id);
     v.propre = own;
-    v.source = premier !== undefined && RANG[premier] < RANG[own] ? premier : own;
+    const amont =
+      transcrit !== undefined &&
+      finFenetre.get(v.id)! >= transcrit &&
+      (premier === undefined || RANG[premier] > RANG.transcription)
+        ? 'transcription'
+        : premier;
+    v.source = amont !== undefined && RANG[amont] < RANG[own] ? amont : own;
   }
   return tous;
 }

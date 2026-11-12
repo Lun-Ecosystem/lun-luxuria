@@ -10,3 +10,5 @@ graphify-out/
 # A trace holds what the person said: never in the repository.
 deroule*.jsonl
 releve-scenarios.md
+releve-chaine.md
+temoin-*.wav

@@ -5,7 +5,7 @@ import { DEFAULTS, type Settings } from '../settings.ts';
 import { Speaker } from '../speech/speaker.ts';
 import { Trace, TRACE_FORMAT } from '../trace.ts';
 import { FausseVoix, FauxServeur, fausseTranscription, Journal, trame } from './fakes.ts';
-import { DEFAUTS, type Partie, type Scenario } from './scenario.ts';
+import { ancre, DEFAUTS, merged, type Apres, type Partie, type Scenario } from './scenario.ts';
 
 /**
  * Plays a scenario through the real `Endpointer`, `Conversation` and `Speaker`, wired as the session wires them, on
@@ -13,25 +13,17 @@ import { DEFAUTS, type Partie, type Scenario } from './scenario.ts';
  * false. It imports `vi`, so it never plays in real time: step 3 takes the scenarios and the bricks, not the player.
  */
 
-const merged = (base: unknown, over: unknown): unknown =>
-  over && typeof over === 'object' && !Array.isArray(over)
-    ? Object.fromEntries(
-        [...new Set([...Object.keys(base as object), ...Object.keys(over)])].map((k) => [
-          k,
-          merged((base as Record<string, unknown>)[k], (over as Record<string, unknown>)[k]),
-        ]),
-      )
-    : over === undefined
-      ? base
-      : over;
-
-/** The end of the game: `jusqua`, or `DEFAUTS.finApresMs` after the last planned event. */
+/**
+ * The end of the game: `jusqua`, or `DEFAUTS.finApresMs` after the last event planned at an instant. An anchored
+ * speech or gesture pushes it back when it is placed.
+ */
 function fin(s: Scenario): number {
   if (s.jusqua !== undefined) return s.jusqua;
   const ends = [
-    ...s.personne.map((p) => p.a + p.duree),
+    ...s.personne.flatMap((p) => (p.a === undefined ? [] : [p.a + p.duree])),
     ...(s.bruits ?? []).map((b) => b.a + b.duree),
     ...(s.modele?.parle ?? []).map((p) => p.a),
+    ...(s.gestes ?? []).flatMap((g) => (g.a === undefined ? [] : [g.a])),
   ];
   return Math.max(0, ...ends) + DEFAUTS.finApresMs;
 }
@@ -52,7 +44,19 @@ async function partie(s: Scenario): Promise<Partie> {
   const layout = s.disposition ?? DEFAUTS.disposition;
   // A game keeps every turn it plays.
   const trace = new Trace(now, Infinity);
-  const journal = new Journal(now);
+  // The bricks read the speeches' instants when they need them: an anchored one gets its own once placed.
+  const personne = s.personne.map((p) => ({ ...p }));
+  const jeu: Scenario = { ...s, personne };
+  /** What waits for its anchor: a line of the log may bring it. */
+  const attente: { apres: Apres; poser: (a: number) => void }[] = [];
+  const journal = new Journal(now, () => {
+    for (const w of [...attente]) {
+      const a = ancre(w.apres, journal.events);
+      if (a === undefined) continue;
+      attente.splice(attente.indexOf(w), 1);
+      w.poser(Math.max(a, now()));
+    }
+  });
   // As `session.svelte.ts` (#params).
   const e = settings.endOfSpeech;
   const endpointer = new Endpointer({
@@ -69,11 +73,11 @@ async function partie(s: Scenario): Promise<Partie> {
     const last = trace.events.at(-1);
     return last?.name === 'son' ? last.reponse : undefined;
   };
-  const voix = new FausseVoix(s, journal, sounding, now);
-  const serveur = new FauxServeur(s, journal, (ev) => convo.onLive(ev));
+  const voix = new FausseVoix(jeu, journal, sounding, now);
+  const serveur = new FauxServeur(jeu, journal, (ev) => convo.onLive(ev));
   const convo: Conversation = new Conversation({
     brain: serveur,
-    stt: fausseTranscription(s, voix, frameMs),
+    stt: fausseTranscription(jeu, voix, frameMs),
     speaker: new Speaker(voix.synth, voix.output, (ev) => convo.onSpeaker(ev), trace),
     trace,
     settings: () => settings,
@@ -83,11 +87,40 @@ async function partie(s: Scenario): Promise<Partie> {
     on: () => {},
   });
 
-  // The world: what the person says and the noises, in the log at their instants.
+  // The world: what the person says, her gestures and the noises, in the log at their instants.
   const at = (ms: number, f: () => void) => setTimeout(f, ms);
-  for (const [i, p] of s.personne.entries()) {
-    at(p.a, () => journal.add('parole', { etape: 'debut', parole: i + 1 }));
-    at(p.a + p.duree, () => journal.add('parole', { etape: 'fin', parole: i + 1 }));
+  let end = fin(s);
+  const plusTard = (ms: number) => {
+    if (s.jusqua === undefined) end = Math.max(end, ms + DEFAUTS.finApresMs);
+  };
+  const sautes: (() => void)[] = [];
+  for (const [i, p] of personne.entries()) {
+    const poser = (a: number) => {
+      p.a = a;
+      at(a - now(), () => journal.add('parole', { etape: 'debut', parole: i + 1 }));
+      at(a + p.duree - now(), () => journal.add('parole', { etape: 'fin', parole: i + 1 }));
+      plusTard(a + p.duree);
+    };
+    if (p.apres) {
+      const w = { apres: p.apres, poser };
+      attente.push(w);
+      sautes.push(() => attente.includes(w) && journal.add('parole_sautee', { parole: i + 1 }));
+    } else poser(p.a!);
+  }
+  for (const g of s.gestes ?? []) {
+    // As the « Faire taire » button (`session.svelte.ts`, `silence`).
+    const poser = (a: number) => {
+      at(a - now(), () => {
+        journal.add('geste', { geste: g.geste, etape: 'fait' });
+        convo.silence();
+      });
+      plusTard(a);
+    };
+    if (g.apres) {
+      const w = { apres: g.apres, poser };
+      attente.push(w);
+      sautes.push(() => attente.includes(w) && journal.add('geste', { geste: g.geste, etape: 'saute' }));
+    } else poser(g.a!);
   }
   for (const b of s.bruits ?? []) {
     at(b.a, () => journal.add('bruit_joue', { etape: 'debut' }));
@@ -98,9 +131,11 @@ async function partie(s: Scenario): Promise<Partie> {
   /** The microphone's voice at an instant: the highest of what sounds then. */
   const voice = (t: number) => {
     let v = 0;
-    for (const p of s.personne) {
-      const inHole = (p.trous ?? []).some((h) => t >= p.a + h.a && t < p.a + h.a + h.duree);
-      if (t >= p.a && t < p.a + p.duree && !inHole) v = Math.max(v, p.voix ?? DEFAUTS.voix);
+    for (const p of personne) {
+      const a = p.a;
+      if (a === undefined) continue;
+      const inHole = (p.trous ?? []).some((h) => t >= a + h.a && t < a + h.a + h.duree);
+      if (t >= a && t < a + p.duree && !inHole) v = Math.max(v, p.voix ?? DEFAUTS.voix);
     }
     for (const b of s.bruits ?? []) if (t >= b.a && t < b.a + b.duree) v = Math.max(v, b.voix);
     if (s.echo && voix.sonne) v = Math.max(v, s.echo.voix);
@@ -109,7 +144,6 @@ async function partie(s: Scenario): Promise<Partie> {
 
   // As `session.svelte.ts` (#onFrame, #judged): read when it comes, judged after the frames before it.
   const modeleMs = s.modeleMs ?? DEFAUTS.modeleMs;
-  const end = fin(s);
   let frames: Promise<void> = Promise.resolve();
   let erreur: string | undefined;
   const frame = (t: number) => {
@@ -128,7 +162,9 @@ async function partie(s: Scenario): Promise<Partie> {
   };
   at(0, () => frame(0));
 
-  await vi.advanceTimersByTimeAsync(end);
+  // A speech placed late pushes the end back while the game runs.
+  while (now() < end) await vi.advanceTimersByTimeAsync(end - now());
+  for (const saute of sautes) saute();
   return {
     format: TRACE_FORMAT,
     page: [...trace.events],

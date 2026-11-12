@@ -6,8 +6,9 @@
 // écho finit en bruit. Se suspendre en boucle se mesurera à la chaîne, avec l'annulation d'écho.
 //
 // Le calcul (trames de 32 ms à partir de 0, DEFAUTS ; petit mode : filtre en service, fenêtre de 15 s) :
-// - elle parle seule à 1000 (pourquoi : spontaneous), synthèse → son 1150, 66 car. × 60 = 3960 ms ; son écho à 0,7
-//   (≥ 0,6) dès la trame 1152.
+// - elle parle seule à 1000 (pourquoi : spontaneous), coupée à sa première virgule comme le fait le serveur :
+//   phrase 1 « Il commence à pleuvoir, », synthèse → son 1150, 23 car. × 60 = 1380 ms ; son écho à 0,7 (≥ 0,6) dès
+//   la trame 1152.
 // - tenue 1152 + 384 = 1536 (386 ms après le début du son) → suspendue, son arrêté, l'écho cesse avec lui.
 //   Dernière trame 1536 ; pause 1696 → essai, transcrite 1846 : ses propres mots, pour elle par la fenêtre
 //   (rafraîchie à la tenue), envoyée ; fin 1536 + 704 = 2240 → confirmée → coupée, coupure au serveur.
@@ -65,7 +66,7 @@ export default {
       mecanisme: 'transcription',
       dit: 'la transcription rend ses propres mots',
       evenement: 'transcrite',
-      ou: { valeurs: { texte: 'Il commence à pleuvoir, pense à rentrer le linge qui sèche dehors.' } },
+      ou: { valeurs: { texte: 'Il commence à pleuvoir,' } },
     },
     {
       id: 'verdict-fenetre',
@@ -89,7 +90,7 @@ export default {
       mecanisme: 'serveur',
       dit: 'le serveur reçoit ses propres mots',
       evenement: 'envoi_recu',
-      ou: { valeurs: { texte: 'Il commence à pleuvoir, pense à rentrer le linge qui sèche dehors.' } },
+      ou: { valeurs: { texte: 'Il commence à pleuvoir,' } },
     },
   ],
 } satisfies Scenario;

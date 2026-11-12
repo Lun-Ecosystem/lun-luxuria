@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TraceEvent } from '../trace.ts';
 import { juger, passe, type Verdict } from './judge.ts';
-import { releve } from './releve.ts';
-import type { Attendu, BancEvent, Partie, Scenario } from './scenario.ts';
+import { releve, releveChaine } from './releve.ts';
+import type { Apres, Attendu, BancEvent, Partie, Scenario } from './scenario.ts';
 
 // One turn, written by hand: the person speaks from 1000 to 2000, the reply 101 sounds at 3424.
 const page: TraceEvent[] = [
@@ -361,6 +361,131 @@ describe('judging a game', () => {
   });
 });
 
+describe('judging a game of the chain', () => {
+  const mecanismes: Scenario['mecanismes'] = ['ecoute', 'transcription', 'filtre', 'serveur', 'voix'];
+  const nom: Attendu = {
+    ...commun,
+    id: 'n',
+    mecanisme: 'filtre',
+    evenement: 'verdict',
+    ou: { valeurs: { par: 'nom' } },
+  };
+  const joue: Attendu = {
+    ...commun,
+    niveau: 'tous',
+    id: 'j',
+    mecanisme: 'voix',
+    evenement: 'joue',
+    ou: { valeurs: { texte: 'x' } },
+  };
+
+  it('gives an `exact` as a measure: hors niveau, it passes, and names no source of the others', () => {
+    const [n, j] = juger(scenario([nom, joue], { mecanismes }), partie, 'chaine');
+    expect(n).toMatchObject({ etat: 'ratee', horsNiveau: true });
+    expect(passe(n!)).toBe(true);
+    expect(passe(j!)).toBe(false);
+    expect(j!.source).toBe('voix');
+    // At the exact level it fails, and its link is the source of the others.
+    const [ne, je] = juger(scenario([nom, joue], { mecanismes }), partie);
+    expect([ne!.horsNiveau, passe(ne!), je!.source]).toEqual([undefined, false, 'filtre']);
+  });
+
+  describe('a speech whose anchor never came', () => {
+    const sautee: Partie = {
+      ...partie,
+      banc: [...banc, { de: 'banc', at: 6000, name: 'parole_sautee', parole: 2 }],
+    };
+    const voix2: Attendu = { ...commun, niveau: 'tous', id: 'v2', evenement: 'voix', ou: { parole: 2 } };
+    const avec = (apres: Apres): Partial<Scenario> => ({
+      mecanismes,
+      modele: { reponses: [{ phrases: ['Il a plu cette nuit.'] }] },
+      personne: [
+        { a: 1000, dit: 'Le jardin est mouillé', duree: 1000 },
+        { dit: 'Oui', duree: 300, apres },
+      ],
+    });
+
+    it("gives what aims at it non_jouee, from its anchor's link", () => {
+      expect(juger(scenario([voix2], avec({ joue: 1, ms: 0 })), sautee, 'chaine')[0]).toMatchObject({
+        etat: 'non_jouee',
+        source: 'voix',
+      });
+      expect(juger(scenario([voix2], avec({ envoi: 1, ms: 0 })), sautee, 'chaine')[0]!.source).toBe(
+        'serveur',
+      );
+      const depuis = { ...voix2, ou: {}, depuis: { parole: 2, bord: 'debut' } } as Attendu;
+      expect(juger(scenario([depuis], avec({ joue: 1, ms: 0 })), sautee, 'chaine')[0]!.source).toBe('voix');
+    });
+
+    it('names the listening for a speech that sounded and opened nothing', () => {
+      expect(juger(scenario([voix2], avec({ joue: 1, ms: 0 })), partie, 'chaine')[0]!.source).toBe('ecoute');
+    });
+  });
+
+  describe('the source transcription', () => {
+    const modele = {
+      reponses: [{ si: 'jardin', phrases: ['Il a plu cette nuit.'] }, { phrases: ['Pardon ?'] }],
+    };
+    // The server writes the same raw text in the call and in what it received.
+    const appel = (reponse: number, avant: BancEvent[] = []): Partie => ({
+      ...partie,
+      banc: [
+        ...avant,
+        ...banc,
+        { de: 'banc', at: 2860, name: 'modele_appele', reponse, texte: 'Le jardin est mouillé' },
+      ],
+    });
+    const j = (p: Partie, lieu: 'exact' | 'chaine' = 'chaine') =>
+      juger(scenario([joue], { mecanismes, modele }), p, lieu)[0]!;
+
+    it('is named when the text heard made the false model choose another reply than what was said', () => {
+      expect(j(appel(1))).toMatchObject({ source: 'transcription', propre: 'voix' });
+    });
+
+    it('reads each call against the text it answers, not the text of its rank', () => {
+      // A try withdrawn in the queue: received, never given to the model.
+      const retiree: BancEvent = {
+        de: 'banc',
+        at: 2800,
+        name: 'envoi_recu',
+        texte: 'Le jardin',
+        reponse: 100,
+      };
+      expect(j(appel(1, [retiree]))).toMatchObject({ source: 'transcription', propre: 'voix' });
+    });
+
+    it('is named when the text heard chose no reply where what was said chose one', () => {
+      // « Arrête » heard « Arret ? »: the false model refuses, and keeps the end of the text.
+      const refus = (s: Partial<Scenario>) =>
+        juger(
+          scenario([joue], { mecanismes, ...s }),
+          {
+            ...partie,
+            banc: [
+              ...banc,
+              {
+                de: 'banc',
+                at: 2860,
+                name: 'modele_inattendu',
+                sorte: 'stream',
+                extrait: 'Le jardin est mouillé',
+              },
+            ],
+          },
+          'chaine',
+        )[0]!;
+      expect(refus({ modele })).toMatchObject({ source: 'transcription', propre: 'voix' });
+      // What was said chose none either: the scenario's, not the transcription's.
+      expect(refus({ modele: { reponses: [{ si: 'film', phrases: ['Un.'] }] } }).source).toBe('voix');
+    });
+
+    it('is not named when the text heard differs but the reply is the same, nor at the exact level', () => {
+      expect(j(appel(0))).toMatchObject({ source: 'voix', propre: 'voix' });
+      expect(j(appel(1), 'exact').source).toBe('voix');
+    });
+  });
+});
+
 describe('the report', () => {
   const v = (x: Partial<Verdict>): Verdict => ({
     id: 'x',
@@ -444,5 +569,160 @@ describe('the report', () => {
       '| chevauchement | connue (lun-luxuria#70) | hors_bornes | voix | 0 | [1, 432] |',
       '',
     ]);
+  });
+
+  it('of the chain: the measures apart, what the chain measured beside the exact level, and what was not played', () => {
+    // The same turn through the chain, written by hand: later at each step, its reply numbered 7.
+    const chaine: Partie = {
+      format: 2,
+      fin: 6000,
+      page: [
+        { at: 1030, name: 'voix', phrase: 1, son: 1025 },
+        { at: 1430, name: 'tenue', phrase: 1 },
+        { at: 2730, name: 'fin', phrase: 1, dernier_son: 2010 },
+        { at: 2730, name: 'essai', phrase: 1, essai: 1, final: true },
+        { at: 3100, name: 'transcrite', phrase: 1, essai: 1, texte: 'Le jardin est mouille', confiance: 0.7 },
+        { at: 3100, name: 'envoyee', phrase: 1, essai: 1, final: true },
+        { at: 3120, name: 'numero', phrase: 1, essai: 1, reponse: 7 },
+        { at: 3600, name: 'phrase_recue', phrase: 1, essai: 1, reponse: 7 },
+        { at: 3600, name: 'synthese', phrase: 1, essai: 1, reponse: 7, etape: 'debut', rang: 1 },
+        { at: 3700, name: 'synthese', phrase: 1, essai: 1, reponse: 7, etape: 'fin', rang: 1 },
+        { at: 3700, name: 'son', phrase: 1, essai: 1, reponse: 7, etape: 'debut', rang: 1 },
+        { at: 3700, name: 'premier_son', phrase: 1, essai: 1, reponse: 7 },
+      ],
+      banc: [
+        { de: 'banc', at: 1000, name: 'parole', etape: 'debut', parole: 1 },
+        { de: 'banc', at: 2000, name: 'parole', etape: 'fin', parole: 1 },
+        { de: 'banc', at: 3100, name: 'envoi_recu', reponse: 7 },
+        { de: 'banc', at: 3895, name: 'joue', reponse: 7, texte: 'Il a plu cette nuit.', tete: 191 },
+      ],
+    };
+    const temoin: Partie = {
+      ...chaine,
+      page: [
+        { at: 1050, name: 'voix', phrase: 1, son: 1040 },
+        { at: 1440, name: 'tenue', phrase: 1 },
+        { at: 2750, name: 'fin', phrase: 1, dernier_son: 2020 },
+      ],
+    };
+    const s = scenario([], {
+      personne: [
+        { a: 1000, dit: 'Le jardin est mouillé', duree: 1000, entendu: 'Le jardin', confiance: 0.8 },
+      ],
+      voix: { syntheseMs: 100 },
+    });
+    const texte = releveChaine([
+      {
+        scenario: s,
+        verdicts: [
+          v({ id: 'premier-son', niveau: 'tous', mecanisme: 'voix', trouve: 3700 }),
+          v({
+            id: 'phrase-pendant',
+            mecanisme: 'serveur',
+            etat: 'ratee',
+            espece: 'hors_bornes',
+            source: 'serveur',
+            trouve: 2500,
+            borne: [384, 2048],
+            extrait: ['3600  phrase_recue'],
+            horsNiveau: true,
+          }),
+        ],
+        chaine,
+        exacte: partie,
+        transcription: 'faster:tiny',
+        synthese: 'piper',
+        latenceSortieMs: 52,
+        temoin,
+      },
+      { scenario: { ...s, nom: 'echo-fort' }, raison: "l'écho passe par un vrai micro, étape 5" },
+    ]);
+    expect(texte.split('\n')).toEqual([
+      '# Relevé de la chaîne',
+      '',
+      'Attentes : 1 tenue, 0 ratée, 0 connue, 0 non jouée.',
+      '',
+      'Échecs par espèce : aucun.',
+      '',
+      'Échecs par source : aucun.',
+      '',
+      '## a-la-main',
+      '',
+      '| Attendu | État | Espèce | Source | Trouvé | Borne |',
+      '|---|---|---|---|---|---|',
+      '| premier-son | tenue |  |  | 3700 |  |',
+      '',
+      '### Mesures',
+      '',
+      '| Attendu | État | Espèce | Source | Trouvé | Borne |',
+      '|---|---|---|---|---|---|',
+      '| phrase-pendant | ratee | hors_bornes | serveur | 2500 | [384, 2048] |',
+      '',
+      '### La chaîne',
+      '',
+      'Transcription : faster:tiny. Sa voix : piper. Latence de sortie annoncée : 52 ms.',
+      '',
+      '| Parole | Dit | Entendu | Confiance | Capture |',
+      '|---|---|---|---|---|',
+      '| 1 | Le jardin est mouillé | Le jardin est mouille | 0.7 | 25 |',
+      '',
+      '| Tour | Délai | Exact | Chaîne | Écart | Maillon |',
+      '|---|---|---|---|---|---|',
+      '| 1 | attente_fin | 704 | 720 | 16 | ecoute |',
+      '| 1 | transcription | 150 | 370 | 220 | transcription |',
+      '| 1 | premiere_phrase | 420 | 500 | 80 | serveur |',
+      '| 1 | blanc_de_tour | 1424 | 1690 | 266 |  |',
+      '| 1 | synthese 1 | 150 | 100 | -50 | voix |',
+      '',
+      '| Son | Texte | joue − départ | Silence de tête | Web Audio |',
+      '|---|---|---|---|---|',
+      '| 1 | Il a plu cette nuit. | 195 | 191 | 4 |',
+      '',
+      'Le témoin par Chromium :',
+      '',
+      '| Décision | Sonde | Chromium | Écart |',
+      '|---|---|---|---|',
+      '| voix 1 | 1030 | 1050 | 20 |',
+      '| tenue 1 | 1430 | 1440 | 10 |',
+      '| fin 1 | 2730 | 2750 | 20 |',
+      '',
+      'Champs ignorés : personne[1].entendu, personne[1].confiance, voix.syntheseMs.',
+      '',
+      '## Non joués',
+      '',
+      '| Scénario | Raison |',
+      '|---|---|',
+      "| echo-fort | l'écho passe par un vrai micro, étape 5 |",
+      '',
+    ]);
+  });
+
+  it('of the chain: a request the false model refused fails the game, with its text and its source', () => {
+    const refus: BancEvent = {
+      de: 'banc',
+      at: 2854,
+      name: 'modele_inattendu',
+      sorte: 'stream',
+      extrait: 'Le jardin est mouillé',
+    };
+    const ligne = (si: string) =>
+      releveChaine([
+        {
+          scenario: scenario([], { modele: { reponses: [{ si, phrases: ['Un.'] }] } }),
+          verdicts: [v({})],
+          chaine: { ...partie, banc: [...banc, refus] },
+          exacte: partie,
+          transcription: 'faster:tiny',
+          synthese: 'piper',
+        },
+      ])
+        .split('\n')
+        .find((l) => l.startsWith('Échec :'));
+    // What was said chose a reply: the text heard is the source.
+    expect(ligne('jardin')).toBe(
+      'Échec : demande au modèle sans réponse prévue (stream), texte reçu « Le jardin est mouillé », extrait « Le jardin est mouillé », source : transcription.',
+    );
+    // What was said chose none either: the scenario's.
+    expect(ligne('film')).toMatch(/source : scenario\.$/);
   });
 });

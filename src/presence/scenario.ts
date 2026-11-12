@@ -41,10 +41,27 @@ export type BancNom =
   | 'retrait_recu'
   /** `reponse`, `entendu`: the words heard of it. */
   | 'coupure_recue'
-  /** `reponse`, `texte`: the sentence the output starts. */
+  /**
+   * `reponse`, `texte`: the sentence the output starts. At the chain's level, the probe dates its first sample not
+   * silent, and adds `tete`: the ms of silence at the head of the sound the voice service gave.
+   */
   | 'joue'
   /** `reponse`: the output stops, at its end or cut. */
-  | 'arrete';
+  | 'arrete'
+  /**
+   * `geste` 'silence', `etape` 'fait' | 'saute' | 'introuvable': a gesture of the person, played at its instant, never
+   * anchored, or (in the chain) its button not on the page.
+   */
+  | 'geste'
+  /** `parole`: an anchored speech whose anchor never came; it never sounded. */
+  | 'parole_sautee'
+  /** `reponse` (the index in `modele.reponses`, from 0), `texte`: what the false model behind the real server chose. */
+  | 'modele_appele'
+  /**
+   * `sorte` 'stream' | 'complete', `extrait`: the last 80 characters of a request the false model had no reply for.
+   * A 'stream' one answers a text received.
+   */
+  | 'modele_inattendu';
 
 /** A line of the player's log, merged with the page's trace in the same file. */
 export interface BancEvent {
@@ -78,7 +95,7 @@ export const ECRIT_PAR: Record<Mecanisme, { page: readonly TraceName[]; banc: re
   coupure: { page: ['coupee', 'arretee'], banc: ['coupure_recue'] },
   serveur: {
     page: ['envoyee', 'numero', 'phrase_recue', 'fin_recue', 'durees'],
-    banc: ['envoi_recu', 'retrait_recu'],
+    banc: ['envoi_recu', 'retrait_recu', 'modele_appele', 'modele_inattendu'],
   },
   voix: { page: ['synthese', 'son', 'premier_son', 'silence'], banc: ['joue', 'arrete', 'echo'] },
 };
@@ -107,9 +124,16 @@ export type DeepPartial<T> = T extends readonly unknown[]
     ? { [K in keyof T]?: DeepPartial<T[K]> }
     : T;
 
-/** What the person says, and when. */
+/**
+ * An instant anchored on the game, `ms` after it. `joue`: the start of the sound of sentence `phrase` (1 by default)
+ * of reply `joue` (the reply to the n-th text the server received, as `Tour`); `envoi`: the n-th text received.
+ */
+export type Apres = { joue: number; phrase?: number; ms: number } | { envoi: number; ms: number };
+
+/** What the person says, and when: at `a`, or after an anchor (one of the two). */
 export interface Parole {
-  a: number;
+  a?: number;
+  apres?: Apres;
   dit: string;
   duree: number;
   /** Probability of voice during the speech, `DEFAUTS.voix` by default. */
@@ -158,7 +182,17 @@ export interface Parle {
   phrases: string[];
 }
 
+/** A gesture of the person on the page: `silence` presses « Faire taire ». At `a`, or after an anchor. */
+export interface Geste {
+  geste: 'silence';
+  a?: number;
+  apres?: Apres;
+}
+
 export type Niveau = 'exact' | 'tous';
+
+/** Where a game is played: the false bricks on a false clock, or the real chain in real time. */
+export type Lieu = 'exact' | 'chaine';
 
 /**
  * From 1. `parole`: the sentence of the trace the n-th speech of `personne` sounds in, the one it opens or, said
@@ -251,11 +285,95 @@ export interface Scenario {
   modele?: { reponses?: Reponse[]; parle?: Parle[] };
   /** Her voice: synthesis time, sound time per character, texts whose synthesis fails. */
   voix?: { syntheseMs?: number; msParCaractere?: number; echoue?: string[] };
+  gestes?: Geste[];
   /** End of the game; by default `DEFAUTS.finApresMs` after the last planned event. */
   jusqua?: number;
   attendus: Attendu[];
   connus?: Connu[];
 }
+
+/** `over` on `base`, key by key; an array or a value replaces. */
+export const merged = (base: unknown, over: unknown): unknown =>
+  over && typeof over === 'object' && !Array.isArray(over)
+    ? Object.fromEntries(
+        [...new Set([...Object.keys(base as object), ...Object.keys(over)])].map((k) => [
+          k,
+          merged((base as Record<string, unknown>)[k], (over as Record<string, unknown>)[k]),
+        ]),
+      )
+    : over === undefined
+      ? base
+      : over;
+
+export const plain = (t: string): string => t.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+
+/** The false model's rule: the index of the first reply whose `si` the text contains, or of one without; -1: none. */
+export const choisir = (reponses: readonly Reponse[], texte: string): number =>
+  reponses.findIndex((x) => !x.si || plain(texte).includes(plain(x.si)));
+
+/**
+ * What the real server says of each sentence of a reply (the speaker of the chain's server): the first one
+ * may stop at its first `, ` outside brackets, from its third character, because a first sound matters more than a
+ * whole sentence; its rest follows as a sentence of its own. The others stay whole.
+ * shortcut: a sentence end before that comma keeps the sentence whole (the server would cut it there first); a
+ * scenario's sentence is one sentence. Go to the server's `sentenceEnd` if one ever holds two.
+ */
+export function morceaux(phrases: readonly string[]): string[][] {
+  return phrases.map((p, i) => {
+    if (i > 0) return [p];
+    let ouvertes = 0;
+    for (let k = 0; k < p.length; k++) {
+      const c = p[k]!;
+      if (c === '(' || c === '[') ouvertes++;
+      else if ((c === ')' || c === ']') && ouvertes > 0) ouvertes--;
+      else if ('.!?…\n'.includes(c)) return [p];
+      else if (c === ',' && p[k + 1] === ' ' && ouvertes === 0)
+        return k >= 2 ? [p.slice(0, k + 1), p.slice(k + 1).trim()] : [p];
+    }
+    return [p];
+  });
+}
+
+/** The instant an anchor gives in the player's log, or undefined while it has not come. */
+export function ancre(apres: Apres, journal: readonly BancEvent[]): number | undefined {
+  const envois = journal.filter((e) => e.name === 'envoi_recu');
+  if ('envoi' in apres) {
+    const e = envois[apres.envoi - 1];
+    return e && e.at + apres.ms;
+  }
+  const r = envois[apres.joue - 1]?.reponse;
+  if (r === undefined) return undefined;
+  const n = apres.phrase ?? 1;
+  const joues = journal.filter((e) => e.name === 'joue' && e.reponse === r);
+  // The probe numbers each sound's sentence; the exact level's `joue` has no number, its rank is the sentence.
+  const j = joues.some((e) => e['phrase'] !== undefined)
+    ? joues.find((e) => e['phrase'] === n)
+    : joues[n - 1];
+  return j && j.at + apres.ms;
+}
+
+/**
+ * For each call of the false model, the text received it answers: the first not yet taken with the same `texte` (the
+ * server writes the same raw string in both). A reply withdrawn or forgotten in the queue, or `fixed`, has no call.
+ * A request it refused (`modele_inattendu`) keeps only the last 80 characters, `extrait`: the texts compare by them.
+ */
+export function rattacher<E extends object>(appels: readonly E[], envois: readonly E[]): (E | undefined)[] {
+  const fin = (x: E) => {
+    const r = x as Record<string, unknown>;
+    return String(r['texte'] ?? r['extrait'] ?? '').slice(-80);
+  };
+  const pris = new Set<E>();
+  return appels.map((a) => {
+    const e = envois.find((x) => !pris.has(x) && fin(x) === fin(a));
+    if (e) pris.add(e);
+    return e;
+  });
+}
+
+/** The events that carry the person's words as heard: a transcribed text is never the same twice in the chain. */
+const MOTS_ENTENDUS: readonly string[] = ['transcrite', 'envoi_recu', 'modele_appele'];
+/** The server's lines: in the chain, merged by their numbers, not by their instant. */
+const LIGNES_SERVEUR: readonly string[] = ['envoi_recu', 'coupure_recue', 'retrait_recu'];
 
 /** A scenario badly written: every reason at once. */
 export class ScenarioRefuse extends Error {
@@ -267,8 +385,8 @@ export class ScenarioRefuse extends Error {
   }
 }
 
-/** Gives the scenario back as it is, or refuses it with its reasons. */
-export function charger(s: Scenario): Scenario {
+/** Gives the scenario back as it is, or refuses it with its reasons; `lieu`: where it is to be played. */
+export function charger(s: Scenario, lieu: Lieu = 'exact'): Scenario {
   const raisons: string[] = [];
   const ids = new Map<string, Attendu>();
   for (const a of s.attendus) {
@@ -277,6 +395,30 @@ export function charger(s: Scenario): Scenario {
     if (a.entre && a.entre[0] > a.entre[1]) raisons.push(`« ${a.id} » : bornes inversées`);
     if (!s.mecanismes.includes(a.mecanisme) && !('evenement' in a && a.absent))
       raisons.push(`« ${a.id} » : mécanisme ${a.mecanisme} hors des mécanismes du scénario`);
+    if (
+      a.niveau === 'tous' &&
+      'evenement' in a &&
+      MOTS_ENTENDUS.includes(a.evenement) &&
+      Object.keys(a.ou?.valeurs ?? {}).some((k) => k === 'texte' || k === 'entendu')
+    )
+      raisons.push(`« ${a.id} » : tous, compare les mots entendus de la personne`);
+  }
+  if (lieu === 'chaine') {
+    const cibles = new Set(
+      s.attendus.flatMap((a) =>
+        'evenement' in a && a.depuis && 'attendu' in a.depuis ? [a.depuis.attendu] : [],
+      ),
+    );
+    for (const a of s.attendus)
+      if (
+        a.niveau === 'tous' &&
+        'evenement' in a &&
+        LIGNES_SERVEUR.includes(a.evenement) &&
+        (a.entre || a.depuis || cibles.has(a.id))
+      )
+        raisons.push(
+          `« ${a.id} » : tous, une ligne du serveur avec bornes ou ancre, sans instant dans la chaîne`,
+        );
   }
   const anchor = (a: Attendu | undefined) =>
     a && 'evenement' in a && a.depuis && 'attendu' in a.depuis ? a.depuis.attendu : undefined;
@@ -284,6 +426,9 @@ export function charger(s: Scenario): Scenario {
     const to = anchor(a);
     const target = to === undefined ? undefined : ids.get(to);
     if (to !== undefined && !target) raisons.push(`« ${a.id} » : ancre vers « ${to} », inconnu`);
+    // In the chain an `exact` never fails, so it cannot carry one that must hold; at the exact level both are judged.
+    else if (lieu === 'chaine' && target && a.niveau === 'tous' && target.niveau === 'exact')
+      raisons.push(`« ${a.id} » : tous, ancré sur « ${to} », exact`);
     // Only an event found has an instant.
     else if (target && (!('evenement' in target) || target.absent))
       raisons.push(`« ${a.id} » : ancre vers « ${to} », qui n'a pas d'instant`);
@@ -299,7 +444,33 @@ export function charger(s: Scenario): Scenario {
   }
   for (const c of s.connus ?? [])
     if (!ids.has(c.attendu)) raisons.push(`connu (${c.issue}) : attendu « ${c.attendu} » absent`);
-  const paroles = [...s.personne].sort((x, y) => x.a - y.a);
+  const reponses = s.modele?.reponses ?? [];
+  /** What an anchor needs that `modele` does not plan. */
+  const imprevu = (x: Apres): string | undefined => {
+    if (!('joue' in x)) return undefined;
+    // shortcut: reply n is taken as the answer to speech n, as said; an anchor after a speech set aside needs better.
+    const p = s.personne[x.joue - 1];
+    const r = p && reponses[choisir(reponses, p.entendu ?? p.dit)];
+    if (!r) return `ancre vers la réponse ${x.joue}, que modele ne prévoit pas`;
+    // A sentence she says: a sentence of the model may be two (`morceaux`).
+    if ((x.phrase ?? 1) > morceaux(r.phrases).flat().length)
+      return `ancre vers la phrase ${x.phrase} de la réponse ${x.joue}, que modele ne prévoit pas`;
+    return undefined;
+  };
+  const places: [string, Parole | Geste][] = [
+    ...s.personne.map((p, i): [string, Parole] => [`parole ${i + 1}`, p]),
+    ...(s.gestes ?? []).map((g, i): [string, Geste] => [`geste ${i + 1}`, g]),
+  ];
+  for (const [qui, x] of places) {
+    if (x.a === undefined && !x.apres) raisons.push(`${qui} : ni a ni apres`);
+    if (x.a !== undefined && x.apres) raisons.push(`${qui} : a et apres à la fois`);
+    const pourquoi = x.apres && imprevu(x.apres);
+    if (pourquoi) raisons.push(`${qui} : ${pourquoi}`);
+  }
+  // Only instants written can overlap here: an anchored speech is placed by the game.
+  const paroles = s.personne
+    .filter((p): p is Parole & { a: number } => p.a !== undefined)
+    .sort((x, y) => x.a - y.a);
   for (let i = 1; i < paroles.length; i++)
     if (paroles[i - 1]!.a + paroles[i - 1]!.duree > paroles[i]!.a)
       raisons.push(`paroles à ${paroles[i - 1]!.a} et ${paroles[i]!.a} : elles se chevauchent`);

@@ -47,5 +47,10 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
 - La présence se joue en scénarios (`src/presence/scenarios/`, données seules) sur les vrais mécanismes et des briques
   fausses, en temps virtuel, dans `npm test` ; un écart du code devient une issue et un `connus`, jamais une borne
   élargie. `npm run scenarios` écrit `releve-scenarios.md` et les `deroule-<nom>.jsonl` dans `BANC_DIR/scenarios`.
+- `npm run mutations` mute le code au chargement (`tools/mutations.json`, `vitest.mutations.config.ts`, aucun fichier
+  touché) et rejoue les scénarios : chaque mutation doit faire échouer son maillon. Un motif changé : la table suit.
+- `npm run chaine` joue les scénarios sur la page construite dans Chrome, le service de voix et le serveur de la chaîne
+  (`npm run chaine` de Lun'Anima, lancé avant), en temps réel ; il écrit `releve-chaine.md` et les
+  `deroule-chaine-<nom>.jsonl` dans `BANC_DIR/chaine`. Sur le poste seulement, jamais en CI.
 - Le déroulé des derniers tours s'exporte par un bouton des réglages avancés de l'écoute, dans un onglet de navigateur
   seulement.

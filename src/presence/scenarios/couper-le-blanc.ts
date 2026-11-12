@@ -20,7 +20,8 @@ export default {
   mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'suspension', 'coupure', 'serveur', 'voix'],
   personne: [
     { a: 320, dit: 'Tu peux regarder mes messages', duree: 1280 },
-    { a: 3872, dit: 'Arrête', duree: 600 },
+    // 3872 − 2428, le premier son de la réponse 1 : dans le blanc qui suit sa phrase d'attente
+    { apres: { joue: 1, ms: 1444 }, dit: 'Arrête', duree: 600 },
   ],
   modele: {
     reponses: [

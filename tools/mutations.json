@@ -1,0 +1,59 @@
+{
+  "a": {
+    "quoi": "tenue doublée",
+    "fichier": "src/listen/endpoint.ts",
+    "motif": "this.#run >= p.holdMs",
+    "par": "this.#run >= 2 * p.holdMs",
+    "maillon": "ecoute"
+  },
+  "b": {
+    "quoi": "suspension coupée",
+    "fichier": "src/conversation.ts",
+    "motif": "this.#d.speaker.suspend(s.bargeIn.mode === 'soft', this.#phrase);",
+    "par": "void 0;",
+    "maillon": "suspension"
+  },
+  "c": {
+    "quoi": "retenue coupée",
+    "fichier": "src/conversation.ts",
+    "motif": "    const waiting = this.#unheard;",
+    "par": "    return;\n    const waiting = this.#unheard;",
+    "maillon": "retenue"
+  },
+  "d1": {
+    "quoi": "filtre qui laisse tout passer",
+    "fichier": "src/listen/filter.ts",
+    "motif": "): Verdict {\n",
+    "par": "): Verdict {\n  return { pass: true, by: 'off' };\n",
+    "maillon": "filtre"
+  },
+  "d2": {
+    "quoi": "phrase écartée qui passe",
+    "fichier": "src/listen/filter.ts",
+    "motif": "return { pass: false, reason: 'filtered' };",
+    "par": "return { pass: true, by: 'fenetre' };",
+    "maillon": "filtre"
+  },
+  "e": {
+    "quoi": "silence de 500 ms",
+    "fichier": "src/settings.ts",
+    "motif": "silenceMs: 700,",
+    "par": "silenceMs: 500,",
+    "maillon": "ecoute"
+  },
+  "f1": {
+    "quoi": "coupure qui n'arrête plus le son",
+    "fichier": "src/speech/speaker.ts",
+    "motif": "    now.sound.stop();\n    this.#trace",
+    "par": "    this.#trace",
+    "maillon": "suspension"
+  },
+  "f2": {
+    "quoi": "bouton qui n'arrête plus le son",
+    "fichier": "src/speech/speaker.ts",
+    "motif": "      now.sound.stop();\n",
+    "par": "",
+    "maillon": "voix",
+    "attend": "src/presence/scenarios/faire-taire.ts"
+  }
+}

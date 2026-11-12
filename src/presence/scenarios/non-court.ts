@@ -2,12 +2,13 @@
 //
 // Le calcul (trames de 32 ms à partir de 0, DEFAUTS, réglages par défaut : pause 160, silence 700, tenue 400,
 // coupure « tout de suite ») :
-// - parole 1, 320 → 1600 : envoyée à 1878 (réponse 1), confirmée à 2272 ; phrase 1 reçue 2278, son 2428, 83 car. ×
-//   60 = 4980 ms, 16 mots.
-// - « non », parole 2, 3136 → 3436 (300 ms) : 10 trames, 320 ms d'affilée < 384 : aucune tenue, elle parle encore.
-//   Dernière trame 3424 ; pause 3584 → essai, transcrite 3734 → pour elle (pas encore confirmé) ; fin 3424 + 704 =
-//   4128 → confirmée : la coupure part là, pas au verdict — l'essai à la pause n'est pour elle qu'à la fin de la
-//   phrase. Son arrêté 4128 − 2428 = 1700 ms après son début : 0,341 → 5 mots sur 16 (de 1556 à 1867 ms).
+// - parole 1, 320 → 1600 : envoyée à 1878 (réponse 1), confirmée à 2272 ; reçue 2278, coupée à sa première virgule
+//   comme le fait le serveur : phrase 1 « Demain matin il fera frais, » son 2428, 27 car. × 60 = 1620 ms ; phrase 2
+//   « puis le soleil… », son 4048, 55 car. × 60 = 3300 ms, 11 mots.
+// - « non », parole 2, 4768 → 5068 (300 ms) : 10 trames, 320 ms d'affilée < 384 : aucune tenue, elle parle encore.
+//   Dernière trame 5056 ; pause → essai → pour elle (pas encore confirmé) ; fin 5056 + 704 = 5760 → confirmée : la
+//   coupure part là, pas au verdict — l'essai à la pause n'est pour elle qu'à la fin de la phrase. Son arrêté
+//   5760 − 4048 = 1712 ms après le début de la phrase 2 : 0,519 → 5 mots sur 11, après les 5 de la phrase 1.
 import type { Scenario } from '../scenario.ts';
 
 export default {
@@ -19,7 +20,8 @@ export default {
   mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'suspension', 'coupure', 'serveur', 'voix'],
   personne: [
     { a: 320, dit: 'Raconte-moi la journée de demain', duree: 1280 },
-    { a: 3136, dit: 'Non', duree: 300 },
+    // 4768 − 4048, le premier son de la phrase 2, la longue ; 4768 sur une trame, comme 3136 au calcul d'avant
+    { apres: { joue: 1, phrase: 2, ms: 720 }, dit: 'Non', duree: 300 },
   ],
   modele: {
     reponses: [
@@ -50,7 +52,7 @@ export default {
       evenement: 'son',
       ou: { reponse: 1, valeurs: { etape: 'fin', arrete: true, par: 2 } },
       depuis: { parole: 2, bord: 'fin' },
-      // fin à 3424 + 704 = 4128, soit 692 ms après le bord 3436 ; une trame de marge
+      // fin à 5056 + 704 = 5760, soit 692 ms après le bord 5068 ; une trame de marge
       entre: [692, 724],
     },
     {
@@ -62,16 +64,16 @@ export default {
       evenement: 'arrete',
       ou: { reponse: 1 },
       depuis: { parole: 2, bord: 'fin' },
-      // fin à 4128, soit 692 ms après le bord 3436, une trame de marge ; le son finirait à 7408 sinon
+      // fin à 5760, soit 692 ms après le bord 5068, une trame de marge ; le son finirait à 7348 sinon
       entre: [692, 724],
     },
     {
       id: 'coupee',
       niveau: 'exact',
       mecanisme: 'coupure',
-      dit: 'coupée, cinq mots entendus sur seize',
+      dit: 'coupée, la phrase 1 et cinq mots sur onze de la phrase 2 entendus',
       evenement: 'coupee',
-      ou: { reponse: 1, valeurs: { entendu: 'Demain matin il fera frais,' } },
+      ou: { reponse: 1, valeurs: { entendu: 'Demain matin il fera frais, puis le soleil reviendra vers' } },
     },
     {
       id: 'coupure-recue',
@@ -79,7 +81,7 @@ export default {
       mecanisme: 'coupure',
       dit: 'le serveur reçoit les mots entendus',
       evenement: 'coupure_recue',
-      ou: { reponse: 1, valeurs: { entendu: 'Demain matin il fera frais,' } },
+      ou: { reponse: 1, valeurs: { entendu: 'Demain matin il fera frais, puis le soleil reviendra vers' } },
     },
     {
       id: 'pour-de-bon',
@@ -88,7 +90,8 @@ export default {
       dit: 'plus rien de la réponse 1 ne sonne',
       evenement: 'joue',
       ou: { reponse: 1 },
-      depuis: { attendu: 'son-arrete' },
+      // Dès le début de « non », plus tôt que l'arrêt du son : `son-arrete` est exact, une ancre `tous` n'y tient pas.
+      depuis: { parole: 2, bord: 'debut' },
       absent: true,
     },
   ],
