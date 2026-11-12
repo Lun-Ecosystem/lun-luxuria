@@ -260,7 +260,13 @@ function pcm(bytes: Uint8Array): Float32Array {
   return out;
 }
 
-/** A program at a fixed path, without a shell, the text on its standard input: what it writes on its output. */
+/** A synthesis never takes longer: past it, the child is killed. */
+const LIMITE_MS = 30_000;
+
+/**
+ * A program at a fixed path, without a shell, the text on its standard input: what it writes on its output. `quoi`
+ * names the voice in every error.
+ */
 function lancer(
   quoi: string,
   exe: string,
@@ -272,11 +278,23 @@ function lancer(
     const p = spawn(exe, args, { windowsHide: true, cwd });
     let out = '';
     let err = '';
+    let ecriture: Error | undefined;
+    const limite = setTimeout(() => {
+      p.kill();
+      ko(new Error(`${quoi} : rien après ${LIMITE_MS / 1000} s, arrêté`));
+    }, LIMITE_MS);
     p.stdout.setEncoding('ascii').on('data', (d: string) => (out += d));
     p.stderr.setEncoding('utf8').on('data', (d: string) => (err += d));
-    p.on('error', ko);
+    // EPIPE: the child closed its input before reading it; `close` says why, its error output first.
+    p.stdin.on('error', (e) => (ecriture = e));
+    p.on('error', (e) => {
+      clearTimeout(limite);
+      ko(new Error(`${quoi} : ${e.message}`));
+    });
     p.on('close', (code) => {
+      clearTimeout(limite);
       if (code !== 0) ko(new Error(`${quoi} : ${err.trim() || `code ${code}`}`));
+      else if (ecriture) ko(new Error(`${quoi} : ${ecriture.message}`));
       else ok(out);
     });
     p.stdin.end(texte, 'utf8');
@@ -295,7 +313,8 @@ async function powershell(quoi: string, script: string, texte: string): Promise<
  * Windows' French voice Hortense, through `System.Speech`, 16 kHz mono. The script is fixed and the text goes on the
  * standard input, never on the command line.
  */
-export const synthSapi: Synth = async (texte) => pcm(await powershell('synthSapi', SCRIPT_SAPI, texte));
+export const synthSapi: Synth = async (texte) =>
+  pcm(await powershell('synthSapi (Hortense)', SCRIPT_SAPI, texte));
 
 /** The voices `System.Speech` does not see, reached through WinRT: a fixed list, since the name is in the script. */
 const WINRT = ['Julie', 'Paul'] as const;
@@ -329,7 +348,7 @@ $s.Dispose()
 export function synthWinRT(nom: (typeof WINRT)[number]): Synth {
   if (!WINRT.includes(nom)) throw new Error(`synthWinRT : ${String(nom)} hors de la liste`);
   const script = scriptWinRT(nom);
-  return async (texte) => readWav(await powershell('synthWinRT', script, texte));
+  return async (texte) => readWav(await powershell(`synthWinRT (${nom})`, script, texte));
 }
 
 /** The speaker's number in `speaker_id_map` of `<modele>.json`, the file Piper reads beside its model. */
@@ -342,19 +361,26 @@ export function locuteurDe(modele: string, locuteur: string): number {
   return n;
 }
 
+/** A Piper voice's name, without its path: `piper:fr_FR-upmc-medium#pierre`. */
+const nomPiper = (modele: string, locuteur?: string) =>
+  `piper:${basename(modele).replace(/\.onnx$/i, '')}${locuteur ? `#${locuteur}` : ''}`;
+
 /**
  * A Piper voice through `piper.exe` (the C++ one, not the service's package) at the path given, without a shell: the
  * text on the standard input, the WAV in a file of the voice's folder, read (22 050 Hz, resampled by `readWav`), then
  * removed.
  */
 export function synthPiper(exe: string, modele: string, locuteur?: string): Synth {
-  const s = locuteur === undefined ? [] : ['-s', String(locuteurDe(modele, locuteur))];
+  // Both from here: launched from its own folder, a relative path would be read from there.
+  const [programme, onnx] = [resolve(exe), resolve(modele)];
+  const s = locuteur === undefined ? [] : ['-s', String(locuteurDe(onnx, locuteur))];
+  const quoi = `synthPiper (${nomPiper(onnx, locuteur)})`;
   return async (texte, dossier) => {
     const fichier = resolve(dossier, `piper-${randomUUID()}.wav`);
-    const args = ['-q', '-m', resolve(modele), ...s, '-f', fichier];
+    const args = ['-q', '-m', onnx, ...s, '-f', fichier];
     try {
       // In its own folder, where it finds espeak-ng's data.
-      await lancer('synthPiper', exe, args, texte, dirname(exe));
+      await lancer(quoi, programme, args, texte, dirname(programme));
       return readWav(await readFile(fichier));
     } finally {
       await rm(fichier, { force: true });
@@ -378,7 +404,7 @@ export function voixDe(spec: string, tts: string): Voix {
   const m = /^(.+\.onnx)(?:#([^#]+))?$/i.exec(entree.slice(barre + 1));
   if (!m) throw new Error(`voixDe : le modèle de Piper finit par .onnx : ${entree}`);
   const [modele, locuteur] = [m[1]!, m[2]];
-  const nom = `piper:${basename(modele).replace(/\.onnx$/i, '')}${locuteur ? `#${locuteur}` : ''}`;
+  const nom = nomPiper(modele, locuteur);
   const sienne =
     tts.startsWith('piper:') && basename(tts.slice(6)).toLowerCase() === basename(modele).toLowerCase();
   if (sienne && (locuteur === undefined || locuteurDe(modele, locuteur) === 0))
