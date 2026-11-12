@@ -180,8 +180,11 @@ describe('sonsDe', () => {
       expect(toux).toMatchObject({ source: 'pose:toux.wav', duree: 450 });
       expect(plein(toux)).toBe(true);
     }
-    // 600 ms of sound, no margin at the head, 100 ms at the end: 700 ms.
-    await expect(sonsDe(s(900), dir, hortense, true)).rejects.toThrow(/toux\.wav.*700.*900/);
+    // 600 ms of sound, and no margin on either side.
+    await expect(sonsDe(s(900), dir, hortense, true)).rejects.toThrow(/toux\.wav.*600.*900/);
+    // 400 ms of sound, then silence: its end's silence does not make up a duration of 450.
+    await writeFile(join(dir, 'sons', 'toux.wav'), writeWav([ton(400, 200)]));
+    await expect(sonsDe(s(450), dir, hortense, true)).rejects.toThrow(/toux\.wav.*400.*450/);
     expect(dits).toEqual([]);
   });
 

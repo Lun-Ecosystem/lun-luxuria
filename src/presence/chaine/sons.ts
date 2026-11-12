@@ -67,10 +67,10 @@ const BLOC = 20 * MS;
 
 /**
  * The sound between the first and the last 20 ms whose RMS reaches `SILENCE`, cut at their samples that reach it,
- * with `tete` before and `MARGE` after, within the sound; nothing of a silent one. A sound cut to its `duree` keeps no
- * margin at its head, so that its `duree` is all sound.
+ * with `marge` on each side, within the sound; nothing of a silent one. A sound cut to its `duree` keeps none, so that
+ * its `duree` is all sound.
  */
-function rogner(x: Float32Array, tete = MARGE): Float32Array {
+function rogner(x: Float32Array, marge = MARGE): Float32Array {
   const fort = (k: number) => {
     const [de, a] = [k * BLOC, Math.min(x.length, (k + 1) * BLOC)];
     let s = 0;
@@ -86,7 +86,7 @@ function rogner(x: Float32Array, tete = MARGE): Float32Array {
   while (a < b && Math.abs(x[a]!) < SILENCE) a++;
   while (b > a && Math.abs(x[b - 1]!) < SILENCE) b--;
   if (a >= b) return x.subarray(0, 0);
-  return x.subarray(Math.max(0, a - tete), Math.min(x.length, b + MARGE));
+  return x.subarray(Math.max(0, a - marge), Math.min(x.length, b + marge));
 }
 
 const pret = (samples: Float32Array, source: SonPret['source']): SonPret => ({
@@ -158,8 +158,8 @@ async function sonDeParole(p: Parole, dir: string, voix: Voix, poses: boolean): 
  * For each speech and each noise, a sound and its real length (kept when longer than `duree`), or why it is missing.
  * A speech: `dir/sons/<nom>.wav` when `poses`, then the voice's cache, then its synthesis; one between parentheses,
  * its file whatever `poses`, cut to its duration and refused shorter. A noise: `bruit.wav`, cut to its duration.
- * Leading and trailing silences are removed, but for 100 ms on each side; none is kept at the head of a sound cut to
- * its duration.
+ * Leading and trailing silences are removed, but for 100 ms on each side; none is kept around a sound cut to its
+ * duration.
  */
 export async function sonsDe(s: Scenario, dir: string, voix: Voix, poses: boolean): Promise<Sons> {
   const personne: SonDe[] = [];
