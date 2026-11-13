@@ -885,6 +885,68 @@ describe('nothing waits without end: the guards', () => {
     await flush();
     expect(t.sounds).toHaveLength(2);
   });
+
+  it.each([
+    ['a reply held back passes its guard', () => vi.advanceTimersByTimeAsync(1_000)],
+    [
+      'a reply held back whose stream breaks',
+      async (_, fail) => {
+        fail(new Error('flux coupé'));
+        await flush();
+      },
+    ],
+    [
+      'a reply held back that ends in error',
+      async (t) => {
+        t.sends[0]!.on({
+          type: 'done',
+          message: { ...message(10), status: 'error', error: 'Plafond atteint' },
+        });
+        await flush();
+      },
+    ],
+  ] as [string, (t: ReturnType<typeof setup>, fail: (err: Error) => void) => Promise<unknown>][])(
+    '%s while the next sentence is transcribed, which asks nothing: a cough holds nothing back, nothing thinks',
+    async (_, dies) => {
+      let n = 0;
+      let fail!: (err: Error) => void;
+      let aside!: (h: Heard) => void;
+      // The first is for her; the second comes back once the first is dead, and asks nothing.
+      const t = setup(
+        { endOfSpeech: { ...DEFAULTS.endOfSpeech, speculate: false } },
+        () =>
+          n++ === 0
+            ? Promise.resolve({ text: 'Bonjour toi', confidence: 0.9 })
+            : new Promise<Heard>((r) => (aside = r)),
+        () => false,
+        undefined,
+        undefined,
+        [
+          async (on, id) => {
+            on({ type: 'user', message: message(id) });
+            on({ type: 'reply', id: id + 100 });
+            return new Promise<void>((_, reject) => (fail = reject));
+          },
+        ],
+      );
+      t.convo.onEndpoint(ended);
+      await flush();
+      // A second short of its guard: it can go off while the next is transcribed, before that one's own.
+      await vi.advanceTimersByTimeAsync(59_000);
+      // He talks again while she is silent: the first is held back.
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(ended);
+      await flush();
+      await dies(t, fail);
+      aside({ text: 'Sous-titres par Amara.org', confidence: 0.9 });
+      await flush();
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint({ type: 'noise' });
+      await flush();
+      expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+      expect(named(t, 'retenue')).toHaveLength(1);
+    },
+  );
 });
 
 describe('an urgency', () => {
