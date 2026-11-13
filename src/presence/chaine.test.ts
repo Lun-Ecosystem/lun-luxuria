@@ -351,6 +351,7 @@ describe('le joueur réel, sans navigateur', () => {
       ['delai-modele-lent', 'modeleMs règle un faux ; ici le temps de Silero est le vrai'],
       ['echo-fort', "l'écho passe par un vrai micro et une vraie sortie, étape 5"],
       ['phrase-ecartee', 'petit mode, la fenêtre seule (session.svelte.ts:69)'],
+      ['taire-a-vide', 'petit mode, la fenêtre seule (session.svelte.ts:69)'],
     ]);
   });
 
