@@ -155,6 +155,8 @@ export class Session {
   #subtitleTimer: ReturnType<typeof setTimeout> | undefined;
   #traceTimer: ReturnType<typeof setTimeout> | undefined;
   #busySince = 0;
+  /** A question to the voice service about the microphone, still unanswered. */
+  #asking = false;
 
   get state(): BodyState {
     return stateOf({
@@ -418,10 +420,13 @@ export class Session {
       this.busy = false;
       return this.#applyMic();
     }
-    const taken = busyWith(
-      await appsOnMicrophone(this.#net.voice).catch(() => []),
-      this.settings.busy.ignored,
-    );
+    // The one before has not answered: another would only wait behind it, one more open request every turn.
+    if (this.#asking) return;
+    this.#asking = true;
+    const apps = await appsOnMicrophone(this.#net.voice)
+      .catch(() => [])
+      .finally(() => (this.#asking = false));
+    const taken = busyWith(apps, this.settings.busy.ignored);
     const now = Date.now();
     if (taken) this.#busySince = now;
     const next = taken || now - this.#busySince < this.settings.busy.returnSeconds * 1000;

@@ -232,6 +232,18 @@ describe('a microphone still opening', () => {
   });
 });
 
+describe('the detection of another app', () => {
+  it('a poll that does not answer: three turns of 3 s, one request', async () => {
+    vi.useFakeTimers();
+    const asked = vi.fn<typeof fetch>(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('fetch', asked);
+    const { s } = linked({ settings: { busy: { ...DEFAULTS.busy, on: true } } });
+    await s.enter();
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(asked.mock.calls.filter(([url]) => String(url).includes('/voix/micro'))).toHaveLength(1);
+  });
+});
+
 describe('the failure banner', () => {
   it('a message that goes through clears an older failure; one that fails replaces it', async () => {
     const { s } = linked();
