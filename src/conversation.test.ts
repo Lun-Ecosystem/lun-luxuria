@@ -947,6 +947,153 @@ describe('nothing waits without end: the guards', () => {
       expect(named(t, 'retenue')).toHaveLength(1);
     },
   );
+
+  describe('the line of replies nobody heard: what dies, asks nothing or is heard leaves it at any rank', () => {
+    const FOR: Heard = { text: 'Bonjour toi', confidence: 0.9 };
+    const NOTHING: Heard = { text: 'Sous-titres par Amara.org', confidence: 0.9 };
+    /** Each transcription waits to be given, in order; no reply ever comes unless told. */
+    const line = () => {
+      const give: ((h: Heard) => void)[] = [];
+      const t = setup(
+        { endOfSpeech: { ...DEFAULTS.endOfSpeech, speculate: false } },
+        () => new Promise<Heard>((r) => give.push(r)),
+        () => false,
+        undefined,
+        undefined,
+        Array.from({ length: 5 }, () => async (on: (e: SendEvent) => void, id: number) => {
+          on({ type: 'user', message: message(id) });
+          on({ type: 'reply', id: id + 100 });
+          return never();
+        }),
+      );
+      return { ...t, give };
+    };
+    type Line = ReturnType<typeof line>;
+    /** A sentence he holds, then ends; without `held`, too short to hold anything back. */
+    const said = (t: Line, held = true) => {
+      if (held) t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(ended);
+    };
+    const cough = async (t: Line) => {
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint({ type: 'noise' });
+      await flush();
+    };
+    /** The reply to the `k`-th send ends in error. */
+    const errs = async (t: Line, k: number) => {
+      t.sends[k]!.on({
+        type: 'done',
+        message: { ...message(10 + k), status: 'error', error: 'Plafond atteint' },
+      });
+      await flush();
+    };
+
+    it.each([
+      ['passes its guard', () => vi.advanceTimersByTimeAsync(1_000)],
+      ['ends in error', (t: Line) => errs(t, 0)],
+    ] as [string, (t: Line) => Promise<unknown>][])(
+      'a reply held back %s, third in line; the two sentences said since ask nothing: a cough holds nothing back',
+      async (_, dies) => {
+        const t = line();
+        said(t);
+        t.give[0]!(FOR);
+        await flush();
+        await vi.advanceTimersByTimeAsync(59_000);
+        said(t);
+        said(t);
+        await flush();
+        await dies(t);
+        t.give[1]!(NOTHING);
+        await flush();
+        t.give[2]!(NOTHING);
+        await flush();
+        await cough(t);
+        expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+        expect(named(t, 'retenue')).toHaveLength(1);
+      },
+    );
+
+    it.each([2, 3])(
+      '%i sentences that ask nothing, all ended before a verdict: a cough lights nothing',
+      async (n) => {
+        const t = line();
+        for (let i = 0; i < n; i++) said(t);
+        await flush();
+        for (let i = 0; i < n; i++) {
+          t.give[i]!(NOTHING);
+          await flush();
+        }
+        await cough(t);
+        expect(thinking(t)).toEqual([]);
+      },
+    );
+
+    it('a reply heard while it was third in line is never taken back after', async () => {
+      const t = line();
+      said(t);
+      t.give[0]!(FOR);
+      await flush();
+      // A short one for her holds nothing back; the next holds it back.
+      said(t, false);
+      t.give[1]!(FOR);
+      await flush();
+      // The reply to the first is being made as the next is said: it sounds whole while that one is transcribed.
+      t.say(110, 'Je réponds.');
+      t.convo.onLive({ type: 'speech-end', id: 110, why: 'reply' });
+      said(t);
+      await flush();
+      t.sounds[0]!.end();
+      await flush();
+      await errs(t, 1);
+      t.give[2]!(NOTHING);
+      await flush();
+      await cough(t);
+      expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+      said(t);
+      t.give[3]!(FOR);
+      await flush();
+      expect(t.calls).toEqual([]);
+    });
+
+    it('a reply further in the line outlives the one before it: the next sentence for her still replaces it', async () => {
+      const t = line();
+      said(t);
+      t.give[0]!(FOR);
+      await flush();
+      said(t, false);
+      t.give[1]!(FOR);
+      await flush();
+      said(t);
+      await flush();
+      // The reply to the second fails, the last asks nothing: the reply to the first is still on its way.
+      await errs(t, 1);
+      t.give[2]!(NOTHING);
+      await flush();
+      said(t);
+      t.give[3]!(FOR);
+      await flush();
+      expect(t.calls).toEqual(['cut 110 ""']);
+    });
+
+    it('a reply replaced by a sentence judged before the one between: it is never held back again', async () => {
+      const t = line();
+      said(t);
+      t.give[0]!(FOR);
+      await flush();
+      said(t);
+      said(t);
+      await flush();
+      // The last is for her and replaces the first; the one between asks nothing; the reply to the last fails.
+      t.give[2]!(FOR);
+      await flush();
+      t.give[1]!(NOTHING);
+      await flush();
+      await errs(t, 1);
+      await cough(t);
+      expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+      expect(named(t, 'retenue')).toHaveLength(1);
+    });
+  });
 });
 
 describe('an urgency', () => {
