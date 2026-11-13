@@ -132,6 +132,8 @@ function pourquoiPas(s: Scenario): string | undefined {
   if (s.echo) return "l'écho passe par un vrai micro et une vraie sortie, étape 5";
   if (s.disposition === 'small') return 'petit mode, la fenêtre seule (session.svelte.ts:69)';
   if (s.modeleMs !== undefined) return 'modeleMs règle un faux ; ici le temps de Silero est le vrai';
+  if (s.modele?.reponses?.some((r) => r.refus !== undefined))
+    return 'refus : le vrai serveur ne refuse pas sur commande';
   try {
     charger(s, 'chaine');
   } catch (err) {
@@ -350,6 +352,7 @@ describe('le joueur réel, sans navigateur', () => {
       ['aparte-parole-longue', 'petit mode, la fenêtre seule (session.svelte.ts:69)'],
       ['delai-modele-lent', 'modeleMs règle un faux ; ici le temps de Silero est le vrai'],
       ['echo-fort', "l'écho passe par un vrai micro et une vraie sortie, étape 5"],
+      ['fragment-refuse', 'refus : le vrai serveur ne refuse pas sur commande'],
       ['phrase-ecartee', 'petit mode, la fenêtre seule (session.svelte.ts:69)'],
       ['taire-a-vide', 'petit mode, la fenêtre seule (session.svelte.ts:69)'],
     ]);

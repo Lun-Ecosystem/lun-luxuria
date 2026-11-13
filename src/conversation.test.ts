@@ -24,6 +24,8 @@ function setup(
   heard: string | Error | string[] = 'Bonjour toi',
   silenced = () => false,
   refuse?: string,
+  /** The send throws, before any event, as the client on a reply the server refused. */
+  throws?: string,
 ) {
   let clock = 1000;
   const calls: string[] = [];
@@ -42,6 +44,7 @@ function setup(
     brain: {
       send: async (text, opts, on) => {
         sends.push({ text, opts, on });
+        if (throws) throw new Error(throws);
         const id = ids++;
         on({ type: 'user', message: message(id) });
         on({ type: 'reply', id: id + 100 });
@@ -282,6 +285,22 @@ describe('cutting it off', () => {
       expect(t.events.filter((e) => e.type === 'thinking' && e.on).length).toBeLessThanOrEqual(thinking);
     },
   );
+
+  it('a fragment the server refuses: she stays cut, nothing thinks, and the next sentence holds nothing back', async () => {
+    const t = await suspended({}, 'Bonjour toi', () => false, undefined, 'Message refusé');
+    t.convo.onEndpoint(pause);
+    await tick();
+    t.convo.onEndpoint(ended);
+    await tick();
+    expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+    expect(t.events.filter((e) => e.type === 'thinking').at(-1)).toEqual({ type: 'thinking', on: false });
+    // He talks again while she is silent, then it was only a sound: nothing was on its way to hold back.
+    const thinking = t.events.filter((e) => e.type === 'thinking').length;
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.events.filter((e) => e.type === 'thinking')).toHaveLength(thinking);
+  });
 
   it('a sentence the filter sets aside costs her nothing; « arrête » late in a long reply still cuts', async () => {
     const FILTERED = { filter: { scene: true, small: true } };
