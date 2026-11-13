@@ -23,7 +23,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Nothing private in a public repository
+      - name: 'Public surface: addresses, private paths, sounds, models'
         run: |
           git clone --depth 1 https://github.com/Lun-Ecosystem/lun-docs "$RUNNER_TEMP/lun-docs"
           node "$RUNNER_TEMP/lun-docs/tools/check-repo.mjs" --public .
