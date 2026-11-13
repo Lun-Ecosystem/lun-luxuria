@@ -23,10 +23,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: No internal address
+      - name: 'Public surface: addresses, private paths, sounds, models'
         run: |
           git clone --depth 1 https://github.com/Lun-Ecosystem/lun-docs "$RUNNER_TEMP/lun-docs"
-          node "$RUNNER_TEMP/lun-docs/tools/check-repo.mjs" --addresses .
+          node "$RUNNER_TEMP/lun-docs/tools/check-repo.mjs" --public .
       - name: Shared design tokens are in sync
         run: node "$RUNNER_TEMP/lun-docs/tools/sync-tokens.mjs" --check --monde luxuria src/lib/tokens.css
       - name: Shared front kit is in sync
@@ -44,11 +44,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: No sound tracked by git
-        run: |
-          if git ls-files | grep -iE '\.(wav|flac|mp3|ogg)$'; then
-            echo "A sound is tracked by git: recordings stay out of the repository."; exit 1
-          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 24

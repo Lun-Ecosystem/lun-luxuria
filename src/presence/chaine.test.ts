@@ -38,8 +38,9 @@ import {
 
 /**
  * The real player (plan 2026-11-11-chaine-laptop, task 9): each scenario through the built page in Chrome, the voice
- * service, faster-whisper and the server of the chain (Lun'Anima's `npm run chaine`), in real time. `npm run chaine`
- * only; `npm test` runs the merge and the list of scenarios not played, on lines written by hand.
+ * service, faster-whisper and the server of the chain (a compatible server on a fake model, launched before; in the
+ * Lun' ecosystem, the core provides it), in real time. `npm run chaine` only; `npm test` runs the merge and the list
+ * of scenarios not played, on lines written by hand.
  */
 
 /** A line of the server's journal, `serveur/journal.jsonl`: `t` is `Date.now()`, never compared with the page. */
@@ -544,8 +545,8 @@ describe.runIf(enChaine)('la chaîne', () => {
       ))
     )
       throw new Error(
-        `Le serveur de la chaîne ne répond pas sur ${SERVEUR} : lance « npm run chaine » dans Lun'Anima, ` +
-          `avec CHAINE_DIR=${DIR}.`,
+        `Le serveur de la chaîne ne répond pas sur ${SERVEUR} : lance-le avant, ` +
+          `sur le dossier ${DIR} (dans l'écosystème Lun', le core le fournit).`,
       );
     mkdirSync(DIR, { recursive: true });
     writeFileSync(RESULTATS, '');
@@ -573,8 +574,7 @@ describe.runIf(enChaine)('la chaîne', () => {
       body: JSON.stringify({ code, client: 'chaine' }),
     });
     jeton = r.ok ? ((await r.json()) as { token: string }).token : '';
-    if (!jeton)
-      throw new Error(`Appairage refusé (${r.status}) : relance « npm run chaine » dans Lun'Anima.`);
+    if (!jeton) throw new Error(`Appairage refusé (${r.status}) : relance le serveur de la chaîne.`);
     const { chromium } = await import('playwright-core');
     navigateur = await chromium.launch({ channel: 'chrome', headless: true, args: ARGS });
   }, 600_000);
