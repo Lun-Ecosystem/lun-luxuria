@@ -265,12 +265,18 @@ export class Conversation {
     this.#unheard = attempt;
   }
 
+  /** Nothing will answer it: out of the line even second in it, or a sentence that asks nothing falls back on it. */
+  #unlink(attempt: Attempt): void {
+    if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
+    else if (this.#unheard?.before === attempt) this.#unheard.before = attempt.before ?? null;
+  }
+
   /** Nothing will answer this sentence: the reply before it is the unheard one again, and comes out if held back. */
   #noAnswer(attempt: Attempt): void {
     this.#write('sans_reponse', this.#ref(attempt), {});
     // A try at a pause may have passed the filter: the sentence did not, its words go.
     if (attempt.phrase !== undefined) this.#d.trace?.forget(attempt.phrase);
-    if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
+    this.#unlink(attempt);
     this.#letGo(attempt);
   }
 
@@ -473,7 +479,7 @@ export class Conversation {
     if (e.type === 'done' && e.message.status === 'error' && !attempt.late) {
       attempt.errored = true;
       // No word will come: a turn held back for it must not block the next ones.
-      if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
+      this.#unlink(attempt);
       if (this.#heldBack === attempt) this.#heldBack = null;
       if (attempt.heldBack && attempt.replyId !== undefined) this.#d.speaker.drop(attempt.replyId);
       this.#write('sans_reponse', this.#ref(attempt), { raison: 'erreur' });
