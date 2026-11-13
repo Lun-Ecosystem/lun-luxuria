@@ -75,6 +75,8 @@ interface Attempt {
   passed?: boolean;
   /** Its send failed before the sentence ended: the end treats it as a whole sentence whose send failed. */
   failed?: boolean;
+  /** Its reply ended in error, said and written then: the end of its sentence only cuts what it suspended. */
+  errored?: boolean;
   /** The speaker talks again before its reply was heard: the reply waits for what that new sentence is. */
   heldBack?: boolean;
   /** That new sentence was for her: its reply is never said. The message itself stays. */
@@ -410,6 +412,7 @@ export class Conversation {
       } else this.#d.speaker.hold(e.id);
     } else if (e.type === 'done') this.#durations(e.message, this.#ref(attempt));
     if (e.type === 'done' && e.message.status === 'error') {
+      attempt.errored = true;
       // No word will come: a turn held back for it must not block the next ones.
       if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
       if (this.#heldBack === attempt) this.#heldBack = null;
@@ -456,7 +459,8 @@ export class Conversation {
     if (attempt.failed) {
       this.#d.on({ type: 'thinking', on: false });
       this.#noAnswer(attempt);
-    } else this.#d.on({ type: 'thinking', on: true });
+    } else if (attempt.errored) this.#unheard = attempt.before ?? null;
+    else this.#d.on({ type: 'thinking', on: true });
     if (attempt.replyId !== undefined) {
       this.#waitingReply = attempt.replyId;
       this.#d.speaker.release(attempt.replyId);
