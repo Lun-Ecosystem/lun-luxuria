@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mic = vi.hoisted(() => ({ open: vi.fn(async () => ({ stop: vi.fn() })) }));
 vi.mock('./audio.ts', () => ({
@@ -33,10 +33,32 @@ function linked(opts: { mute?: boolean; settings?: Partial<Settings>; beat?: 'ta
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+/** Each opening waits until the test lets the oldest one still waiting finish. */
+function openingsHeld() {
+  type Mic = Awaited<ReturnType<typeof mic.open>>;
+  const waiting: ((m: Mic) => void)[] = [];
+  const opened: Mic[] = [];
+  mic.open.mockImplementation(() => new Promise((resolve) => waiting.push(resolve)));
+  return {
+    opened,
+    finish() {
+      const m = { stop: vi.fn() };
+      opened.push(m);
+      waiting.shift()!(m);
+    },
+  };
+}
+
 beforeEach(() => {
   localStorage.clear();
-  mic.open.mockClear();
+  // Back to an opening that answers at once.
+  mic.open.mockReset();
   vi.stubGlobal('requestAnimationFrame', () => 0);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('the desk mute', () => {
@@ -170,6 +192,43 @@ describe('the desk mute', () => {
     const starts = sent.filter((x) => x.state === 'started');
     expect(starts).toHaveLength(2);
     expect(starts[1]!.opts).toMatchObject({ ritual: false, muted: true });
+  });
+});
+
+describe('a microphone still opening', () => {
+  it.each(['toggleMute', 'toggleMic'] as const)(
+    '%s while it opens: once open, it is stopped at once',
+    async (gesture) => {
+      const opening = openingsHeld();
+      const { s } = linked();
+      const entering = s.enter();
+      await flush();
+      expect(mic.open).toHaveBeenCalledOnce();
+      s[gesture]();
+      opening.finish();
+      await entering;
+      await flush();
+      expect(opening.opened[0]!.stop).toHaveBeenCalled();
+      expect(s.capturing).toBe(false);
+    },
+  );
+
+  it('called again while it opens: one opening at a time, none left open without its stop', async () => {
+    const opening = openingsHeld();
+    const { s } = linked();
+    const entering = s.enter();
+    await flush();
+    s.saveSettings({ ...s.settings });
+    s.toggleMic();
+    s.toggleMic();
+    await flush();
+    expect(mic.open).toHaveBeenCalledOnce();
+    opening.finish();
+    await entering;
+    await flush();
+    expect(mic.open).toHaveBeenCalledOnce();
+    expect(opening.opened[0]!.stop).not.toHaveBeenCalled();
+    expect(s.capturing).toBe(true);
   });
 });
 

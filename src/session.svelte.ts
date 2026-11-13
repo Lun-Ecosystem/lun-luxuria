@@ -139,6 +139,7 @@ export class Session {
   #keyInPhrase = false;
   #stop = new AbortController();
   #mic: { stop(): void } | null = null;
+  #micChanges: Promise<void> = Promise.resolve();
   #endpointer = new Endpointer();
   /** The model that tells a voice from a noise, once loaded; `false` when it could not be. */
   #silero: SileroVoice | false | null = null;
@@ -432,8 +433,18 @@ export class Session {
     }
   }
 
+  /**
+   * One change of the capture at a time, as the frames: a call during an opening waits for it, then reads the facts
+   * again. A change that threw does not stop the ones after it.
+   */
+  #applyMic(): Promise<void> {
+    const next = this.#micChanges.then(() => this.#followFacts());
+    this.#micChanges = next.catch(() => {});
+    return next;
+  }
+
   /** The state of the capture follows the facts: cut, nothing runs. */
-  async #applyMic(): Promise<void> {
+  async #followFacts(): Promise<void> {
     if (!this.entered) return;
     const should =
       this.micOn &&
