@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { Conversation, type ConversationEvent } from './conversation.ts';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Conversation, type ConversationEvent, type Heard } from './conversation.ts';
 import type { Message, SendEvent } from './brain.ts';
 import { DEFAULTS, type Settings } from './settings.ts';
 import { Speaker, type Clip, type Output } from './speech/speaker.ts';
@@ -21,12 +21,14 @@ const message = (id: number): Message => ({
 
 function setup(
   over: Partial<Settings> = {},
-  /** A list is one transcription per sentence, in order. */
-  heard: string | Error | string[] = 'Bonjour toi',
+  /** A list is one transcription per sentence, in order; a function is the transcription itself. */
+  heard: string | Error | string[] | ((signal?: AbortSignal) => Promise<Heard>) = 'Bonjour toi',
   silenced = () => false,
   refuse?: string,
   /** The send throws, before any event, as the client on a reply the server refused. */
   throws?: string,
+  /** One per send, in order, in place of its stream: `id` numbers its message, `id + 100` its reply. */
+  streams: ((on: (e: SendEvent) => void, id: number) => Promise<void>)[] = [],
 ) {
   let clock = 1000;
   const trace = new Trace(() => clock);
@@ -48,6 +50,8 @@ function setup(
         sends.push({ text, opts, on });
         if (throws) throw new Error(throws);
         const id = ids++;
+        const stream = streams.shift();
+        if (stream) return stream(on, id);
         on({ type: 'user', message: message(id) });
         on({ type: 'reply', id: id + 100 });
         if (refuse) on({ type: 'done', message: { ...message(id), status: 'error', error: refuse } });
@@ -55,7 +59,8 @@ function setup(
       cut: async (id, said) => void calls.push(`cut ${id} "${said}"`),
       withdraw: async (id) => void calls.push(`withdraw ${id}`),
     },
-    stt: async () => {
+    stt: async (_, signal) => {
+      if (typeof heard === 'function') return heard(signal);
       if (heard instanceof Error) throw heard;
       return { text: typeof heard === 'string' ? heard : (heard.shift() ?? ''), confidence: 0.9 };
     },
@@ -759,6 +764,100 @@ describe('the sentence sent before its end has bounds', () => {
     t.convo.onEndpoint(pause);
     await tick();
     expect(t.sends).toHaveLength(2);
+  });
+});
+
+describe('nothing waits without end: the guards', () => {
+  // A false clock: `tick` would wait on it, `flush` lets what is due happen.
+  beforeEach(() => void vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+  afterEach(() => void vi.useRealTimers());
+  const flush = () => vi.advanceTimersByTimeAsync(0);
+  const pause = { type: 'pause', audio: AUDIO } as const;
+  const ended = { type: 'end', audio: AUDIO, lastVoiceAt: 1000 } as const;
+  const thinking = (t: ReturnType<typeof setup>) => t.events.filter((e) => e.type === 'thinking');
+  const named = (t: ReturnType<typeof setup>, name: string) => t.trace.events.filter((e) => e.name === name);
+  const never = () => new Promise<never>(() => {});
+  /** A fragment at the pause, then the end of its sentence. */
+  const sentence = async (t: ReturnType<typeof setup>) => {
+    t.convo.onEndpoint(pause);
+    await flush();
+    t.convo.onEndpoint(ended);
+    await flush();
+  };
+
+  it('a transcription that never answers: at 20 s, nothing thinks, it is said once, its request is cut', async () => {
+    let signal: AbortSignal | undefined;
+    const t = setup({}, (s) => {
+      signal = s;
+      return never();
+    });
+    await sentence(t);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: true });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+    expect(t.events.filter((e) => e.type === 'failed')).toHaveLength(1);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('a send whose first sentence never comes: at 60 s, nothing thinks, its reply is cut, his message stays', async () => {
+    const t = setup();
+    await sentence(t);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: true });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(named(t, 'sans_reponse')).toHaveLength(1);
+  });
+
+  it('a try withdrawn: none of its guards goes off', async () => {
+    let n = 0;
+    // The first never answers; the second is sent, and its first sentence never comes.
+    const t = setup({}, () =>
+      n++ === 0 ? never() : Promise.resolve({ text: 'Bonjour toi', confidence: 0.9 }),
+    );
+    t.convo.onEndpoint(pause);
+    await flush();
+    t.convo.onEndpoint({ type: 'resume' });
+    t.convo.onEndpoint(pause);
+    await flush();
+    t.convo.onEndpoint({ type: 'resume' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.calls).toEqual(['withdraw 10']);
+    expect(t.events.filter((e) => e.type === 'failed' || e.type === 'thinking')).toEqual([]);
+    expect(named(t, 'sans_reponse')).toEqual([]);
+  });
+
+  it('a number that comes after the guard is forgotten: cut, and never said', async () => {
+    const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, [
+      async (on, id) => {
+        on({ type: 'user', message: message(id) });
+        return never();
+      },
+    ]);
+    await sentence(t);
+    await vi.advanceTimersByTimeAsync(60_000);
+    t.sends[0]!.on({ type: 'reply', id: 110 });
+    t.say(110, 'Trop tard.');
+    await flush();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(t.sounds).toHaveLength(0);
+  });
+
+  it('a fragment whose stream breaks after its number holds her voice no longer than the guard', async () => {
+    const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, [
+      async (on, id) => {
+        on({ type: 'user', message: message(id) });
+        on({ type: 'reply', id: id + 100 });
+        throw new Error('flux coupé');
+      },
+    ]);
+    await sentence(t);
+    // The next sentence has its reply.
+    await sentence(t);
+    t.say(111, 'Je réponds.');
+    await flush();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.sounds).toHaveLength(1);
   });
 });
 

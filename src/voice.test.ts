@@ -12,6 +12,17 @@ describe('the local voice', () => {
     expect((bodies[0] as ArrayBuffer).byteLength).toBe(8);
   });
 
+  it('a transcription can be cut: its signal goes to fetch', async () => {
+    const inits: RequestInit[] = [];
+    const f = (async (_: string, init: RequestInit) => {
+      inits.push(init);
+      return Response.json({ text: '', confidence: 0 });
+    }) as unknown as typeof fetch;
+    const stop = new AbortController();
+    await transcribe(new Float32Array(1), f, stop.signal);
+    expect(inits[0]!.signal).toBe(stop.signal);
+  });
+
   it('a service that does not answer is named, a refusal keeps its status', async () => {
     const down = (async () => {
       throw new TypeError('Failed to fetch');

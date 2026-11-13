@@ -354,7 +354,10 @@ describe('le joueur réel, sans navigateur', () => {
       ['echo-fort', "l'écho passe par un vrai micro et une vraie sortie, étape 5"],
       ['fragment-refuse', 'refus : le vrai serveur ne refuse pas sur commande'],
       ['phrase-ecartee', 'petit mode, la fenêtre seule (session.svelte.ts:69)'],
+      ['reponse-figee', 'garde : la vraie brique ne tarde pas sur commande'],
       ['taire-a-vide', 'petit mode, la fenêtre seule (session.svelte.ts:69)'],
+      ['transcription-figee', 'garde : la vraie brique ne tarde pas sur commande'],
+      ['transcription-lente', 'garde : la vraie brique ne tarde pas sur commande'],
     ]);
   });
 
