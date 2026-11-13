@@ -3,6 +3,7 @@ import { Conversation, type ConversationEvent } from './conversation.ts';
 import type { Message, SendEvent } from './brain.ts';
 import { DEFAULTS, type Settings } from './settings.ts';
 import { Speaker, type Clip, type Output } from './speech/speaker.ts';
+import { Trace } from './trace.ts';
 
 const tick = async () => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r));
@@ -28,6 +29,7 @@ function setup(
   throws?: string,
 ) {
   let clock = 1000;
+  const trace = new Trace(() => clock);
   const calls: string[] = [];
   const events: ConversationEvent[] = [];
   const sounds: { end: () => void; ratio: number }[] = [];
@@ -68,10 +70,11 @@ function setup(
     silenced,
     now: () => clock,
     on: (e) => events.push(e),
+    trace,
   });
   const say = (id: number, text: string) => convo.onLive({ type: 'speech', id, n: 1, text, why: 'reply' });
   const advance = (ms: number) => (clock += ms);
-  return { convo, calls, events, sounds, sends, say, advance };
+  return { convo, calls, events, sounds, sends, say, advance, trace };
 }
 
 describe('addressed: a phrase for her, said once the sentence is over', () => {
@@ -299,6 +302,24 @@ describe('cutting it off', () => {
     t.convo.onEndpoint({ type: 'held' });
     t.convo.onEndpoint({ type: 'noise' });
     await tick();
+    expect(t.events.filter((e) => e.type === 'thinking')).toHaveLength(thinking);
+  });
+
+  it('a fragment whose reply ends in error: she stays cut, nothing thinks, it is told once, nothing is held back', async () => {
+    const t = await suspended({}, 'Bonjour toi', () => false, 'Plafond atteint');
+    t.convo.onEndpoint(pause);
+    await tick();
+    t.convo.onEndpoint(ended);
+    await tick();
+    expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+    expect(t.events.filter((e) => e.type === 'thinking').at(-1)).toEqual({ type: 'thinking', on: false });
+    expect(t.trace.events.filter((e) => e.name === 'sans_reponse')).toHaveLength(1);
+    // He talks again while she is silent, then it was only a sound: nothing was on its way to hold back.
+    const thinking = t.events.filter((e) => e.type === 'thinking').length;
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.trace.events.filter((e) => e.name === 'retenue')).toHaveLength(0);
     expect(t.events.filter((e) => e.type === 'thinking')).toHaveLength(thinking);
   });
 
