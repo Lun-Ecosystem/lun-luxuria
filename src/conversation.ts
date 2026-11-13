@@ -318,7 +318,8 @@ export class Conversation {
     if (!waiting || waiting === by) return;
     this.#heldBack = null;
     waiting.superseded = true;
-    this.#answered(waiting);
+    // Its reply is no longer awaited; a transcription still running keeps its guard, it must end.
+    if (this.#unanswered.has(waiting)) this.#answered(waiting);
     if (by.before === waiting) by.before = null;
     if (waiting.replyId !== undefined) this.#forget(waiting.replyId);
   }
