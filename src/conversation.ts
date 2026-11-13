@@ -73,6 +73,8 @@ interface Attempt {
   keyHeld: boolean;
   /** Passed the filter as a fragment: it is for her only once the sentence ends on it. */
   passed?: boolean;
+  /** Its send failed before the sentence ended: the end treats it as a whole sentence whose send failed. */
+  failed?: boolean;
   /** The speaker talks again before its reply was heard: the reply waits for what that new sentence is. */
   heldBack?: boolean;
   /** That new sentence was for her: its reply is never said. The message itself stays. */
@@ -388,6 +390,7 @@ export class Conversation {
       d.on({ type: 'thinking', on: false });
       // Nothing will answer: what this sentence suspended, or held back, goes on.
       if (attempt.committed) this.#noAnswer(attempt);
+      else attempt.failed = true;
       this.#fail('Sa réponse n’est pas venue', err);
     }
   }
@@ -448,7 +451,12 @@ export class Conversation {
       this.#d.on({ type: 'addressed' });
       this.#supersede(attempt);
     }
-    this.#d.on({ type: 'thinking', on: true });
+    // The sentence was for her and what it suspended is cut, but nothing will answer it: as a whole sentence whose
+    // send failed, words already on their way still come out.
+    if (attempt.failed) {
+      this.#d.on({ type: 'thinking', on: false });
+      this.#noAnswer(attempt);
+    } else this.#d.on({ type: 'thinking', on: true });
     if (attempt.replyId !== undefined) {
       this.#waitingReply = attempt.replyId;
       this.#d.speaker.release(attempt.replyId);
