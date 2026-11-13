@@ -55,5 +55,47 @@
     "par": "",
     "maillon": "voix",
     "attend": "src/presence/scenarios/faire-taire.ts"
+  },
+  "transcription-figee": {
+    "quoi": "garde de transcription retirée",
+    "fichier": "src/conversation.ts",
+    "motif": "}, STT_TIMEOUT_MS);",
+    "par": "}, 2 ** 31 - 1);",
+    "maillon": "transcription"
+  },
+  "transcription-lente": {
+    "quoi": "garde qui accepte une réponse tardive",
+    "fichier": "src/conversation.ts",
+    "motif": "reject(new Error(`aucun texte en ${STT_TIMEOUT_MS / 1000} s`));",
+    "par": "this.#write('transcrite', this.#ref(attempt), { duree: d.now() - from, echec: true });\n            this.#noAnswer(attempt);",
+    "maillon": "filtre"
+  },
+  "reponse-figee": {
+    "quoi": "garde du serveur retirée",
+    "fichier": "src/conversation.ts",
+    "motif": "attempt.guard = setTimeout(() => this.#late(attempt), REPLY_TIMEOUT_MS);",
+    "par": "void 0;",
+    "maillon": "retenue"
+  },
+  "fragment-refuse": {
+    "quoi": "fragment refusé laissé en vie",
+    "fichier": "src/conversation.ts",
+    "motif": "    if (attempt.failed) {\n",
+    "par": "    if (attempt.failed && !attempt.failed) {\n",
+    "maillon": "retenue"
+  },
+  "taire-a-vide": {
+    "quoi": "stop() qui émet toujours",
+    "fichier": "src/speech/speaker.ts",
+    "motif": "    if (heard) this.#on({ type",
+    "par": "    this.#on({ type",
+    "maillon": "filtre"
+  },
+  "arrete-puis-question": {
+    "quoi": "synthèse d'un tour jeté",
+    "fichier": "src/speech/speaker.ts",
+    "motif": "    if (this.#gone.has(id)) return null;\n",
+    "par": "",
+    "maillon": "voix"
   }
 }
