@@ -40,18 +40,25 @@ const open = () => openMicrophone({ echoCancellation: true, noiseSuppression: tr
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('a microphone that could not open', () => {
   it.each([
     ['addModule', 'worklet refused'],
     ['node', 'node refused'],
-  ] as const)('%s throws: its tracks stop, its context closes, the error comes back', async (fails, said) => {
-    const { track, close } = browser(fails);
-    await expect(open()).rejects.toThrow(said);
-    expect(track.stop).toHaveBeenCalled();
-    expect(close).toHaveBeenCalled();
-  });
+  ] as const)(
+    '%s throws: its tracks stop, its context closes, its worklet URL goes, the error comes back',
+    async (fails, said) => {
+      const created = vi.spyOn(URL, 'createObjectURL');
+      const revoked = vi.spyOn(URL, 'revokeObjectURL');
+      const { track, close } = browser(fails);
+      await expect(open()).rejects.toThrow(said);
+      expect(track.stop).toHaveBeenCalled();
+      expect(close).toHaveBeenCalled();
+      expect(revoked).toHaveBeenCalledWith(created.mock.results[0]!.value);
+    },
+  );
 
   it('the context itself refused: its tracks stop, the error comes back', async () => {
     const { track } = browser('context');

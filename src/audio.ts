@@ -73,8 +73,11 @@ export async function openMicrophone(
   try {
     ctx = new AudioContext({ sampleRate: 16000 });
     const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
-    await ctx.audioWorklet.addModule(url);
-    URL.revokeObjectURL(url);
+    try {
+      await ctx.audioWorklet.addModule(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
     const node = new AudioWorkletNode(ctx, 'frames');
     node.port.onmessage = (e: MessageEvent<Float32Array>) => onFrame(e.data);
     ctx.createMediaStreamSource(stream).connect(node);
