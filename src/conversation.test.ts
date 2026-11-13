@@ -859,6 +859,32 @@ describe('nothing waits without end: the guards', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(t.sounds).toHaveLength(1);
   });
+
+  it('a sentence held back while it is transcribed, then replaced: it still fails at 20 s, and she goes on', async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    // The first never answers; the second is for her.
+    const t = setup({ endOfSpeech: { ...DEFAULTS.endOfSpeech, speculate: false } }, (s) => {
+      signals.push(s);
+      return signals.length === 1 ? never() : Promise.resolve({ text: 'Bonjour toi', confidence: 0.9 });
+    });
+    t.convo.onEndpoint(ended);
+    await flush();
+    // He talks again while she is silent: the first is held back, then the second replaces it.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(ended);
+    await flush();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(named(t, 'transcrite').filter((e) => e['echec'])).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(true);
+    // Her reply to the second, a cough over it: nothing waits on the first any more, she goes on.
+    t.say(110, 'Une phrase assez longue pour être coupée.');
+    t.say(110, 'La suite.');
+    await flush();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'noise' });
+    await flush();
+    expect(t.sounds).toHaveLength(2);
+  });
 });
 
 describe('an urgency', () => {
