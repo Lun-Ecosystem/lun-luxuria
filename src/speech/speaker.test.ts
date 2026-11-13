@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Trace } from '../trace.ts';
 import { readingMs, Speaker, wordsHeard, type Clip, type Output, type SpeakerEvent } from './speaker.ts';
 
 const CLIP: Clip = { samples: new Float32Array(1), rate: 16000 };
 const tick = () => new Promise((r) => setTimeout(r));
 
-function setup(synth: (t: string) => Promise<Clip> = async () => CLIP) {
+function setup(synth: (t: string) => Promise<Clip> = async () => CLIP, trace?: Trace) {
   const sounds: { end: () => void; stopped: boolean; ratio: number }[] = [];
   const out: Output = {
     play(_, onEnd) {
@@ -14,7 +15,7 @@ function setup(synth: (t: string) => Promise<Clip> = async () => CLIP) {
     },
   };
   const events: SpeakerEvent[] = [];
-  const speaker = new Speaker(synth, out, (e) => events.push(e));
+  const speaker = new Speaker(synth, out, (e) => events.push(e), trace);
   const subtitles = () => events.flatMap((e) => (e.type === 'subtitle' ? [e.text] : []));
   return { speaker, sounds, events, subtitles };
 }
@@ -163,6 +164,44 @@ describe('cutting it off', () => {
   it('nothing under way, nothing to tell', () => {
     expect(setup().speaker.stop()).toBeUndefined();
   });
+
+  it('silent already, a stop says nothing and writes no silence: a lost link stops it again and again', async () => {
+    const trace = new Trace(() => 0);
+    const t = setup(undefined, trace);
+    t.speaker.add(1, 'Un.');
+    t.speaker.end(1);
+    await tick();
+    t.sounds[0]!.end();
+    await tick();
+    const events = t.events.length;
+    t.speaker.stop();
+    t.speaker.stop();
+    expect(t.events).toHaveLength(events);
+    expect(trace.events.filter((e) => e.name === 'silence')).toHaveLength(1);
+  });
+
+  it.each(['stop', 'drop'] as const)(
+    'a turn thrown away by %s makes none of its sentences still in line',
+    async (how) => {
+      let made!: (c: Clip) => void;
+      const synth = vi.fn((text: string) =>
+        text === 'Un.' ? new Promise<Clip>((r) => (made = r)) : Promise.resolve(CLIP),
+      );
+      const t = setup(synth);
+      t.speaker.add(7, 'Un.');
+      t.speaker.add(7, 'Deux.');
+      t.speaker.add(7, 'Trois.');
+      await tick();
+      if (how === 'stop') t.speaker.stop();
+      else t.speaker.drop(7);
+      t.speaker.add(8, 'Suivante.');
+      made(CLIP);
+      await tick();
+      expect(synth.mock.calls.map(([text]) => text)).toEqual(['Un.', 'Suivante.']);
+      expect(t.subtitles()).toEqual(['Suivante.']);
+      expect(t.events.some((e) => e.type === 'failed')).toBe(false);
+    },
+  );
 
   it('words still on their way after a cut stay unheard, and block nothing', async () => {
     const t = setup();
