@@ -138,6 +138,8 @@ export class Speaker {
   }
 
   async #oneClip(text: string, id: number, rang: number): Promise<Clip | null> {
+    // Thrown away while it waited in line: nobody will hear it. One begun ends, the service finishes it anyway.
+    if (this.#gone.has(id)) return null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const write = (etape: string) => this.#trace?.add('synthese', { reponse: id }, { etape, rang });
     write('debut');
@@ -290,12 +292,14 @@ export class Speaker {
     const now = this.#playing;
     const turn = now?.turn ?? this.#turns.find((t) => t.suspended) ?? this.#turns[0];
     const reading = this.#reading !== null;
+    // Silent already, it says nothing: a stop again and again (a lost link) writes nothing and opens no window.
+    const heard = this.speaking || !!turn?.suspended;
     this.#playing = null;
     clearTimeout(this.#reading ?? undefined);
     this.#reading = null;
     for (const t of this.#turns) this.#gone.add(t.id);
     this.#turns = [];
-    this.#on({ type: 'silent', cut: now !== null || reading || !!turn?.suspended });
+    if (heard) this.#on({ type: 'silent', cut: now !== null || reading || !!turn?.suspended });
     if (!turn) return undefined;
     const said = [...turn.said];
     if (turn.suspended?.part) said.push(turn.suspended.part);
