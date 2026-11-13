@@ -247,7 +247,7 @@ export class Session {
     const out = webOutput(() => this.settings.voice.volume);
     const convo: Conversation = new Conversation({
       brain: this.brain,
-      stt: (audio) => transcribe(audio, this.#net.voice),
+      stt: (audio, signal) => transcribe(audio, this.#net.voice, signal),
       speaker: (this.#speaker = new Speaker(
         (text) => synthesize(text, this.#net.voice),
         out,

@@ -6,6 +6,7 @@ import { cpus, hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Browser, Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { REPLY_TIMEOUT_MS, STT_TIMEOUT_MS } from '../conversation.ts';
 import { DEFAULTS } from '../settings.ts';
 import type { TraceEvent, TraceValue } from '../trace.ts';
 import {
@@ -134,6 +135,11 @@ function pourquoiPas(s: Scenario): string | undefined {
   if (s.modeleMs !== undefined) return 'modeleMs règle un faux ; ici le temps de Silero est le vrai';
   if (s.modele?.reponses?.some((r) => r.refus !== undefined))
     return 'refus : le vrai serveur ne refuse pas sur commande';
+  if (
+    s.personne.some((p) => (p.transcriptionMs ?? 0) >= STT_TIMEOUT_MS) ||
+    s.modele?.reponses?.some((r) => (r.premierMotMs ?? 0) >= REPLY_TIMEOUT_MS)
+  )
+    return 'garde : la vraie brique ne tarde pas sur commande';
   try {
     charger(s, 'chaine');
   } catch (err) {

@@ -11,8 +11,16 @@ async function reach(f: typeof fetch, url: string, init: RequestInit): Promise<R
   }
 }
 
-export async function transcribe(audio: Float32Array, f: typeof fetch = fetch): Promise<Heard> {
-  const res = await reach(f, '/voix/stt', { method: 'POST', body: audio.slice().buffer });
+export async function transcribe(
+  audio: Float32Array,
+  f: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<Heard> {
+  const res = await reach(f, '/voix/stt', {
+    method: 'POST',
+    body: audio.slice().buffer,
+    signal: signal ?? null,
+  });
   if (!res.ok) throw new Error(`transcription refusée (${res.status})`);
   const { text, confidence } = (await res.json()) as Heard;
   return { text, confidence };
