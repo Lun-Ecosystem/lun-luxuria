@@ -323,6 +323,28 @@ describe('cutting it off', () => {
     expect(t.events.filter((e) => e.type === 'thinking')).toHaveLength(thinking);
   });
 
+  it('a reply held back, replaced by a fragment whose reply fails: forgotten, and nothing holds it again', async () => {
+    const t = setup();
+    t.convo.onEndpoint(pause);
+    await tick();
+    t.convo.onEndpoint(ended);
+    await tick();
+    // Its reply 110 is on its way, unheard; he talks again while she is silent: it is held back.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(pause);
+    await tick();
+    t.sends[1]!.on({ type: 'done', message: { ...message(11), status: 'error', error: 'Plafond atteint' } });
+    t.convo.onEndpoint(ended);
+    await tick();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(t.trace.events.filter((e) => e.name === 'oubliee')).toHaveLength(1);
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.trace.events.filter((e) => e.name === 'retenue')).toHaveLength(1);
+    expect(t.events.filter((e) => e.type === 'thinking').at(-1)).toEqual({ type: 'thinking', on: false });
+  });
+
   it('a sentence the filter sets aside costs her nothing; « arrête » late in a long reply still cuts', async () => {
     const FILTERED = { filter: { scene: true, small: true } };
     const aside = await suspended(FILTERED, 'On mange quoi ce soir');
