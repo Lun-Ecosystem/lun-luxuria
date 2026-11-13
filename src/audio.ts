@@ -1,6 +1,9 @@
 import type { Clip, Output, Playing } from './speech/speaker.ts';
 
-/** The browser's sound; nothing here can be tested without a sound card, so nothing decides here. */
+/**
+ * The browser's sound; nothing decides here. Only the cleanup of a microphone that could not open is tested, on a fake
+ * browser (`audio.test.ts`): what is heard and played needs a sound card.
+ */
 export function webOutput(volume: () => number): Output & { level(): number } {
   const ctx = new AudioContext();
   const analyser = ctx.createAnalyser();
