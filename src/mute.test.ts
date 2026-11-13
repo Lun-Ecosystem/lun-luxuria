@@ -233,14 +233,19 @@ describe('a microphone still opening', () => {
 });
 
 describe('the detection of another app', () => {
-  it('a poll that does not answer: three turns of 3 s, one request', async () => {
+  it('a poll that does not answer: three turns of 3 s, one request; once it answers, the next turn asks again', async () => {
     vi.useFakeTimers();
-    const asked = vi.fn<typeof fetch>(() => new Promise<Response>(() => {}));
+    const answers: ((r: Response) => void)[] = [];
+    const asked = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => answers.push(resolve)));
     vi.stubGlobal('fetch', asked);
+    const polls = () => asked.mock.calls.filter(([url]) => String(url).includes('/voix/micro'));
     const { s } = linked({ settings: { busy: { ...DEFAULTS.busy, on: true } } });
     await s.enter();
     await vi.advanceTimersByTimeAsync(9000);
-    expect(asked.mock.calls.filter(([url]) => String(url).includes('/voix/micro'))).toHaveLength(1);
+    expect(polls()).toHaveLength(1);
+    answers[0]!(Response.json({ apps: [] }));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(polls()).toHaveLength(2);
   });
 });
 
