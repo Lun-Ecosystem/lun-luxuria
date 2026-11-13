@@ -252,10 +252,11 @@ export class Conversation {
     }
   }
 
-  /** Its reply sounded, or was shown: it is no longer one to take back. */
+  /** Its reply sounded, or was shown: wherever it is in the line, neither it nor those before it are to take back. */
   #heard(replyId: number): void {
     if (this.#unheard?.replyId === replyId) this.#unheard = null;
-    else if (this.#unheard?.before?.replyId === replyId) this.#unheard.before = null;
+    else
+      for (let a = this.#unheard; a; a = a.before ?? null) if (a.before?.replyId === replyId) a.before = null;
   }
 
   /** A sentence that ended becomes the one whose reply nobody heard; the one before is kept in case it asks nothing. */
@@ -265,10 +266,12 @@ export class Conversation {
     this.#unheard = attempt;
   }
 
-  /** Nothing will answer it: out of the line even second in it, or a sentence that asks nothing falls back on it. */
+  /** Nothing will answer it: out of the line wherever it is, or a sentence that asks nothing falls back on it. */
   #unlink(attempt: Attempt): void {
     if (this.#unheard === attempt) this.#unheard = attempt.before ?? null;
-    else if (this.#unheard?.before === attempt) this.#unheard.before = attempt.before ?? null;
+    else
+      for (let a = this.#unheard; a; a = a.before ?? null)
+        if (a.before === attempt) a.before = attempt.before ?? null;
   }
 
   /** Nothing will answer this sentence: the reply before it is the unheard one again, and comes out if held back. */
@@ -326,7 +329,7 @@ export class Conversation {
     waiting.superseded = true;
     // Its reply is no longer awaited; a transcription still running keeps its guard, it must end.
     if (this.#unanswered.has(waiting)) this.#answered(waiting);
-    if (by.before === waiting) by.before = null;
+    this.#unlink(waiting);
     if (waiting.replyId !== undefined) this.#forget(waiting.replyId);
   }
 
