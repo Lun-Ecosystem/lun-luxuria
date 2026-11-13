@@ -63,6 +63,8 @@ export class Speaker {
   #waiting = false;
   /** Words shown without a voice, for the time to read them. */
   #reading: ReturnType<typeof setTimeout> | null = null;
+  /** A sentence of hers shown since she last fell silent: the page shows her speaking, or reading. */
+  #shown = false;
   #chain: Promise<unknown> = Promise.resolve();
   #synth: (text: string) => Promise<Clip>;
   #out: Output;
@@ -81,7 +83,11 @@ export class Speaker {
     this.#out = out;
     this.#trace = trace;
     this.#on = (e) => {
-      if (e.type === 'silent') trace?.add('silence', {}, { coupee: e.cut });
+      if (e.type === 'subtitle') this.#shown = true;
+      if (e.type === 'silent') {
+        this.#shown = false;
+        trace?.add('silence', {}, { coupee: e.cut });
+      }
       on(e);
     };
   }
@@ -293,7 +299,8 @@ export class Speaker {
     const turn = now?.turn ?? this.#turns.find((t) => t.suspended) ?? this.#turns[0];
     const reading = this.#reading !== null;
     // Silent already, it says nothing: a stop again and again (a lost link) writes nothing and opens no window.
-    const heard = this.speaking || !!turn?.suspended;
+    // Not `speaking`: between two turns, or after words without a voice, the page still shows her.
+    const heard = this.#shown || !!turn?.suspended;
     this.#playing = null;
     clearTimeout(this.#reading ?? undefined);
     this.#reading = null;

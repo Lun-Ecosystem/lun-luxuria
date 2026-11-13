@@ -180,6 +180,30 @@ describe('cutting it off', () => {
     expect(trace.events.filter((e) => e.name === 'silence')).toHaveLength(1);
   });
 
+  it.each([
+    ['a turn ended, the next one still being made', 'Un.', 'Deux.'],
+    ['a sentence shown without a voice, its time to read it gone', 'Muet.', 'Deux.'],
+  ])('%s: the page still shows her, the button says silent', async (_, first, next) => {
+    vi.useFakeTimers();
+    try {
+      const t = setup((x) => {
+        if (x === 'Muet.') return Promise.reject(new Error('boom'));
+        return x === 'Deux.' ? new Promise<Clip>(() => {}) : Promise.resolve(CLIP);
+      });
+      t.speaker.add(1, first);
+      t.speaker.end(1);
+      t.speaker.add(2, next);
+      await vi.advanceTimersByTimeAsync(0);
+      t.sounds[0]?.end();
+      await vi.advanceTimersByTimeAsync(readingMs(first));
+      expect(t.speaker.speaking).toBe(false);
+      t.speaker.stop();
+      expect(t.events.at(-1)).toEqual({ type: 'silent', cut: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['stop', 'drop'] as const)(
     'a turn thrown away by %s makes none of its sentences still in line',
     async (how) => {
