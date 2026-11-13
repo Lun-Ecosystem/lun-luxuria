@@ -65,19 +65,29 @@ export async function openMicrophone(
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, autoGainControl: false, ...opts },
   });
-  const ctx = new AudioContext({ sampleRate: 16000 });
-  const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
-  await ctx.audioWorklet.addModule(url);
-  URL.revokeObjectURL(url);
-  const node = new AudioWorkletNode(ctx, 'frames');
-  node.port.onmessage = (e: MessageEvent<Float32Array>) => onFrame(e.data);
-  ctx.createMediaStreamSource(stream).connect(node);
-  return {
-    stop() {
-      // A frame already on its way would be heard with the microphone off.
-      node.port.onmessage = null;
-      for (const t of stream.getTracks()) t.stop();
-      void ctx.close();
-    },
+  let ctx: AudioContext | undefined;
+  const close = () => {
+    for (const t of stream.getTracks()) t.stop();
+    void ctx?.close();
   };
+  try {
+    ctx = new AudioContext({ sampleRate: 16000 });
+    const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
+    await ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    const node = new AudioWorkletNode(ctx, 'frames');
+    node.port.onmessage = (e: MessageEvent<Float32Array>) => onFrame(e.data);
+    ctx.createMediaStreamSource(stream).connect(node);
+    return {
+      stop() {
+        // A frame already on its way would be heard with the microphone off.
+        node.port.onmessage = null;
+        close();
+      },
+    };
+  } catch (err) {
+    // No `stop` is given back: nothing else would ever close what is already open.
+    close();
+    throw err;
+  }
 }
