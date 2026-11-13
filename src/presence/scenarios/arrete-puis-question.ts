@@ -11,7 +11,7 @@
 // - parole 2, 400 ms après le premier son : 4678 → 5318, première trame de voix 4704, dernière 5312 ; pause 5472 →
 //   essai, transcrite 5622 → envoyée (réponse 2) ; fin 6016 → confirmée ; sa phrase reçue 6022, pendant la synthèse
 //   commencée : la sienne de 6278 à 8278, premier son 8278, 2000 ms après la fin de l'autre.
-// - 2000 ms et non 1000 : à 1000, la synthèse commencée finirait à 5278, avant que toute seconde demande ait sa
+// - 2000 ms et non 1000 : à 1000, la synthèse commencée finirait à 4278, avant que toute seconde demande ait sa
 //   phrase ; elle ne compterait plus dans ce premier son.
 // - jusqu'à 14000 : si les phrases 3 et 4 étaient synthétisées (6278 → 10278), la réponse 2 sonnerait à 12278 ; la
 //   partie le voit encore.
