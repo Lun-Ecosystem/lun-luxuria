@@ -2,11 +2,15 @@
 //! what a browser tab cannot: a window of its own, global keys, requests without CORS.
 
 mod body;
+#[cfg(test)]
+mod folders;
 mod idle;
 mod job;
 mod loopback;
 #[cfg(test)]
 mod net_scope;
+#[cfg(test)]
+mod one_box;
 mod programs;
 mod tray;
 mod voice;
