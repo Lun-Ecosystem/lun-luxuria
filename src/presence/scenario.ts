@@ -170,6 +170,8 @@ export interface Reponse {
   poste?: { apres: number; ms: number };
   /** The reply ends in this error. */
   erreur?: string;
+  /** The server refuses the text: `send` throws this once it is received, before any event, as the real client does. */
+  refus?: string;
 }
 
 /**

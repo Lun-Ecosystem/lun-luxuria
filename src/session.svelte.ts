@@ -139,6 +139,7 @@ export class Session {
   #keyInPhrase = false;
   #stop = new AbortController();
   #mic: { stop(): void } | null = null;
+  #micChanges: Promise<void> = Promise.resolve();
   #endpointer = new Endpointer();
   /** The model that tells a voice from a noise, once loaded; `false` when it could not be. */
   #silero: SileroVoice | false | null = null;
@@ -154,6 +155,8 @@ export class Session {
   #subtitleTimer: ReturnType<typeof setTimeout> | undefined;
   #traceTimer: ReturnType<typeof setTimeout> | undefined;
   #busySince = 0;
+  /** A question to the voice service about the microphone, still unanswered. */
+  #asking = false;
 
   get state(): BodyState {
     return stateOf({
@@ -244,7 +247,7 @@ export class Session {
     const out = webOutput(() => this.settings.voice.volume);
     const convo: Conversation = new Conversation({
       brain: this.brain,
-      stt: (audio) => transcribe(audio, this.#net.voice),
+      stt: (audio, signal) => transcribe(audio, this.#net.voice, signal),
       speaker: (this.#speaker = new Speaker(
         (text) => synthesize(text, this.#net.voice),
         out,
@@ -417,10 +420,13 @@ export class Session {
       this.busy = false;
       return this.#applyMic();
     }
-    const taken = busyWith(
-      await appsOnMicrophone(this.#net.voice).catch(() => []),
-      this.settings.busy.ignored,
-    );
+    // The one before has not answered: another would only wait behind it, one more open request every turn.
+    if (this.#asking) return;
+    this.#asking = true;
+    const apps = await appsOnMicrophone(this.#net.voice)
+      .catch(() => [])
+      .finally(() => (this.#asking = false));
+    const taken = busyWith(apps, this.settings.busy.ignored);
     const now = Date.now();
     if (taken) this.#busySince = now;
     const next = taken || now - this.#busySince < this.settings.busy.returnSeconds * 1000;
@@ -432,8 +438,18 @@ export class Session {
     }
   }
 
+  /**
+   * One change of the capture at a time, as the frames: a call during an opening waits for it, then reads the facts
+   * again. A change that threw does not stop the ones after it.
+   */
+  #applyMic(): Promise<void> {
+    const next = this.#micChanges.then(() => this.#followFacts());
+    this.#micChanges = next.catch(() => {});
+    return next;
+  }
+
   /** The state of the capture follows the facts: cut, nothing runs. */
-  async #applyMic(): Promise<void> {
+  async #followFacts(): Promise<void> {
     if (!this.entered) return;
     const should =
       this.micOn &&

@@ -168,6 +168,9 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
     // Numbered on receipt: every send waits the same `numeroMs`, so the order is the same.
     const id = ++this.#replies;
     this.#journal.add('envoi_recu', { texte: text, reponse: id });
+    const reponses = this.#s.modele?.reponses ?? [];
+    const r: Reponse = reponses[choisir(reponses, text)] ?? { phrases: [] };
+    if (r.refus !== undefined) throw new Error(r.refus);
     const userId = ++this.#users;
     const msg = (id: number, role: Message['role'], extra: Partial<Message> = {}): Message => ({
       id,
@@ -181,8 +184,6 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
     on({ type: 'user', message: msg(userId, 'user', { text }) });
     await sleep(DEFAUTS.numeroMs);
     on({ type: 'reply', id });
-    const reponses = this.#s.modele?.reponses ?? [];
-    const r: Reponse = reponses[choisir(reponses, text)] ?? { phrases: [] };
     const first = r.premierMotMs ?? DEFAUTS.premierMotMs;
     // From the text received (`Reponse`): the reply's number is already out.
     await sleep(first - DEFAUTS.numeroMs);
