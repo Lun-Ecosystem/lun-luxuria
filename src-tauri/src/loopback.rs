@@ -1,4 +1,32 @@
-//! The loopback rule, shared by the service's arguments and the program probe. Tests only for now.
+//! The loopback rule, shared by the service's arguments and the program probe. Read by hand, without a URL
+//! parser: the service reads the address again with httpx, and two parsers that differ would let a host through.
+
+const HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
+
+/**
+ * `http://` or `https://`, one of `HOSTS`, an optional port (1 to 65535), one `/` at most; scheme and host in any
+ * case, nothing else. Gives `host:port`, the host in lowercase, the scheme's port when there is none.
+ */
+pub fn addr(url: &str) -> Option<String> {
+    let url = url.to_ascii_lowercase();
+    let (rest, default) = match url.strip_prefix("http://") {
+        Some(rest) => (rest, 80),
+        None => (url.strip_prefix("https://")?, 443),
+    };
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    let (host, port) = HOSTS
+        .iter()
+        .find_map(|h| rest.strip_prefix(h).map(|p| (h, p)))?;
+    let port = match port.strip_prefix(':') {
+        None if port.is_empty() => default,
+        // Digits only: `u16` would read `+80`, which httpx may not.
+        Some(p) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
+            p.parse::<u16>().ok().filter(|&n| n != 0)?
+        }
+        _ => return None,
+    };
+    Some(format!("{host}:{port}"))
+}
 
 #[cfg(test)]
 mod tests {

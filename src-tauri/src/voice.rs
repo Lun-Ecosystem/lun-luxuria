@@ -1,5 +1,6 @@
 //! The voice service, started with the app when it is not already running. The program and the script are
-//! fixed; the folder must hold `service.py`; the arguments go to the script as they are, never through a shell.
+//! fixed; the folder must hold `service.py`; the arguments, bounded to the flags the screen fills
+//! (`checked_service_args`), go to the script as they are, never through a shell.
 //! Its output goes to a log file, emptied at each launch: a pipe nobody reads would block it. Only what this app
 //! started is stopped, and it joins the app's job (`job.rs`) so that it dies with it.
 
@@ -43,6 +44,113 @@ pub fn checked_args(args: &[String]) -> Result<(), String> {
         return Err("Argument illisible.".to_string());
     }
     Ok(())
+}
+
+/** The flags the screen fills, word for word: argparse reads an abbreviation (`--orig` for `--origin`). */
+const SERVICE_FLAGS: [&str; 5] = ["--stt", "--tts", "--rvc", "--rvc-gain", "--lang"];
+
+/**
+ * The service's arguments: the general limits, then `SERVICE_FLAGS` only, each with its value (`--flag=value` reads
+ * as `--flag value`), every occurrence checked since argparse keeps the last. A refusal names the field.
+ */
+pub fn checked_service_args(args: &[String]) -> Result<(), String> {
+    checked_args(args)?;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) => (flag, Some(value)),
+            None => (arg.as_str(), None),
+        };
+        if !SERVICE_FLAGS.contains(&flag) {
+            return Err(format!("Autres arguments : {flag} refusé."));
+        }
+        let value = inline
+            .or_else(|| rest.next().map(String::as_str))
+            .ok_or_else(|| format!("{flag} : valeur manquante."))?;
+        if value.starts_with('-') {
+            return Err(format!(
+                "{flag} : {value} refusé (une valeur ne commence pas par -)."
+            ));
+        }
+        checked_service_value(flag, value)?;
+    }
+    Ok(())
+}
+
+fn checked_service_value(flag: &str, value: &str) -> Result<(), String> {
+    // As the service reads it: `kind:rest`, split at the first `:`.
+    let (kind, rest) = value.split_once(':').unwrap_or((value, ""));
+    let near = |field: &str, url: &str| match crate::loopback::addr(url) {
+        Some(_) => Ok(()),
+        None => Err(format!(
+            "{field} : adresse refusée : {url} (127.0.0.1, localhost ou [::1] seulement)."
+        )),
+    };
+    match flag {
+        "--stt" => match kind {
+            // Empty: the service reads `small`. A name only: faster-whisper also reads a path (`.`, `..` included)
+            // or a repository.
+            "faster"
+                if rest.is_empty()
+                    || (rest.starts_with(|c: char| c.is_ascii_alphanumeric())
+                        && rest
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))) =>
+            {
+                Ok(())
+            }
+            "faster" => Err(format!(
+                "Transcription : modèle refusé : {value} (un nom, sans chemin ni dépôt)."
+            )),
+            "whisper-server" => near("Transcription", rest),
+            _ => Err(format!(
+                "Transcription : {value} refusé (faster: ou whisper-server: seulement)."
+            )),
+        },
+        "--rvc" => near("RVC", value),
+        "--tts" => match kind {
+            _ if value == "aucun" => Ok(()),
+            "piper" if voice_file(rest) => Ok(()),
+            "piper" => Err(format!(
+                "Voix : fichier refusé : {rest} (un .onnx de ce poste, par son chemin complet)."
+            )),
+            "kokoro" => Err("Voix : kokoro ne se lance pas depuis l’appli.".to_string()),
+            _ => Err(format!(
+                "Voix : {value} refusé (piper:<fichier .onnx> ou aucun)."
+            )),
+        },
+        // The page's own bound (`ServiceVoix.svelte`); a range holds neither infinity nor NaN.
+        "--rvc-gain"
+            if value
+                .parse::<f64>()
+                .is_ok_and(|g| (0.0..=10.0).contains(&g)) =>
+        {
+            Ok(())
+        }
+        "--rvc-gain" => Err(format!("{flag} : {value} refusé (un nombre de 0 à 10).")),
+        "--lang"
+            if (2..=3).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_lowercase()) =>
+        {
+            Ok(())
+        }
+        // `--lang`, the last of `SERVICE_FLAGS`: a flag added there without its rule is refused.
+        _ => Err(format!(
+            "{flag} : {value} refusé (deux ou trois lettres minuscules)."
+        )),
+    }
+}
+
+/**
+ * A `.onnx` file of this PC by its full path. The drive letter is checked first: a `\\host` or `//host` path would
+ * make Windows open a network connection as soon as the file is looked at.
+ */
+fn voice_file(path: &str) -> bool {
+    let file = Path::new(path);
+    matches!(path.as_bytes(), [l, b':', b'\\' | b'/', ..] if l.is_ascii_alphabetic())
+        && file
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("onnx"))
+        && file.is_file()
 }
 
 /** `uv run service.py <args>` in the folder, without a console. */
@@ -125,7 +233,7 @@ pub fn start(
         return Ok(log.display().to_string());
     }
     let root = checked_dir(dir)?;
-    checked_args(args)?;
+    checked_service_args(args)?;
     let out = open_log(log)?;
     spawn_into(&mut held, command(&root, args), out, args, log)
 }
@@ -166,7 +274,7 @@ fn restart_with(
         );
     }
     let root = checked_dir(dir)?;
-    checked_args(args)?;
+    checked_service_args(args)?;
     let out = open_log(log)?;
     // Ours, alive or already gone: it makes room for the new one.
     if let Some((mut child, _)) = held.take() {
@@ -281,7 +389,7 @@ mod tests {
         let dir = folder("cmd", true);
         let args = vec![
             "--tts".to_string(),
-            "piper:D:\\projets perso\\voix fr.onnx".to_string(),
+            "piper:C:\\voix\\ma voix.onnx".to_string(),
         ];
         let cmd = command(&dir, &args);
         assert_eq!(cmd.get_program(), "uv");
@@ -291,12 +399,7 @@ mod tests {
             .collect();
         assert_eq!(
             got,
-            [
-                "run",
-                "service.py",
-                "--tts",
-                "piper:D:\\projets perso\\voix fr.onnx"
-            ]
+            ["run", "service.py", "--tts", "piper:C:\\voix\\ma voix.onnx"]
         );
         assert_eq!(cmd.get_current_dir(), Some(dir.as_path()));
     }
@@ -508,7 +611,20 @@ mod service_args {
             "1",
         ]);
         ok(&["--rvc", "http://localhost:5000", "--rvc-gain", "0.75"]);
-        ok(&["--rvc", "http://[::1]:5000", "--rvc-gain", "-2"]);
+        // Out of the page's bound, 0 to 10 (`ServiceVoix.svelte`).
+        refused(
+            &["--rvc", "http://[::1]:5000", "--rvc-gain", "-2"],
+            "--rvc-gain",
+            "-2",
+        );
+    }
+
+    #[test]
+    fn a_gain_is_between_zero_and_ten() {
+        ok(&["--rvc-gain", "0"]);
+        ok(&["--rvc-gain", "10"]);
+        refused(&["--rvc-gain", "10.5"], "--rvc-gain", "10.5");
+        refused(&["--rvc-gain", "1e3"], "--rvc-gain", "1e3");
     }
 
     #[cfg(windows)]
@@ -644,6 +760,19 @@ mod service_args {
             "Transcription",
             "/inference",
         );
+    }
+
+    #[test]
+    fn an_empty_faster_model_name_passes() {
+        ok(&["--stt", "faster:"]);
+        ok(&["--stt", "faster"]);
+    }
+
+    #[test]
+    fn a_faster_name_that_does_not_start_with_a_letter_or_digit_is_refused() {
+        refused(&["--stt", "faster:."], "Transcription", "faster:.");
+        refused(&["--stt", "faster:.."], "Transcription", "faster:..");
+        refused(&["--stt", "faster:_small"], "Transcription", "_small");
     }
 
     #[test]
