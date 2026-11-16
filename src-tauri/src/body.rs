@@ -72,11 +72,16 @@ pub fn image(folder: &Path, name: &str) -> Result<Vec<u8>, String> {
     read_capped(&file, IMAGE_MAX, name)
 }
 
-/** The folder kept in `file` (`dossiers.json`). */
+/** A folder by its full path, with `corps.json`, kept as given. */
+pub fn checked_dir(dir: &str) -> Result<PathBuf, String> {
+    crate::folders::holding(dir, CONFIG, "Dossier du corps introuvable.")
+}
+
+/** The folder kept in `file` (`dossiers.json`), checked again: it may have changed on the disk since. */
 fn kept_folder(file: &Path) -> Result<PathBuf, String> {
-    crate::folders::kept(file, "corps")
-        .map(PathBuf::from)
-        .ok_or_else(|| "Aucun dossier du corps choisi.".to_string())
+    let dir = crate::folders::kept(file, "corps")
+        .ok_or_else(|| "Aucun dossier du corps choisi.".to_string())?;
+    checked_dir(&dir)
 }
 
 pub fn config_kept(file: &Path) -> Result<String, String> {

@@ -9,7 +9,7 @@ const NAMES: [&str; 2] = ["corps", "voix"];
 const FILE: &str = "dossiers.json";
 
 /** What the page reads: a folder not chosen is left out, never `null`. */
-#[derive(Serialize, Default)]
+#[derive(Serialize)]
 pub struct Paths {
     #[serde(skip_serializing_if = "Option::is_none")]
     corps: Option<String>,
@@ -43,7 +43,7 @@ pub fn holding(dir: &str, file: &str, missing: &str) -> Result<PathBuf, String> 
 pub fn keep(file: &Path, name: &str, dir: &str) -> Result<String, String> {
     let name = checked_name(name)?;
     let root = match name {
-        "corps" => holding(dir, crate::body::CONFIG, "Dossier du corps introuvable.")?,
+        "corps" => crate::body::checked_dir(dir)?,
         _ => crate::voice::checked_dir(dir)?,
     };
     save_entry(file, name, Some(&root))?;
@@ -170,7 +170,9 @@ mod tests {
             assert!(checked_name(bad).is_err(), "{bad:?}");
         }
         let t = Scratch::new("nom");
+        // A folder good for either name: only the name refuses it.
         let dir = t.sub("c", Some("corps.json"));
+        fs::write(dir.join("service.py"), "").unwrap();
         assert!(keep(&t.file(), "rvc", s(&dir)).is_err());
         assert!(!t.file().exists(), "a refused name wrote a file");
     }
@@ -281,8 +283,11 @@ mod tests {
         // Still refused: absolute, a folder, with the script.
         assert!(crate::voice::checked_dir(s(&t.sub("v", None))).is_err());
         assert!(crate::voice::checked_dir(s(&t.0.join("absent"))).is_err());
+        // A relative path to a folder that holds the script, the repository's own (`cargo test` runs in
+        // `src-tauri`): only the full path is missing.
+        assert!(Path::new("../voix/service.py").is_file());
         assert!(
-            crate::voice::checked_dir("voix").is_err(),
+            crate::voice::checked_dir("../voix").is_err(),
             "a relative path"
         );
         assert!(crate::voice::checked_dir(s(&dir.join("service.py"))).is_err());
@@ -311,6 +316,24 @@ mod tests {
             crate::body::image_kept(&t.file(), "repos.png").unwrap_err(),
             "Aucun dossier du corps choisi."
         );
+    }
+
+    #[test]
+    fn the_kept_body_folder_is_checked_again_at_reading() {
+        let t = Scratch::new("corps-change");
+        let corps = t.sub("corps", Some("corps.json"));
+        fs::write(corps.join("repos.png"), [1u8, 2, 3]).unwrap();
+        keep(&t.file(), "corps", s(&corps)).unwrap();
+        assert_eq!(
+            crate::body::image_kept(&t.file(), "repos.png").unwrap(),
+            vec![1, 2, 3]
+        );
+        // The folder changed on the disk since it was kept: its images are no longer read.
+        fs::remove_file(corps.join("corps.json")).unwrap();
+        let err = crate::body::image_kept(&t.file(), "repos.png").unwrap_err();
+        assert_eq!(err, "Ce dossier n’a pas de corps.json.");
+        let err = crate::body::config_kept(&t.file()).unwrap_err();
+        assert_eq!(err, "Ce dossier n’a pas de corps.json.");
     }
 
     #[test]
