@@ -33,11 +33,14 @@
     CONFIRMED,
     confirmHost,
     forgetHost,
+    hostCall,
     OFF_MACHINE,
     offMachine,
     readHosts,
+    type HostButtons,
   } from './desktop/hotes.ts';
   import { inWindow, serverWarning } from './desktop/net.ts';
+  import { unsafeAddress } from './local.ts';
   import { DEFAULTS, type Settings, type TalkMode } from './settings.ts';
   import type { Session } from './session.svelte.ts';
 
@@ -200,33 +203,42 @@
   const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
   const direct = $derived(session.latencies.map((l) => l.ms));
 
-  /** Rust's refusal, by origin: said on that address's row only. */
-  let hostSaid = $state<Record<string, string>>({});
+  /** The host buttons: one call at a time, Rust's refusal said on its origin's row only. */
+  const access = $state<HostButtons>({ busy: '', said: {} });
+  /** What the page refuses already: the window is never asked to reach it. */
+  const serverRefused = $derived(serverWarning(s.server));
+  const modelRefused = $derived(unsafeAddress(s.model.url, s.model.key));
   onMount(() => {
     if (inWindow) void readHosts(session);
   });
 </script>
 
+<!-- In the list of the window's theme, the focus goes on to the next line, or to the card's title. -->
 {#snippet forget(origin: string)}
   <Button
     variant="fantome"
     size="petit"
     aria-label="Oublier l’adresse confirmée {origin}"
-    onclick={async () => (hostSaid[origin] = await forgetHost(session, origin))}>Oublier</Button
+    loading={access.busy === origin}
+    onclick={(e) => {
+      const card = e.currentTarget.closest<HTMLElement>('.hotes');
+      const ask = () => forgetHost(session, origin);
+      void hostCall(access, origin, e.currentTarget, ask, card ?? undefined, card?.querySelector('h3'));
+    }}>Oublier</Button
   >
 {/snippet}
 
 <!-- An address off this computer: the window reaches it once the person confirms it, in the system's box. Until
-then it blocks, and says so as an error: a folded block opens on it. -->
-{#snippet host(url: string)}
-  {@const origin = inWindow ? offMachine(url) : null}
+then it blocks, and says so as an error: a folded block opens on it. One the page refuses already is never offered. -->
+{#snippet host(url: string, refused: string | undefined)}
+  {@const origin = inWindow && !refused ? offMachine(url) : null}
   {#if origin}
     {@const hosts = session.hosts}
     {@const confirmed = hosts?.includes(origin)}
     <SettingsRow
       label="Accès"
       hint={!hosts ? CHECKING : confirmed ? CONFIRMED : undefined}
-      error={hostSaid[origin] || (hosts && !confirmed ? OFF_MACHINE : null)}
+      error={access.said[origin] || (hosts && !confirmed ? OFF_MACHINE : null)}
     >
       {#if confirmed}
         {@render forget(origin)}
@@ -234,7 +246,10 @@ then it blocks, and says so as an error: a folded block opens on it. -->
         <Button
           variant="secondaire"
           size="petit"
-          onclick={async () => (hostSaid[origin] = await confirmHost(session, url))}>Confirmer…</Button
+          aria-label="Confirmer l’adresse {origin}"
+          loading={access.busy === origin}
+          onclick={(e) => void hostCall(access, origin, e.currentTarget, () => confirmHost(session, url))}
+          >Confirmer…</Button
         >
       {/if}
     </SettingsRow>
@@ -378,12 +393,12 @@ then it blocks, and says so as an error: a folded block opens on it. -->
           {#if inWindow && s.brain === 'linked'}
             {@render field(
               'Adresse du serveur',
-              serverWarning(s.server) ?? 'Changer efface l’appairage : un nouveau code sera demandé.',
+              serverRefused ?? 'Changer efface l’appairage : un nouveau code sera demandé.',
               s.server,
               undefined,
               (v) => v.trim() && session.setServer(v.trim()),
             )}
-            {@render host(s.server)}
+            {@render host(s.server, serverRefused)}
           {/if}
         </SettingsCard>
 
@@ -391,12 +406,12 @@ then it blocks, and says so as an error: a folded block opens on it. -->
           <Avance what="le modèle, la clé, le plafond">
             {@render field(
               'Adresse du modèle',
-              'Compatible OpenAI, souvent terminée par /v1.',
+              modelRefused ?? 'Compatible OpenAI, souvent terminée par /v1.',
               s.model.url,
               undefined,
               (v) => set((d) => (d.model.url = v.trim() || DEFAULTS.model.url)),
             )}
-            {@render host(s.model.url)}
+            {@render host(s.model.url, modelRefused)}
             {@render field('Nom du modèle', undefined, s.model.name, undefined, (v) =>
               set((d) => (d.model.name = v.trim())),
             )}
@@ -702,10 +717,14 @@ then it blocks, and says so as an error: a folded block opens on it. -->
         <SettingsCard
           title="Adresses hors de ce poste"
           description="Celles que la fenêtre peut joindre, confirmées dans la boîte du système."
+          class="hotes"
         >
-          {#if session.hosts}
+          {#if session.hosts && session.hostsSaid}
+            <!-- An unread list decides as an empty one, on the closed side, but is never said « Aucune ». -->
+            <SettingsRow label="Liste illisible" hint={session.hostsSaid} />
+          {:else if session.hosts}
             {#each session.hosts as origin (origin)}
-              <SettingsRow label={origin} error={hostSaid[origin] || null}>
+              <SettingsRow label={origin} error={access.said[origin] || null}>
                 {@render forget(origin)}
               </SettingsRow>
             {:else}

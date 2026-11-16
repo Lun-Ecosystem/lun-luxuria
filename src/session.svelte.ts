@@ -123,6 +123,8 @@ export class Session {
    * Null until the window has answered: nothing is said blocked, nor confirmed, before.
    */
   hosts = $state<string[] | null>(null);
+  /** Why the window could not say which it keeps; the list is then none, on the closed side. */
+  hostsSaid = $state('');
   /** The action on the voice service under way, whatever screen started it: one at a time. */
   voiceBusy = $state<'check' | 'restart' | null>(null);
   /** One follow of the programs being launched, at most. */

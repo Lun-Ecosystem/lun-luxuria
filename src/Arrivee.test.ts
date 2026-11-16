@@ -254,6 +254,47 @@ describe('an address off this computer, confirmed on the arrival', () => {
     expect(field).not.toHaveAttribute('aria-invalid', 'true');
   });
 
+  it('net_hosts fails: none confirmed, the closed side, the notice', async () => {
+    where.inWindow = true;
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'net_hosts') throw 'hotes.json illisible';
+      return null;
+    });
+    const session = linked();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    expect(confirmButton()).not.toBeNull();
+    expect(session.hosts).toEqual([]);
+  });
+
+  it.each([
+    ['the server in http, off this computer', 'http://serveur.exemple:8788', '', /partirait en clair/],
+    ['the model in http, with a key', 'http://modele.exemple/v1', 'une-cle', /La clé ne part pas en clair/],
+  ])(
+    '%s: the page refuses it already, so no « Confirmer… », its own warning only',
+    async (_, url, key, warning) => {
+      where.inWindow = true;
+      rust([]);
+      const session = url.includes('serveur')
+        ? linked(url)
+        : arriving({ brain: 'alone', model: { url, name: 'un-modele', key } });
+      await waitFor(() => expect(session.hosts).toEqual([]));
+      expect(screen.getByText(warning)).toBeInTheDocument();
+      expect(screen.queryByText(NOTICE)).toBeNull();
+      expect(confirmButton()).toBeNull();
+    },
+  );
+
+  it('the keyboard: after « Confirmer… » the focus is on the « Oublier » that replaces it', async () => {
+    where.inWindow = true;
+    rust([]);
+    linked();
+    (await screen.findByRole('button', { name: `Confirmer l’adresse ${SERVER}` })).focus();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: `Oublier l’adresse confirmée ${SERVER}` })).toHaveFocus(),
+    );
+  });
+
   it('showing the notice asks nothing of the person', async () => {
     where.inWindow = true;
     rust([]);

@@ -7,9 +7,11 @@
     CONFIRMED,
     confirmHost,
     forgetHost,
+    hostCall,
     OFF_MACHINE,
     offMachine,
     readHosts,
+    type HostButtons,
   } from './desktop/hotes.ts';
   import { inWindow, serverWarning } from './desktop/net.ts';
   import { unsafeAddress } from './local.ts';
@@ -63,8 +65,11 @@
     await session.enter();
   }
 
-  /** Rust's refusal, by origin: said in that address's field only. */
-  let hostSaid = $state<Record<string, string>>({});
+  /** The host buttons: one call at a time, Rust's refusal said in its address's field only. */
+  const access = $state<HostButtons>({ busy: '', said: {} });
+  /** What the page refuses already: said as the field's error, and the window is never asked to reach it. */
+  const serverRefused = $derived(serverWarning(s.server));
+  const modelRefused = $derived(urlMissing ? undefined : unsafeAddress(s.model.url, s.model.key));
   onMount(() => {
     if (inWindow) void readHosts(session);
   });
@@ -72,13 +77,14 @@
   function hostError(url: string): string | undefined {
     const origin = inWindow ? offMachine(url) : null;
     if (!origin || !session.hosts) return undefined;
-    return hostSaid[origin] || (session.hosts.includes(origin) ? undefined : OFF_MACHINE);
+    return access.said[origin] || (session.hosts.includes(origin) ? undefined : OFF_MACHINE);
   }
 </script>
 
-<!-- Under an address off this computer: « Confirmer… » opens the system's box, from the window. -->
-{#snippet host(url: string)}
-  {@const origin = inWindow ? offMachine(url) : null}
+<!-- Under an address off this computer: « Confirmer… » opens the system's box, from the window. One the page refuses
+already is never offered. -->
+{#snippet host(url: string, refused: string | undefined)}
+  {@const origin = inWindow && !refused ? offMachine(url) : null}
   {#if origin}
     <div class="hote">
       {#if !session.hosts}
@@ -89,13 +95,18 @@
           variant="fantome"
           size="petit"
           aria-label="Oublier l’adresse confirmée {origin}"
-          onclick={async () => (hostSaid[origin] = await forgetHost(session, origin))}>Oublier</Button
+          loading={access.busy === origin}
+          onclick={(e) => void hostCall(access, origin, e.currentTarget, () => forgetHost(session, origin))}
+          >Oublier</Button
         >
       {:else}
         <Button
           variant="secondaire"
           size="petit"
-          onclick={async () => (hostSaid[origin] = await confirmHost(session, url))}>Confirmer…</Button
+          aria-label="Confirmer l’adresse {origin}"
+          loading={access.busy === origin}
+          onclick={(e) => void hostCall(access, origin, e.currentTarget, () => confirmHost(session, url))}
+          >Confirmer…</Button
         >
       {/if}
     </div>
@@ -137,14 +148,12 @@
             <Field
               label="Adresse du modèle"
               hint="Compatible OpenAI, souvent terminée par /v1."
-              error={urlMissing
-                ? undefined
-                : (unsafeAddress(s.model.url, s.model.key) ?? hostError(s.model.url))}
+              error={urlMissing ? undefined : (modelRefused ?? hostError(s.model.url))}
             >
               <TextInput value={s.model.url} oninput={(e) => set((d) => (d.model.url = typed(e).trim()))} />
             </Field>
             {#if urlMissing}<p class="manque" id="{uid}-missing">{missing}</p>{/if}
-            {@render host(s.model.url)}
+            {@render host(s.model.url, modelRefused)}
           </div>
           <div class="bloc">
             <Field label="Nom du modèle">
@@ -171,7 +180,7 @@
               <Field
                 label="Adresse du serveur"
                 hint="Sur ce poste, l’adresse par défaut convient. Pour un autre poste, son adresse en https."
-                error={serverWarning(s.server) ?? hostError(s.server)}
+                error={serverRefused ?? hostError(s.server)}
               >
                 <TextInput
                   value={s.server}
@@ -181,7 +190,7 @@
                   }}
                 />
               </Field>
-              {@render host(s.server)}
+              {@render host(s.server, serverRefused)}
             </div>
           {/if}
           {#if needsCode}
