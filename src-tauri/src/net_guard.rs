@@ -20,6 +20,7 @@ use tauri_runtime::webview::InitializationScript;
 const FILE: &str = "hotes.json";
 const NOT_JSON: &str = "Requête refusée : corps illisible.";
 const NOT_HTTP: &str = "Adresse refusée pour la fenêtre : http ou https seulement.";
+const UNREADABLE: &str = "Adresse illisible pour la fenêtre.";
 
 /** The HTTP plugin, behind the filter; each method of the trait is the plugin's, `extend_api` after the check. */
 pub struct NetGuard<R: Runtime>(Box<dyn Plugin<R>>);
@@ -110,7 +111,7 @@ fn checked(body: &InvokeBody, hosts: impl FnOnce() -> Vec<String>) -> Result<(),
  * origin as `ascii_serialization()` writes it.
  */
 fn origin(url: &str) -> Result<Option<String>, String> {
-    let url = Url::parse(url).map_err(|_| NOT_HTTP.to_string())?;
+    let url = Url::parse(url).map_err(|_| UNREADABLE.to_string())?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err(NOT_HTTP.into());
     }
@@ -231,8 +232,7 @@ mod tests {
 
     /// `hotes.json` of this app, in its temporary config folder.
     fn hosts_file(t: &TestApp) -> PathBuf {
-        // `programs::config_file` takes the real runtime's handle: the guard must be generic over `R` to work on
-        // the mock one, and so must it, or this line says the same thing without it.
+        // Written out, not taken from `programs::config_file`: the tests check where the code reads and writes.
         t.app.path().app_config_dir().unwrap().join(HOSTS)
     }
 
@@ -445,7 +445,8 @@ mod tests {
     }
 
     /// The URL parser, the plugin's and reqwest's, reads `0x7f.0.0.1` as `127.0.0.1`: the host is the loopback, so
-    /// the request goes there and nowhere else. Admitted by `Url::host()`; a string comparison would refuse it.
+    /// the request goes there and nowhere else. Admitted because the guard compares the parsed host (`host_str()`),
+    /// not the address as written.
     #[test]
     fn a_hex_spelling_of_the_loopback_is_read_as_the_loopback() {
         let t = guarded();
@@ -465,6 +466,47 @@ mod tests {
         ] {
             assert_eq!(fetch(&t, page(url)), refused, "{url}");
         }
+    }
+
+    /// An address the parser cannot read is not a scheme to refuse: it has its own message.
+    #[test]
+    fn an_unreadable_address_is_refused_as_unreadable() {
+        let t = guarded();
+        let refused = Err("Adresse illisible pour la fenêtre.".to_string());
+        for url in [
+            "http://127.0.0.1:65536/",
+            "http://%00/",
+            "http://exa%00mple.com/",
+            "https://",
+            "not an address",
+            "",
+        ] {
+            assert_eq!(fetch(&t, page(url)), refused, "{url:?}");
+        }
+        // No address to read: absent, or not a string.
+        for url in [None, Some(Value::Null), Some(json!(12))] {
+            let body = with("http://127.0.0.1/", "url", url.clone());
+            assert_eq!(fetch(&t, body), refused, "url {url:?}");
+        }
+    }
+
+    /// A refused `fetch` creates nothing: no request waits in the window's table, where a `fetch_send` would start it.
+    /// The numbers are drawn at random (tauri 2.12), so the table is counted rather than guessed.
+    #[test]
+    fn a_refused_fetch_creates_no_request() {
+        let t = guarded();
+        let w = t.app.get_webview_window("main").unwrap();
+        let count = || w.resources_table().names().count();
+        let empty = count();
+        // An admitted request is in the table once its number is given: its two abort ends, then itself.
+        fetch(&t, page("http://127.0.0.1/")).unwrap();
+        let one = count();
+        assert_eq!(one, empty + 3);
+        // Served by the plugin without any socket, were it created.
+        assert!(fetch(&t, page("data:text/plain,x")).is_err());
+        // The plugin builds its request off the IPC's thread: a created one has had the time to appear.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(count(), one, "the refused request was created");
     }
 
     /// The rules are read in order, the body, the proxy, the redirections, the address: a request that breaks two
@@ -501,15 +543,24 @@ mod tests {
             get_ipc_response(&w, r).map(|_| ()).map_err(text)
         };
         let e = raw(&t).unwrap_err();
+        assert_eq!(e, "Requête refusée : corps illisible.");
         assert_ne!(Err(e), raw(&plain), "a raw body reached the plugin");
 
-        for body in [
-            json!({}),
-            json!({ "clientConfig": {} }),
-            json!({ "clientConfig": { "maxRedirections": 0, "url": 12 } }),
-            json!({ "clientConfig": { "maxRedirections": 0, "url": "not an address" } }),
+        let unreadable = "Adresse illisible pour la fenêtre.";
+        for (body, message) in [
+            (json!({}), "Redirections refusées."),
+            (json!({ "clientConfig": {} }), "Redirections refusées."),
+            (
+                json!({ "clientConfig": { "maxRedirections": 0, "url": 12 } }),
+                unreadable,
+            ),
+            (
+                json!({ "clientConfig": { "maxRedirections": 0, "url": "not an address" } }),
+                unreadable,
+            ),
         ] {
             let e = fetch(&t, body.clone()).unwrap_err();
+            assert_eq!(e, message, "{body}");
             assert_ne!(
                 Err(e),
                 fetch(&plain, body.clone()),
@@ -525,7 +576,12 @@ mod tests {
     fn the_other_commands_are_the_plugins_own() {
         let plain = test_app();
         let t = guarded();
-        for cmd in ["fetch_cancel", "fetch_send", "fetch_read_body"] {
+        for cmd in [
+            "fetch_cancel",
+            "fetch_send",
+            "fetch_read_body",
+            "fetch_cancel_body",
+        ] {
             let body = json!({ "rid": 4_000_000 });
             let want = ipc(&plain, cmd, body.clone());
             let got = ipc(&t, cmd, body);
@@ -747,6 +803,24 @@ mod tests {
             Ok(true)
         );
         drop(first);
+    }
+
+    /// The file is read again after the box: an origin forgotten while it was open stays forgotten.
+    #[test]
+    fn an_origin_forgotten_during_the_box_stays_forgotten() {
+        let t = guarded();
+        let file = hosts_file(&t);
+        write_hosts(&t, r#"["https://example.com","https://example.org"]"#);
+        let one = OneBox::default();
+        let r = confirm(&file, &one, "https://example.net/", |_| {
+            net_host_forget(t.app.handle().clone(), "https://example.org".into()).unwrap();
+            MessageDialogResult::Custom("Confirmer".into())
+        });
+        assert_eq!(r, Ok(true));
+        assert_eq!(
+            net_hosts(t.app.handle().clone()).unwrap(),
+            ["https://example.com", "https://example.net"]
+        );
     }
 
     #[test]
