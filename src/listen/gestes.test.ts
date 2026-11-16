@@ -106,6 +106,14 @@ describe('the takes', () => {
     // Without a list, it says so.
     await expect(banc(temp(), [], 'faux', ouvrir)).rejects.toThrow(/mots\.json/);
   });
+
+  it('an unreadable one is named, and nothing is played', async () => {
+    const ouvrir = vi.fn();
+    const dir = dossier([bonne], []);
+    writeFileSync(join(dir, 'prises', 'oui-1.wav'), 'pas un son');
+    await expect(banc(dir, [], 'faux', ouvrir)).rejects.toThrow(/oui-1\.wav/);
+    expect(ouvrir).not.toHaveBeenCalled();
+  });
 });
 
 describe('the noise of the bench', () => {
@@ -124,6 +132,22 @@ describe('the noise of the bench', () => {
     expect(fixe).toBeGreaterThan(0);
     expect(haut / fixe).toBeCloseTo(10 ** (6 / 20), 3);
     expect(bas / fixe).toBeCloseTo(10 ** (-6 / 20), 3);
+  });
+
+  it('is laid on each sound at the level of its line', async () => {
+    const dir = dossier(
+      [{ id: 'mmh', dit: 'mmh', attendu: 'aucun', prises: 1, parole: false }],
+      ['mmh-1.wav'],
+    );
+    const recus: Float32Array[] = [];
+    const rien: Ecoute = { ecoute: [], transcriptions: [], envoye: [], repris: [] };
+    await banc(dir, [], 'faux', async () => async (s) => (recus.push(s), rien));
+    const [propre, ...bruits] = recus.slice(0, 4) as [Float32Array, ...Float32Array[]];
+    // Sample by sample, without a diff of 24 000 numbers when it fails.
+    const pareil = (a: Float32Array, b: Float32Array) =>
+      a.length === b.length && a.every((v, i) => v === b[i]);
+    expect(bruits.map((b, k) => pareil(b, dansLeBruit(propre, NIVEAUX[k]!)))).toEqual([true, true, true]);
+    expect(pareil(bruits[1]!, propre)).toBe(false);
   });
 });
 
@@ -158,6 +182,26 @@ describe('a word through a new conversation', () => {
     expect(Math.abs((fin - recus[0]!) / 16 - (silenceMs - pauseMs))).toBeLessThanOrEqual(FRAME_MS);
     expect(e.envoye).toEqual([{ texte: 'Oui.', confiance: 0.8 }]);
     expect(e.repris).toEqual([]);
+  });
+
+  it('notes what withdraw takes back: a try sent at a pause, and the sentence goes on', async () => {
+    // Two half seconds of noise, half a second apart: longer than the pause, shorter than the end.
+    const repris = Float32Array.from([...mot, ...mot.subarray(8000)]);
+    const textes = ['Un.', 'Un, deux.'];
+    const e = await ecouter(repris, byLevel, async () => ({ text: textes.shift()!, confidence: 0.8 }));
+    expect(e.ecoute).toContain('resume');
+    expect(e.envoye.map((x) => x.texte)).toEqual(['Un.', 'Un, deux.']);
+    expect(e.repris).toEqual([{ texte: 'Un.', confiance: 0.8 }]);
+  });
+
+  it('waits for every transcription on its way before it gives the sound back', async () => {
+    const lente = () =>
+      new Promise<{ text: string; confidence: number }>((r) =>
+        setTimeout(() => r({ text: 'Oui.', confidence: 0.8 }), 100),
+      );
+    const e = await ecouter(mot, byLevel, lente);
+    expect(e.transcriptions).toMatchObject([{ texte: 'Oui.', verdict: 'pour_elle' }]);
+    expect(e.envoye).toEqual([{ texte: 'Oui.', confiance: 0.8 }]);
   });
 
   it('a text the noise filter sets aside never reaches send, and its line says so', async () => {
