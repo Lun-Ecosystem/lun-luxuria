@@ -1,10 +1,12 @@
 //! whisper-server and RVC, started by the app when asked. The page never names what runs: each program is a `.exe`
 //! chosen by the person in the system's file dialog, kept here in `programmes.json`, next to the app's settings.
-//! The page only gives its arguments and the address where it answers, on the loopback only (`loopback.rs`). It is
-//! launched without a shell or a console, in its own folder, joins the app's job (`job.rs`), and nothing is started
-//! when something already answers at its address. Only what this app started is stopped, at exit or when its
-//! arguments change.
+//! Its arguments, the page only proposes: the person confirms them in the system's box, and they are kept in
+//! `arguments.json` until another exe is chosen for it. The page gives the address where it answers, on the loopback
+//! only (`loopback.rs`). It is launched without a shell or a console, in its own folder, joins the app's job
+//! (`job.rs`), and nothing is started when something already answers at its address. Only what this app started is
+//! stopped, at exit or when its arguments change.
 
+use crate::one_box::{self, OneBox};
 use crate::voice::{checked_args, early_exit, ended, hold, kill_tree, open_log, spawn_logged};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -14,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
+use tauri_plugin_dialog::MessageDialogResult;
 
 /** The only programs there are; a log file each. */
 const NAMES: [&str; 2] = ["whisper-server", "rvc"];
@@ -21,6 +24,9 @@ const PROBE: Duration = Duration::from_millis(300);
 /** A program that cannot start (a missing model, a bad argument) usually ends within this. */
 const EARLY: Duration = Duration::from_millis(1500);
 const PATHS: &str = "programmes.json";
+/** The arguments the person confirmed, by name: an absent key was never confirmed, an empty list was, empty. */
+const ARGS: &str = "arguments.json";
+const NO_EXE: &str = "Choisis d’abord son programme.";
 
 /** A program this app started, with what it was started with. */
 pub struct Held {
@@ -92,6 +98,90 @@ pub fn save_entry(file: &Path, name: &str, path: Option<&Path>) -> Result<(), St
     }
     let text = serde_json::to_string_pretty(&paths).map_err(|e| e.to_string())?;
     fs::write(file, text).map_err(|e| e.to_string())
+}
+
+/** The confirmed arguments, by name; an unreadable file, or one that is not lists of strings, reads as none. */
+pub fn read_arguments(file: &Path) -> HashMap<String, Vec<String>> {
+    fs::read_to_string(file)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/** Keeps `name`'s confirmed arguments, or forgets them with `None`; written as `save_entry` writes its file. */
+pub fn save_arguments(file: &Path, name: &str, args: Option<&[String]>) -> Result<(), String> {
+    let name = checked_name(name)?;
+    let mut all = read_arguments(file);
+    match args {
+        Some(a) => all.insert(name.to_string(), a.to_vec()),
+        None => all.remove(name),
+    };
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
+    fs::write(file, text).map_err(|e| e.to_string())
+}
+
+/**
+ * Keeps the exe picked for `name`. Another one than the exe kept drops its confirmed arguments, which were for that
+ * program; dropped first, so that a failed write never leaves them to the new one.
+ */
+pub fn pick_saved(
+    paths_file: &Path,
+    args_file: &Path,
+    name: &str,
+    exe: &Path,
+) -> Result<(), String> {
+    let name = checked_name(name)?;
+    if read_paths(paths_file).get(name) != Some(&exe.display().to_string()) {
+        save_arguments(args_file, name, None)?;
+    }
+    save_entry(paths_file, name, Some(exe))
+}
+
+/** Forgets `name`'s exe and its confirmed arguments, these first. */
+pub fn forget(paths_file: &Path, args_file: &Path, name: &str) -> Result<(), String> {
+    save_arguments(args_file, name, None)?;
+    save_path(paths_file, name, None)
+}
+
+/**
+ * `true` when `name` may start with `args`: the arguments already confirmed at once, without a box; others once the
+ * person confirms them in `ask` (its title, its text), then kept. `false`: refused at the box, nothing kept. Refused
+ * before any box: an unknown name, no exe chosen, what `checked_args` refuses, a box already open.
+ */
+pub fn confirm_args(
+    paths_file: &Path,
+    args_file: &Path,
+    one: &OneBox,
+    name: &str,
+    args: &[String],
+    ask: impl FnOnce(&str, &str) -> MessageDialogResult,
+) -> Result<bool, String> {
+    let name = checked_name(name)?;
+    if !read_paths(paths_file).contains_key(name) {
+        return Err(NO_EXE.into());
+    }
+    checked_args(args)?;
+    if read_arguments(args_file)
+        .get(name)
+        .is_some_and(|kept| kept.as_slice() == args)
+    {
+        return Ok(true);
+    }
+    let _box = one_box::take(one)?;
+    let text = if args.is_empty() {
+        "Aucun argument.".to_string()
+    } else {
+        args.join("\n")
+    };
+    if !one_box::confirmed(&ask(&format!("Les arguments de {}", label(name)), &text)) {
+        return Ok(false);
+    }
+    // `save_arguments` reads the file again: it may have changed while the box was open.
+    save_arguments(args_file, name, Some(args))?;
+    Ok(true)
 }
 
 /** The field's address, as `host:port` on the loopback (`loopback.rs`); refused, as typed, when it is not. */
@@ -189,6 +279,25 @@ pub fn start(
     })
 }
 
+/** `start` with the exe kept for `name` and the arguments confirmed for it; never confirmed, nothing starts. */
+pub fn start_confirmed(
+    programs: &Programs,
+    name: &str,
+    paths_file: &Path,
+    args_file: &Path,
+    url: &str,
+    log: &Path,
+) -> Result<Started, String> {
+    let name = checked_name(name)?;
+    // Before the files are read; `start` checks it again, as it does the name.
+    probed(url)?;
+    let path = read_paths(paths_file).remove(name).ok_or(NO_EXE)?;
+    let args = read_arguments(args_file)
+        .remove(name)
+        .ok_or("Confirme d’abord ses arguments.")?;
+    start(programs, name, Some(&path), &args, url, log)
+}
+
 /** `answering` at its address; else this app's `starting` (alive) or `stopped` (gone); else `absent`. */
 pub fn state(programs: &Programs, name: &str, url: &str) -> Result<&'static str, String> {
     let name = checked_name(name)?;
@@ -254,13 +363,45 @@ pub fn program_pick(
     };
     let path = picked.into_path().map_err(|e| e.to_string())?;
     let exe = checked_exe(&path.display().to_string())?;
-    save_path(&config_file(&app, PATHS)?, name, Some(&exe))?;
+    pick_saved(
+        &config_file(&app, PATHS)?,
+        &config_file(&app, ARGS)?,
+        name,
+        &exe,
+    )?;
     Ok(Some(exe.display().to_string()))
 }
 
 #[tauri::command]
 pub fn program_forget(app: tauri::AppHandle, name: String) -> Result<(), String> {
-    save_path(&config_file(&app, PATHS)?, &name, None)
+    forget(&config_file(&app, PATHS)?, &config_file(&app, ARGS)?, &name)
+}
+
+#[tauri::command]
+pub fn program_arguments(app: tauri::AppHandle) -> Result<HashMap<String, Vec<String>>, String> {
+    Ok(read_arguments(&config_file(&app, ARGS)?))
+}
+
+/**
+ * The arguments the page proposes, confirmed by the person in the app's box (`one_box.rs`), modal to the window.
+ * Off the window's thread, like `program_pick`: the box blocks until answered.
+ */
+#[tauri::command(async)]
+pub fn program_args(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    one: tauri::State<'_, OneBox>,
+    name: String,
+    args: Vec<String>,
+) -> Result<bool, String> {
+    confirm_args(
+        &config_file(&app, PATHS)?,
+        &config_file(&app, ARGS)?,
+        &one,
+        &name,
+        &args,
+        |title, text| one_box::ask(&window, title, text),
+    )
 }
 
 /** Off the window's thread: the probe, the early wait and a stop take a moment. */
@@ -269,17 +410,21 @@ pub fn program_start(
     app: tauri::AppHandle,
     programs: tauri::State<'_, Programs>,
     name: String,
-    args: Vec<String>,
     url: String,
 ) -> Result<Started, String> {
     use tauri::Manager;
+    // Before it names the log file.
     let name = checked_name(&name)?;
-    // Before the config is read; `start` checks it again, as it does the name.
-    probed(&url)?;
-    let path = read_paths(&config_file(&app, PATHS)?).remove(name);
     let logs = app.path().app_log_dir().map_err(|e| e.to_string())?;
     let log = logs.join(format!("{name}.log"));
-    start(&programs, name, path.as_deref(), &args, &url, &log)
+    start_confirmed(
+        &programs,
+        name,
+        &config_file(&app, PATHS)?,
+        &config_file(&app, ARGS)?,
+        &url,
+        &log,
+    )
 }
 
 #[tauri::command(async)]
@@ -515,6 +660,7 @@ mod tests {
     /// like `net_guard::confirm`), `pick_saved`, `forget`, `start_confirmed`.
     mod confirmed_args {
         use super::*;
+        use crate::net_scope::TempRoot;
         use crate::one_box::{OneBox, take};
         use std::cell::RefCell;
         use tauri_plugin_dialog::MessageDialogResult;
@@ -527,6 +673,8 @@ mod tests {
             args: PathBuf,
             exe: PathBuf,
             other: PathBuf,
+            /// The test's folder, logs included; it goes with the setup, panic or not.
+            root: TempRoot,
         }
 
         /// Temporary files only; `rvc` has `rvc/a.exe` chosen when `chosen`, `rvc/b.exe` is another real exe.
@@ -541,6 +689,7 @@ mod tests {
                 args: d.join("conf").join("arguments.json"),
                 exe,
                 other,
+                root: TempRoot(d),
             };
             if chosen {
                 save_entry(&s.paths, "rvc", Some(&s.exe)).unwrap();
@@ -847,7 +996,7 @@ mod tests {
         fn never_confirmed_arguments_start_nothing() {
             let s = setup("args-lance-jamais", true);
             let programs = Programs::default();
-            let log = dir("args-lance-jamais-log").join("rvc.log");
+            let log = s.root.0.join("log").join("rvc.log");
             let err = start_confirmed(&programs, "rvc", &s.paths, &s.args, LOOP, &log).unwrap_err();
             assert!(
                 err.contains("Confirme d") && err.contains("ses arguments"),
@@ -862,7 +1011,7 @@ mod tests {
             let s = setup("args-lance-vide", true);
             confirmed(&s, &[]);
             let programs = Programs::default();
-            let log = dir("args-lance-vide-log").join("rvc.log");
+            let log = s.root.0.join("log").join("rvc.log");
             // The empty file is no program: it fails to launch, which is past the arguments' check.
             let err = start_confirmed(&programs, "rvc", &s.paths, &s.args, LOOP, &log).unwrap_err();
             assert!(!err.contains("Confirme d"), "{err}");
@@ -874,7 +1023,7 @@ mod tests {
             let s = setup("args-lance-refus", true);
             confirmed(&s, &["-p"]);
             let programs = Programs::default();
-            let log = dir("args-lance-refus-log").join("x.log");
+            let log = s.root.0.join("log").join("x.log");
             let unknown = start_confirmed(&programs, "cmd", &s.paths, &s.args, LOOP, &log);
             assert_eq!(unknown, Err("Programme inconnu.".to_string()));
             let off = "http://192.0.2.1:8080";
@@ -890,7 +1039,7 @@ mod tests {
             let s = setup("args-lance", false);
             save_entry(&s.paths, "rvc", Some(Path::new(PING))).unwrap();
             let programs = Programs::default();
-            let log = dir("args-lance-log").join("rvc.log");
+            let log = s.root.0.join("log").join("rvc.log");
             let held_args = |p: &Programs| p.0.lock().unwrap()["rvc"].args.clone();
             confirmed(&s, &["-n", "30", "127.0.0.1"]);
             let first = start_confirmed(&programs, "rvc", &s.paths, &s.args, LOOP, &log).unwrap();

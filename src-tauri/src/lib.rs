@@ -53,6 +53,8 @@ pub fn run() {
             programs::program_paths,
             programs::program_pick,
             programs::program_forget,
+            programs::program_arguments,
+            programs::program_args,
             programs::program_start,
             programs::program_state,
             tray::tray_state
