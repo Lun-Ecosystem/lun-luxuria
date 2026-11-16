@@ -97,5 +97,13 @@ mod tests {
         a_space_around: " http://127.0.0.1:8080";
         a_foreign_host: "http://example.com";
         a_lookalike_localhost: "http://localhost.example:8080";
+        // `u16` reads `+80`: only the digits check refuses it.
+        a_plus_sign_before_the_port: "http://127.0.0.1:+80";
+        a_trailing_dot_after_localhost: "http://localhost.:8080";
+        a_trailing_dot_after_the_ipv4: "http://127.0.0.1.:8080";
+        a_short_ipv4: "http://127.1:8080";
+        a_percent_encoded_host: "http://127.0.0.%31:8080";
+        // A WHATWG parser drops a tab anywhere; httpx does not.
+        a_tab_in_the_port: "http://127.0.0.1:80\t80";
     }
 }
