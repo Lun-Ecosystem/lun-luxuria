@@ -19,6 +19,7 @@
     "voix": "uv run voix/service.py",
     "tauri": "tauri",
     "banc": "vitest run src/listen/banc.test.ts --mode banc",
+    "gestes": "vitest run src/listen/gestes.test.ts --mode gestes --reporter=default",
     "scenarios": "vitest run src/presence/scenarios.test.ts --mode scenarios",
     "mutations": "node tools/mutations.mjs",
     "chaine": "vitest run src/presence/chaine.test.ts --mode chaine --reporter=default"

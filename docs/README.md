@@ -142,6 +142,43 @@ de moins de 12 h. Une entrée laissée ouverte par un plantage compte donc encor
 
 L'essai chronométré du 07/11 sur le poste réel : [`essai-2026-11-07.md`](essai-2026-11-07.md).
 
+**Le banc des gestes**, `npm run gestes`, sur le poste seulement, jamais en CI : ce que la page envoie au serveur, texte
+et confiance, pour chaque son de `BANC_DIR/gestes` (`../banc-sons/gestes` par défaut), hors dépôt.
+
+- `mots.json`, la liste, un tableau de lignes `{ "id": "oui", "dit": "oui", "attendu": "accepter", "prises": 5 }` :
+  `id` en `[a-z0-9-]+`, unique ; `dit` non vide ; `attendu` parmi `accepter`, `refuser`, `envoyer`, `annuler`, `aucun` ;
+  `prises` entier d'au moins 1 ; `"parole": false` pour un son qui n'est pas de la parole. Toute autre ligne est
+  refusée, par son rang. Le dépôt n'a pas de liste : les mots des gestes sont au serveur.
+- `prises/<id>-<n>.wav`, `n` de 1 à `prises`, toutes lues avant de jouer : une qui manque arrête tout, et est nommée.
+- `temoins/*.wav`, joués comme des non-paroles, `attendu` `aucun`.
+
+Le message d'une ligne refusée, d'une prise manquante ou d'un JSON illisible donne le rang ou le fichier, jamais ce
+qu'il contient. `npm run banc` saute ce dossier : ses prises portent les `id` de la liste.
+
+Une parole est dite par chaque voix de `GESTES_VOIX` (au format de `CHAINE_VOIX` ; Hortense, Julie, Paul, jessica et
+pierre par défaut), propre puis dans le bruit du banc à son niveau fixe, puis chacune de ses prises telle quelle. Les
+deux voix de Piper sont cherchées dans `../../piper` depuis le dossier où la commande est lancée : depuis le clone
+principal, ou avec `GESTES_VOIX`. Sa voix à elle est refusée, comme pour la chaîne : celle du service en usage,
+`CHAINE_TTS` (siwis dans `../../piper` par défaut). Une
+non-parole n'est jamais synthétisée : chaque prise propre, puis dans le bruit à -6, 0 et +6 dB de ce niveau ; de même
+chaque témoin, et un son nul, qui donne le bruit seul. Chaque son passe par Silero, la fin de phrase et une conversation
+neuve, aux réglages par défaut et en scène, puis par `/stt` du service de voix que la commande lance (`--stt` pris dans
+`GESTES_STT`, sans défaut ; `--tts aucun`).
+
+`gestes.jsonl`, une ligne par son : `id`, `source` (la voix, `prise:<n>`, `temoin`, ou `code` pour le son nul),
+`condition` (`propre`, `bruit`) et `niveau` (dB), `attendu`, `ecoute` (ce que la fin de phrase a trouvé), chaque
+transcription (`texte`, `confiance`, `verdict` du filtre, `duree` qu'elle a prise et `son` reçu, en ms), ce que `send` a
+reçu (`envoye`), ce que `withdraw` a repris (`repris`), la `brique` et la `date`. Une transcription que la conversation
+a donnée en échec, d'après sa trace, s'écrit `echec` (sur la transcription et sur la ligne), jamais comme un texte non
+envoyé. La dernière ligne compte : `{ "fin": true, "sons", "echecs", "brique", "duree" }` (en ms). Un relevé sans
+elle vient d'une partie interrompue, et ne compte pas. Un seul échec, et la commande échoue. Aucun classement ici : ce que le serveur fait d'un texte, ses comptes le disent.
+
+```powershell
+$env:GESTES_STT = 'faster:small'
+npm run gestes
+Remove-Item Env:GESTES_STT
+```
+
 ## Limites connues
 
 - La voix est lue au niveau sonore, pas par Silero : à remplacer si l'essai montre de faux départs.
