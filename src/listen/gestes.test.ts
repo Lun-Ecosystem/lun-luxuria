@@ -204,6 +204,16 @@ describe('a word through a new conversation', () => {
     expect(e.envoye).toEqual([{ texte: 'Oui.', confiance: 0.8 }]);
   });
 
+  it('keeps the verdict of every try of a long sound, past twenty sentences', async () => {
+    // A long witness: twenty-five times 0.3 s of noise and 0.8 s of silence.
+    const une = Float32Array.from([...noise(1, 0.2).subarray(0, 4800), ...new Float32Array(12800)]);
+    const long = new Float32Array(une.length * 25);
+    for (let k = 0; k < 25; k++) long.set(une, k * une.length);
+    const e = await ecouter(long, byLevel, async () => ({ text: 'Oui.', confidence: 0.8 }));
+    expect(e.transcriptions).toHaveLength(25);
+    expect(e.transcriptions.filter((t) => 'verdict' in t && t.verdict === 'pour_elle')).toHaveLength(25);
+  });
+
   it('a text the noise filter sets aside never reaches send, and its line says so', async () => {
     const dir = dossier([bonne], ['oui-1.wav']);
     const texte = "Sous-titres réalisés par la communauté d'Amara.org";

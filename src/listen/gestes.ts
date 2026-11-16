@@ -115,7 +115,8 @@ export async function ecouter(
   stt: (audio: Float32Array) => Promise<Heard>,
 ): Promise<Ecoute> {
   let soundAt = 0;
-  const trace = new Trace(() => soundAt);
+  // Every turn of the sound, however long a witness is: the page keeps twenty, this bench reads them all.
+  const trace = new Trace(() => soundAt, Number.POSITIVE_INFINITY);
   const out: Ecoute = { ecoute: [], transcriptions: [], envoye: [], repris: [] };
   const faites: { t: Transcription; essai: TraceEvent | undefined }[] = [];
   const enRoute: Promise<unknown>[] = [];
