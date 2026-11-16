@@ -433,6 +433,45 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
     expect(session.folders.corps).toBe('C:\\corps');
   });
 
+  it('a new « Choisir… » lifts the refusal: none while the dialog is open, none after the choice', async () => {
+    let answer: (path: string) => void = () => {};
+    let tries = 0;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd !== 'folder_pick') return cmd === 'body_config' ? '{"niveau":"souffle"}' : null;
+      if (++tries === 1) throw 'Ce dossier n’a pas de corps.json.';
+      return new Promise((r) => (answer = r));
+    });
+    open();
+    await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+    await vi.waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+    expect(asked('folder_pick')).toHaveLength(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+    answer('C:\\corps');
+    await vi.waitFor(() => expect(screen.getByText('C:\\corps')).toBeInTheDocument());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('one call at a time: a second click sends nothing, and « Oublier » waits for « Choisir… »', async () => {
+    let answer: (path: string | null) => void = () => {};
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'folder_pick' ? new Promise((r) => (answer = r)) : null,
+    );
+    const session = open();
+    session.folders.corps = 'C:\\corps';
+    const choose = await screen.findByRole('button', { name: /^Choisir/ });
+    await fireEvent.click(choose);
+    await fireEvent.click(choose);
+    expect(asked('folder_pick')).toHaveLength(1);
+    const forget = screen.getByRole('button', { name: /^Oublier/ });
+    expect(forget).toBeDisabled();
+    await fireEvent.click(forget);
+    expect(asked('folder_forget')).toHaveLength(0);
+    answer(null);
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: /^Oublier/ })).toBeEnabled());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('« Oublier » refused: announced, the folder stays kept and shown, and nothing is read', async () => {
     window_({ folder_forget: new Error('Oubli refusé.') });
     const session = open();

@@ -16,21 +16,35 @@
   const former = $derived(formerWaiting(session, 'corps'));
   /** The window's refusal, announced on the folder's row until the next try; the body's state stays beside « Relire ». */
   let refused = $state('');
+  // One call at a time: two clicks before the dialog shows would open a second, refused one.
+  let working = $state<'choose' | 'forget' | null>(null);
 
   async function choose() {
+    if (working) return;
+    working = 'choose';
     refused = '';
-    const done = await pickFolder(session, 'corps');
-    if (typeof done === 'string') refused = done;
-    else if (done) {
-      set((d) => (d.body.formerFolder = ''));
-      void reloadBody(session);
+    try {
+      const done = await pickFolder(session, 'corps');
+      if (typeof done === 'string') refused = done;
+      else if (done) {
+        set((d) => (d.body.formerFolder = ''));
+        void reloadBody(session);
+      }
+    } finally {
+      working = null;
     }
   }
   async function forget() {
+    if (working) return;
+    working = 'forget';
     refused = '';
-    const done = await forgetFolder(session, 'corps');
-    if (done === true) void reloadBody(session);
-    else refused = done;
+    try {
+      const done = await forgetFolder(session, 'corps');
+      if (done === true) void reloadBody(session);
+      else refused = done;
+    } finally {
+      working = null;
+    }
   }
   async function copy() {
     try {
@@ -44,9 +58,9 @@
 
 <!-- The refusal goes beside the path or the notice, never in their place: the old path is the fallback to copy. -->
 {#snippet folder()}
-  {#if path}{path}{:else if former}Le dossier se choisit maintenant dans la boîte de dialogue du système.
-    Choisis de nouveau celui-ci : <span class="chemin">{former}</span>.{:else}Aucun : le souffle. Choisis le
-    dossier qui contient son corps.json.{/if}
+  {#if path}<span class="garde">{path}</span>{:else if former}Le dossier se choisit maintenant dans la boîte
+    de dialogue du système. Choisis de nouveau celui-ci : <span class="chemin">{former}</span>.{:else}Aucun :
+    le souffle. Choisis le dossier qui contient son corps.json.{/if}
   {#if refused}<span class="refus" role="alert">{refused}</span>{/if}
 {/snippet}
 
@@ -54,16 +68,26 @@
   <SettingsRow label="Dossier du corps" hint={folder}>
     <span class="gestes">
       {#if path}
-        <Button variant="fantome" size="petit" aria-label="Oublier le dossier du corps" onclick={forget}
-          >Oublier</Button
+        <Button
+          variant="fantome"
+          size="petit"
+          aria-label="Oublier le dossier du corps"
+          disabled={working === 'choose'}
+          loading={working === 'forget'}
+          onclick={forget}>Oublier</Button
         >
       {:else if former}
         <Button variant="fantome" size="petit" aria-label="Copier l’ancien dossier du corps" onclick={copy}
           >Copier</Button
         >
       {/if}
-      <Button variant="secondaire" size="petit" aria-label="Choisir le dossier du corps" onclick={choose}
-        >Choisir…</Button
+      <Button
+        variant="secondaire"
+        size="petit"
+        aria-label="Choisir le dossier du corps"
+        disabled={working === 'forget'}
+        loading={working === 'choose'}
+        onclick={choose}>Choisir…</Button
       >
     </span>
   </SettingsRow>
@@ -87,5 +111,10 @@
   .refus {
     display: block;
     color: var(--danger);
+  }
+  /* A Windows path has no space to break at: it wraps anywhere rather than pass under the buttons. */
+  .garde,
+  .refus {
+    overflow-wrap: anywhere;
   }
 </style>
