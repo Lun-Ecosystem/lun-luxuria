@@ -510,6 +510,403 @@ mod tests {
         assert_eq!(kept, ["127.0.0.1:9", "[::1]:9"]);
     }
 
+    /// Task 6: the arguments the person confirmed, kept in `arguments.json` next to `programmes.json`. The functions
+    /// named here are the contract: `read_arguments`, `save_arguments`, `confirm_args` (the box passed as a parameter,
+    /// like `net_guard::confirm`), `pick_saved`, `forget`, `start_confirmed`.
+    mod confirmed_args {
+        use super::*;
+        use crate::one_box::{OneBox, take};
+        use std::cell::RefCell;
+        use tauri_plugin_dialog::MessageDialogResult;
+
+        const BUSY: &str = "Une boîte est déjà ouverte.";
+        const LOOP: &str = "http://127.0.0.1:9";
+
+        struct Setup {
+            paths: PathBuf,
+            args: PathBuf,
+            exe: PathBuf,
+            other: PathBuf,
+        }
+
+        /// Temporary files only; `rvc` has `rvc/a.exe` chosen when `chosen`, `rvc/b.exe` is another real exe.
+        fn setup(tag: &str, chosen: bool) -> Setup {
+            let d = dir(tag);
+            let exe = d.join("a.exe");
+            let other = d.join("b.exe");
+            fs::write(&exe, "").unwrap();
+            fs::write(&other, "").unwrap();
+            let s = Setup {
+                paths: d.join("conf").join(PATHS),
+                args: d.join("conf").join("arguments.json"),
+                exe,
+                other,
+            };
+            if chosen {
+                save_entry(&s.paths, "rvc", Some(&s.exe)).unwrap();
+            }
+            s
+        }
+
+        fn v(a: &[&str]) -> Vec<String> {
+            a.iter().map(|s| s.to_string()).collect()
+        }
+
+        type Seen = RefCell<Vec<(String, String)>>;
+
+        fn run(
+            s: &Setup,
+            one: &OneBox,
+            name: &str,
+            args: &[String],
+            answer: MessageDialogResult,
+            seen: &Seen,
+        ) -> Result<bool, String> {
+            confirm_args(&s.paths, &s.args, one, name, args, |title, text| {
+                seen.borrow_mut().push((title.into(), text.into()));
+                answer
+            })
+        }
+
+        fn confirmed(s: &Setup, args: &[&str]) {
+            save_arguments(&s.args, "rvc", Some(&v(args))).unwrap();
+        }
+
+        #[test]
+        fn no_exe_chosen_refuses_without_a_box() {
+            let s = setup("args-sans-exe", false);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let err = run(
+                &s,
+                &one,
+                "rvc",
+                &v(&["-p"]),
+                MessageDialogResult::Yes,
+                &seen,
+            );
+            assert!(err.unwrap_err().contains("Choisis d"));
+            assert!(seen.borrow().is_empty());
+            assert!(read_arguments(&s.args).is_empty());
+        }
+
+        #[test]
+        fn a_name_off_the_list_is_refused_without_a_box() {
+            let s = setup("args-inconnu", true);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let err = run(
+                &s,
+                &one,
+                "cmd",
+                &v(&["/c"]),
+                MessageDialogResult::Yes,
+                &seen,
+            );
+            assert_eq!(err, Err("Programme inconnu.".to_string()));
+            assert!(seen.borrow().is_empty());
+            assert!(!s.args.exists(), "nothing written for an unknown name");
+        }
+
+        #[test]
+        fn the_arguments_already_confirmed_say_true_without_a_box() {
+            let s = setup("args-egaux", true);
+            confirmed(&s, &["-p", "7860"]);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let got = run(
+                &s,
+                &one,
+                "rvc",
+                &v(&["-p", "7860"]),
+                MessageDialogResult::Cancel,
+                &seen,
+            );
+            assert_eq!(got, Ok(true));
+            assert!(seen.borrow().is_empty());
+            // The guard taken does not matter: no box is needed.
+            let _held = take(&one).unwrap();
+            let again = run(
+                &s,
+                &one,
+                "rvc",
+                &v(&["-p", "7860"]),
+                MessageDialogResult::Cancel,
+                &seen,
+            );
+            assert_eq!(again, Ok(true));
+            assert!(seen.borrow().is_empty());
+        }
+
+        #[test]
+        fn confirmed_empty_equals_empty_but_never_confirmed_does_not() {
+            let s = setup("args-vide", true);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            // Never confirmed: the empty list is a change, so the box opens.
+            let got = run(&s, &one, "rvc", &[], MessageDialogResult::Cancel, &seen);
+            assert_eq!(got, Ok(false));
+            assert_eq!(seen.borrow().len(), 1);
+            confirmed(&s, &[]);
+            let got = run(&s, &one, "rvc", &[], MessageDialogResult::Cancel, &seen);
+            assert_eq!(got, Ok(true));
+            assert_eq!(seen.borrow().len(), 1, "confirmed empty: no second box");
+        }
+
+        #[test]
+        fn a_taken_guard_refuses_a_change_without_a_box() {
+            let s = setup("args-garde", true);
+            confirmed(&s, &["-p", "1"]);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let _held = take(&one).unwrap();
+            let got = run(
+                &s,
+                &one,
+                "rvc",
+                &v(&["-p", "2"]),
+                MessageDialogResult::Custom("Confirmer".into()),
+                &seen,
+            );
+            assert_eq!(got, Err(BUSY.to_string()));
+            assert!(seen.borrow().is_empty());
+            assert_eq!(read_arguments(&s.args)["rvc"], v(&["-p", "1"]));
+        }
+
+        #[test]
+        fn an_argument_refused_by_checked_args_opens_no_box() {
+            let s = setup("args-bornes", true);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let yes = || MessageDialogResult::Custom("Confirmer".into());
+            let many = vec!["x".to_string(); 33];
+            assert!(run(&s, &one, "rvc", &many, yes(), &seen).is_err());
+            assert!(run(&s, &one, "rvc", &v(&["a\0b"]), yes(), &seen).is_err());
+            assert!(run(&s, &one, "rvc", &["y".repeat(1025)], yes(), &seen).is_err());
+            assert!(seen.borrow().is_empty());
+            assert!(read_arguments(&s.args).is_empty());
+            assert!(take(&one).is_ok(), "the guard was not left taken");
+        }
+
+        #[test]
+        fn only_confirmer_keeps_the_arguments() {
+            let s = setup("args-reponses", true);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let no = [
+                MessageDialogResult::Custom("Annuler".into()),
+                MessageDialogResult::Custom("Fermer".into()),
+                MessageDialogResult::Custom("confirmer".into()),
+                MessageDialogResult::Cancel,
+                MessageDialogResult::Yes,
+                MessageDialogResult::No,
+                MessageDialogResult::Ok,
+            ];
+            for answer in no {
+                let label = format!("{answer:?}");
+                let got = run(&s, &one, "rvc", &v(&["-p", "1"]), answer, &seen);
+                assert_eq!(got, Ok(false), "{label}");
+                assert!(read_arguments(&s.args).is_empty(), "{label} kept something");
+                assert!(take(&one).is_ok(), "{label}: the guard was not given back");
+            }
+            let yes = MessageDialogResult::Custom("Confirmer".into());
+            assert_eq!(run(&s, &one, "rvc", &v(&["-p", "1"]), yes, &seen), Ok(true));
+            assert_eq!(read_arguments(&s.args)["rvc"], v(&["-p", "1"]));
+            assert!(take(&one).is_ok(), "the guard was not given back");
+        }
+
+        #[test]
+        fn a_refused_change_keeps_the_arguments_confirmed_before() {
+            let s = setup("args-refus-garde", true);
+            confirmed(&s, &["-p", "1"]);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let got = run(
+                &s,
+                &one,
+                "rvc",
+                &v(&["-p", "2"]),
+                MessageDialogResult::Custom("Annuler".into()),
+                &seen,
+            );
+            assert_eq!(got, Ok(false));
+            assert_eq!(read_arguments(&s.args)["rvc"], v(&["-p", "1"]));
+        }
+
+        #[test]
+        fn the_box_is_titled_with_the_program_and_lists_one_argument_per_line() {
+            let s = setup("args-boite", true);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let args = v(&["-m", "models\\ggml small.bin", "--port", "8080"]);
+            let _ = run(&s, &one, "rvc", &args, MessageDialogResult::Cancel, &seen);
+            let seen = seen.borrow();
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].0, "Les arguments de RVC");
+            assert_eq!(seen[0].1.lines().collect::<Vec<_>>(), args);
+            save_entry(&s.paths, "whisper-server", Some(&s.exe)).unwrap();
+            let again = Seen::default();
+            let _ = run(
+                &s,
+                &one,
+                "whisper-server",
+                &v(&["-m"]),
+                MessageDialogResult::Cancel,
+                &again,
+            );
+            assert_eq!(again.borrow()[0].0, "Les arguments de whisper-server");
+        }
+
+        #[test]
+        fn confirmed_and_never_confirmed_are_not_the_same_in_the_file() {
+            let s = setup("args-fichier", false);
+            assert!(read_arguments(&s.args).is_empty());
+            assert!(!read_arguments(&s.args).contains_key("rvc"));
+            save_arguments(&s.args, "rvc", Some(&[])).unwrap();
+            let read = read_arguments(&s.args);
+            assert_eq!(read.get("rvc"), Some(&Vec::<String>::new()));
+            assert!(!read.contains_key("whisper-server"));
+        }
+
+        #[test]
+        fn writing_one_name_keeps_the_other_and_none_forgets() {
+            let s = setup("args-deux", false);
+            save_arguments(&s.args, "rvc", Some(&v(&["-p", "1"]))).unwrap();
+            save_arguments(&s.args, "whisper-server", Some(&v(&["-m", "x"]))).unwrap();
+            save_arguments(&s.args, "rvc", Some(&v(&["-p", "2"]))).unwrap();
+            let read = read_arguments(&s.args);
+            assert_eq!(read["rvc"], v(&["-p", "2"]));
+            assert_eq!(read["whisper-server"], v(&["-m", "x"]));
+            save_arguments(&s.args, "rvc", None).unwrap();
+            let read = read_arguments(&s.args);
+            assert!(!read.contains_key("rvc"));
+            assert_eq!(read["whisper-server"], v(&["-m", "x"]));
+            assert!(save_arguments(&s.args, "cmd", Some(&v(&["/c"]))).is_err());
+        }
+
+        #[test]
+        fn an_unreadable_file_reads_as_none_and_can_be_written_over() {
+            let s = setup("args-illisible", false);
+            fs::create_dir_all(s.args.parent().unwrap()).unwrap();
+            for junk in ["pas du json", "{\"rvc\": \"pas une liste\"}", "[1, 2]", ""] {
+                fs::write(&s.args, junk).unwrap();
+                assert!(read_arguments(&s.args).is_empty(), "{junk:?}");
+            }
+            fs::write(&s.args, "pas du json").unwrap();
+            save_arguments(&s.args, "rvc", Some(&v(&["-p"]))).unwrap();
+            assert_eq!(read_arguments(&s.args)["rvc"], v(&["-p"]));
+        }
+
+        #[test]
+        fn another_exe_for_the_name_drops_its_confirmation() {
+            // The plan says nothing: the cautious side, a confirmation was for one program.
+            let s = setup("args-autre-exe", true);
+            save_entry(&s.paths, "whisper-server", Some(&s.exe)).unwrap();
+            confirmed(&s, &["-p", "1"]);
+            save_arguments(&s.args, "whisper-server", Some(&v(&["-m", "x"]))).unwrap();
+            pick_saved(&s.paths, &s.args, "rvc", &s.other).unwrap();
+            assert_eq!(read_paths(&s.paths)["rvc"], s.other.display().to_string());
+            let read = read_arguments(&s.args);
+            assert!(
+                !read.contains_key("rvc"),
+                "the confirmation outlived its exe"
+            );
+            assert_eq!(
+                read["whisper-server"],
+                v(&["-m", "x"]),
+                "the other name is untouched"
+            );
+            // Seen from the box: the same arguments ask again.
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let got = run(
+                &s,
+                &one,
+                "rvc",
+                &v(&["-p", "1"]),
+                MessageDialogResult::Cancel,
+                &seen,
+            );
+            assert_eq!(got, Ok(false));
+            assert_eq!(seen.borrow().len(), 1);
+        }
+
+        #[test]
+        fn the_same_exe_picked_again_keeps_its_confirmation() {
+            let s = setup("args-meme-exe", true);
+            confirmed(&s, &["-p", "1"]);
+            pick_saved(&s.paths, &s.args, "rvc", &s.exe).unwrap();
+            assert_eq!(read_arguments(&s.args)["rvc"], v(&["-p", "1"]));
+        }
+
+        #[test]
+        fn forgetting_a_program_forgets_its_arguments_too() {
+            let s = setup("args-oubli", true);
+            save_entry(&s.paths, "whisper-server", Some(&s.exe)).unwrap();
+            confirmed(&s, &["-p", "1"]);
+            save_arguments(&s.args, "whisper-server", Some(&v(&["-m"]))).unwrap();
+            forget(&s.paths, &s.args, "rvc").unwrap();
+            assert!(!read_paths(&s.paths).contains_key("rvc"));
+            let read = read_arguments(&s.args);
+            assert!(!read.contains_key("rvc"));
+            assert_eq!(read["whisper-server"], v(&["-m"]));
+            assert!(forget(&s.paths, &s.args, "cmd").is_err());
+        }
+
+        #[test]
+        fn never_confirmed_arguments_start_nothing() {
+            let s = setup("args-lance-jamais", true);
+            let programs = Programs::default();
+            let log = dir("args-lance-jamais-log").join("rvc.log");
+            let err = start_confirmed(&programs, "rvc", &s.paths, &s.args, LOOP, &log).unwrap_err();
+            assert!(
+                err.contains("Confirme d") && err.contains("ses arguments"),
+                "{err}"
+            );
+            assert!(programs.0.lock().unwrap().is_empty());
+            assert!(!log.exists(), "no log: nothing was opened");
+        }
+
+        #[test]
+        fn confirmed_empty_is_not_never_confirmed_at_start() {
+            let s = setup("args-lance-vide", true);
+            confirmed(&s, &[]);
+            let programs = Programs::default();
+            let log = dir("args-lance-vide-log").join("rvc.log");
+            // The empty file is no program: it fails to launch, which is past the arguments' check.
+            let err = start_confirmed(&programs, "rvc", &s.paths, &s.args, LOOP, &log).unwrap_err();
+            assert!(!err.contains("Confirme d"), "{err}");
+            assert!(programs.0.lock().unwrap().is_empty());
+        }
+
+        #[test]
+        fn start_keeps_the_name_and_the_address_checks() {
+            let s = setup("args-lance-refus", true);
+            confirmed(&s, &["-p"]);
+            let programs = Programs::default();
+            let log = dir("args-lance-refus-log").join("x.log");
+            let unknown = start_confirmed(&programs, "cmd", &s.paths, &s.args, LOOP, &log);
+            assert_eq!(unknown, Err("Programme inconnu.".to_string()));
+            let off = "http://192.0.2.1:8080";
+            let err = start_confirmed(&programs, "rvc", &s.paths, &s.args, off, &log).unwrap_err();
+            assert!(is_refusal(&err, off), "{err}");
+            assert!(programs.0.lock().unwrap().is_empty());
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn start_runs_with_the_confirmed_arguments_and_compares_to_them() {
+            const PING: &str = "C:\\Windows\\System32\\PING.EXE";
+            let s = setup("args-lance", false);
+            save_entry(&s.paths, "rvc", Some(Path::new(PING))).unwrap();
+            let programs = Programs::default();
+            let log = dir("args-lance-log").join("rvc.log");
+            let held_args = |p: &Programs| p.0.lock().unwrap()["rvc"].args.clone();
+            confirmed(&s, &["-n", "30", "127.0.0.1"]);
+            let first = start_confirmed(&programs, "rvc", &s.paths, &s.args, LOOP, &log).unwrap();
+            assert_eq!(first.outcome, "started");
+            assert_eq!(held_args(&programs), v(&["-n", "30", "127.0.0.1"]));
+            // Already running with these arguments: the confirmed ones are what it compares to.
+            let same = start_confirmed(&programs, "rvc", &s.paths, &s.args, LOOP, &log).unwrap();
+            assert_eq!(same.outcome, "running");
+            confirmed(&s, &["-n", "40", "127.0.0.1"]);
+            let other = start_confirmed(&programs, "rvc", &s.paths, &s.args, LOOP, &log).unwrap();
+            assert_eq!(other.outcome, "restarted");
+            assert_eq!(held_args(&programs), v(&["-n", "40", "127.0.0.1"]));
+            stop_all(&programs);
+        }
+    }
+
     #[cfg(windows)]
     mod on_windows {
         use super::*;
