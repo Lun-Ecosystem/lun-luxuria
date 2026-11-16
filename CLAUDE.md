@@ -50,9 +50,10 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
   son dossier : aujourd'hui `src/listen/silero/silero_vad.onnx` seul. Le contrôle, lun-docs cloné à côté :
   `node ../lun-docs/tools/check-repo.mjs --public .`.
 - La latence se mesure sur la machine réelle. Un chiffre pris ailleurs ne compte pas.
-- L'écoute se rejoue : `npm run banc` passe chaque WAV de `../banc-sons` (ou `BANC_DIR`) dans la détection de voix, par le
-  niveau puis par le modèle, et écrit `releve.md` dans ce dossier, avec à côté `deroule.jsonl`, le déroulé daté de sa
-  chaîne (`src/trace.ts`). Aucun enregistrement de voix ni déroulé n'entre dans le dépôt.
+- L'écoute se rejoue : `npm run banc` passe chaque WAV de `../banc-sons` (ou `BANC_DIR`), sauf ceux de `gestes/`, qui
+  ont leur banc, dans la détection de voix, par le niveau puis par le modèle, et écrit `releve.md` dans ce dossier, avec
+  à côté `deroule.jsonl`, le déroulé daté de sa chaîne (`src/trace.ts`). Aucun enregistrement de voix ni déroulé n'entre
+  dans le dépôt.
 - La présence se joue en scénarios (`src/presence/scenarios/`, données seules) sur les vrais mécanismes et des briques
   fausses, en temps virtuel, dans `npm test` ; un écart du code devient une issue et un `connus`, jamais une borne
   élargie. `npm run scenarios` écrit `releve-scenarios.md` et les `deroule-<nom>.jsonl` dans `BANC_DIR/scenarios`.
