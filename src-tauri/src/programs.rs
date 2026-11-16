@@ -832,6 +832,35 @@ mod tests {
         }
 
         #[test]
+        fn an_invisible_or_control_character_opens_no_box() {
+            // The box must show what starts: each of these would hide, split or reorder a line.
+            let s = setup("args-invisibles", true);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            for c in ['\n', '\r', '\t', '\u{202E}', '\u{200B}'] {
+                let args = v(&["-p", &format!("1{c}--host")]);
+                let yes = MessageDialogResult::Custom("Confirmer".into());
+                assert_eq!(
+                    run(&s, &one, "rvc", &args, yes, &seen),
+                    Err("Argument 2 : caractère invisible ou de contrôle refusé.".to_string()),
+                    "{c:?}"
+                );
+            }
+            assert!(seen.borrow().is_empty());
+            assert!(read_arguments(&s.args).is_empty());
+        }
+
+        #[test]
+        fn accents_and_spaces_reach_the_box_as_they_are() {
+            let s = setup("args-accents", true);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let args = v(&["--modèle", "C:\\Mes modèles\\voix d’été.bin"]);
+            let yes = MessageDialogResult::Custom("Confirmer".into());
+            assert_eq!(run(&s, &one, "rvc", &args, yes, &seen), Ok(true));
+            assert_eq!(seen.borrow()[0].1.lines().collect::<Vec<_>>(), args);
+            assert_eq!(read_arguments(&s.args)["rvc"], args);
+        }
+
+        #[test]
         fn only_confirmer_keeps_the_arguments() {
             let s = setup("args-reponses", true);
             let (one, seen) = (OneBox::default(), Seen::default());

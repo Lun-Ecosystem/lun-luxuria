@@ -39,15 +39,27 @@ pub fn checked_dir(dir: &str) -> Result<PathBuf, String> {
     crate::folders::holding(dir, SCRIPT, "Dossier du service introuvable.")
 }
 
+/** A control character, or a format one that hides or reorders text: a box would not show what starts. */
+fn hidden(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+}
+
+/** Refused by its rank, never shown raw: what it holds is what would mislead. */
 pub fn checked_args(args: &[String]) -> Result<(), String> {
     if args.len() > ARGS_MAX {
         return Err(format!("Trop d’arguments ({ARGS_MAX} au plus)."));
     }
-    if args
-        .iter()
-        .any(|a| a.len() > ARG_LEN_MAX || a.contains('\0'))
-    {
-        return Err("Argument illisible.".to_string());
+    for (rank, a) in (1..).zip(args) {
+        if a.len() > ARG_LEN_MAX {
+            return Err("Argument illisible.".to_string());
+        }
+        if a.chars().any(hidden) {
+            return Err(format!(
+                "Argument {rank} : caractère invisible ou de contrôle refusé."
+            ));
+        }
     }
     Ok(())
 }
@@ -455,6 +467,32 @@ mod tests {
     }
 
     #[test]
+    fn an_invisible_or_control_character_is_refused_by_its_rank() {
+        // Each refused range by its ends, and controls past `\n`, `\r` and `\t`.
+        let hidden = [
+            '\n', '\r', '\t', '\0', '\u{7F}', '\u{85}', '\u{061C}', '\u{200B}', '\u{200F}',
+            '\u{202A}', '\u{202E}', '\u{2060}', '\u{2064}', '\u{2066}', '\u{2069}', '\u{FEFF}',
+        ];
+        for c in hidden {
+            let args = ["-m".to_string(), "x".to_string(), format!("a{c}b")];
+            assert_eq!(
+                checked_args(&args),
+                Err("Argument 3 : caractère invisible ou de contrôle refusé.".to_string()),
+                "{c:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn accents_and_spaces_pass() {
+        let args = [
+            "--modèle".to_string(),
+            "C:\\Mes modèles\\voix d’été.bin".to_string(),
+        ];
+        assert_eq!(checked_args(&args), Ok(()));
+    }
+
+    #[test]
     fn a_refused_folder_starts_nothing() {
         let launched = Launched::default();
         let log = folder("log", false).join("voix.log");
@@ -734,6 +772,27 @@ mod service_args {
         let many = vec!["--stt".to_string(); ARGS_MAX + 1];
         assert!(checked_service_args(&many).is_err());
         assert!(checked_service_args(&strings(&["--lang", "f\0r"])).is_err());
+    }
+
+    #[test]
+    fn an_invisible_or_control_character_is_refused_before_the_flags() {
+        for c in ['\n', '\r', '\t', '\u{202E}', '\u{200B}'] {
+            let value = format!("f{c}r");
+            let err = checked_service_args(&strings(&["--stt", "faster:small", "--lang", &value]));
+            assert_eq!(
+                err,
+                Err("Argument 4 : caractère invisible ou de contrôle refusé.".to_string()),
+                "{c:?}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_voice_file_with_accents_passes() {
+        let file = voice_file("accents", "voix d’été.onnx");
+        let _root = crate::net_scope::TempRoot(Path::new(&file).parent().unwrap().to_path_buf());
+        ok(&["--stt", "faster:small", "--tts", &format!("piper:{file}")]);
     }
 
     // Refused flags.
