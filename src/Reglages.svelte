@@ -253,6 +253,8 @@ then it blocks, and says so as an error: a folded block opens on it. One the pag
         >
       {/if}
     </SettingsRow>
+    <!-- Closed side, but said: the person knows why the box may come back. -->
+    {#if session.hostsSaid}<SettingsRow label="Liste illisible" hint={session.hostsSaid} />{/if}
   {/if}
 {/snippet}
 
@@ -264,14 +266,16 @@ then it blocks, and says so as an error: a folded block opens on it. One the pag
   </SettingsRow>
 {/snippet}
 
+<!-- `error`: what blocks, said in place of the hint; a folded block opens on it. -->
 {#snippet field(
   label: string,
   hint: string | undefined,
   value: string,
   suffix: string | undefined,
   on: (v: string) => void,
+  error: string | undefined = undefined,
 )}
-  <SettingsRow {label} {hint}>
+  <SettingsRow {label} {hint} {error}>
     <TextInput
       {value}
       {suffix}
@@ -393,10 +397,11 @@ then it blocks, and says so as an error: a folded block opens on it. One the pag
           {#if inWindow && s.brain === 'linked'}
             {@render field(
               'Adresse du serveur',
-              serverRefused ?? 'Changer efface l’appairage : un nouveau code sera demandé.',
+              'Changer efface l’appairage : un nouveau code sera demandé.',
               s.server,
               undefined,
               (v) => v.trim() && session.setServer(v.trim()),
+              serverRefused,
             )}
             {@render host(s.server, serverRefused)}
           {/if}
@@ -406,10 +411,11 @@ then it blocks, and says so as an error: a folded block opens on it. One the pag
           <Avance what="le modèle, la clé, le plafond">
             {@render field(
               'Adresse du modèle',
-              modelRefused ?? 'Compatible OpenAI, souvent terminée par /v1.',
+              'Compatible OpenAI, souvent terminée par /v1.',
               s.model.url,
               undefined,
               (v) => set((d) => (d.model.url = v.trim() || DEFAULTS.model.url)),
+              modelRefused,
             )}
             {@render host(s.model.url, modelRefused)}
             {@render field('Nom du modèle', undefined, s.model.name, undefined, (v) =>

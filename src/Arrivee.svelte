@@ -108,6 +108,8 @@ already is never offered. -->
           onclick={(e) => void hostCall(access, origin, e.currentTarget, () => confirmHost(session, url))}
           >Confirmer…</Button
         >
+        <!-- Closed side, but said: the person knows why the box may come back. -->
+        {#if session.hostsSaid}<p class="aide">Liste illisible : {session.hostsSaid}</p>{/if}
       {/if}
     </div>
   {/if}

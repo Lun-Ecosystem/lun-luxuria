@@ -264,6 +264,10 @@ describe('an address off this computer, confirmed on the arrival', () => {
     expect(await screen.findByText(NOTICE)).toBeInTheDocument();
     expect(confirmButton()).not.toBeNull();
     expect(session.hosts).toEqual([]);
+    // Said beside the button, in grey: the person knows why the box may come back.
+    const said = screen.getByText('Liste illisible : hotes.json illisible');
+    expect(said).toHaveClass('aide');
+    expect(said.closest('[role="alert"]')).toBeNull();
   });
 
   it.each([

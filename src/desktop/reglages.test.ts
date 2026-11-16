@@ -829,6 +829,46 @@ describe('an address off this computer, confirmed in the settings', () => {
     },
   );
 
+  it.each([true, false])(
+    'the model in http with a key, in the window: %s: the page refuses it, the block opens on the alert',
+    async (window) => {
+      where.inWindow = window;
+      rust([]);
+      opened('agent', {
+        brain: 'alone',
+        model: { url: 'http://modele.exemple/v1', name: 'un-modele', key: 'k' },
+      });
+      await waitFor(() => expect(advanced()).toHaveAttribute('open'));
+      expect(within(advanced()).getByRole('alert')).toHaveTextContent(/La clé ne part pas en clair/);
+    },
+  );
+
+  it('the server in http off this computer: the page’s refusal is the row’s error, as on the arrival', () => {
+    rust([]);
+    linked('http://serveur.exemple:8788');
+    expect(screen.getByText(/partirait en clair/).closest('[role="alert"]')).not.toBeNull();
+  });
+
+  it('the list cannot be read: « Confirmer… » is still offered, the closed side, and it says why, in grey', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'net_hosts') throw 'hotes.json illisible';
+      return null;
+    });
+    linked();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    expect(confirmButton()).not.toBeNull();
+    const said = screen.getByText('Liste illisible');
+    expect(said.closest('[role="alert"]')).toBeNull();
+    expect(screen.getByText('hotes.json illisible').closest('[role="alert"]')).toBeNull();
+  });
+
+  it('a list read fine says nothing of it', async () => {
+    rust([]);
+    linked();
+    await screen.findByText(NOTICE);
+    expect(screen.queryByText(/Liste illisible/)).toBeNull();
+  });
+
   it('« Confirmer… » names the address it confirms', async () => {
     rust([]);
     linked();
@@ -958,6 +998,22 @@ describe('an address off this computer, confirmed in the settings', () => {
       expect(within(card()).queryByRole('alert')).toBeNull();
       // To decide what blocks, none: the closed side.
       expect(session.hosts).toEqual([]);
+    });
+
+    it('one call for the whole screen: two different « Oublier » while one waits, one call', async () => {
+      let done!: () => void;
+      invoke.mockImplementation(async (cmd) => {
+        if (cmd === 'net_hosts') return [SERVER, 'https://modele.exemple'];
+        if (cmd === 'net_host_forget') return new Promise<null>((resolve) => (done = () => resolve(null)));
+        return null;
+      });
+      opened('fenetre');
+      await userEvent.click(await screen.findByRole('button', forget(SERVER)));
+      await userEvent.click(screen.getByRole('button', forget('https://modele.exemple')));
+      expect(invoke.mock.calls.filter(([cmd]) => cmd === 'net_host_forget')).toEqual([
+        ['net_host_forget', { origin: SERVER }],
+      ]);
+      done();
     });
 
     it('an origin Rust repeats, or what is not one, is listed once, or not at all', async () => {
