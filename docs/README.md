@@ -152,8 +152,14 @@ et confiance, pour chaque son de `BANC_DIR/gestes` (`../banc-sons/gestes` par d�
 - `prises/<id>-<n>.wav`, `n` de 1 à `prises`, toutes lues avant de jouer : une qui manque arrête tout, et est nommée.
 - `temoins/*.wav`, joués comme des non-paroles, `attendu` `aucun`.
 
+Le message d'une ligne refusée, d'une prise manquante ou d'un JSON illisible donne le rang ou le fichier, jamais ce
+qu'il contient. `npm run banc` saute ce dossier : ses prises portent les `id` de la liste.
+
 Une parole est dite par chaque voix de `GESTES_VOIX` (au format de `CHAINE_VOIX` ; Hortense, Julie, Paul, jessica et
-pierre par défaut), propre puis dans le bruit du banc à son niveau fixe, puis chacune de ses prises telle quelle. Une
+pierre par défaut), propre puis dans le bruit du banc à son niveau fixe, puis chacune de ses prises telle quelle. Les
+deux voix de Piper sont cherchées dans `../../piper` depuis le dossier où la commande est lancée : depuis le clone
+principal, ou avec `GESTES_VOIX`. Sa voix à elle est refusée, comme pour la chaîne : celle du service en usage,
+`CHAINE_TTS` (siwis dans `../../piper` par défaut). Une
 non-parole n'est jamais synthétisée : chaque prise propre, puis dans le bruit à -6, 0 et +6 dB de ce niveau ; de même
 chaque témoin, et un son nul, qui donne le bruit seul. Chaque son passe par Silero, la fin de phrase et une conversation
 neuve, aux réglages par défaut et en scène, puis par `/stt` du service de voix que la commande lance (`--stt` pris dans
@@ -162,8 +168,10 @@ neuve, aux réglages par défaut et en scène, puis par `/stt` du service de voi
 `gestes.jsonl`, une ligne par son : `id`, `source` (la voix, `prise:<n>`, `temoin`, ou `code` pour le son nul),
 `condition` (`propre`, `bruit`) et `niveau` (dB), `attendu`, `ecoute` (ce que la fin de phrase a trouvé), chaque
 transcription (`texte`, `confiance`, `verdict` du filtre, `duree` qu'elle a prise et `son` reçu, en ms), ce que `send` a
-reçu (`envoye`), ce que `withdraw` a repris (`repris`), la `brique` et la `date`. Aucun classement ici : ce que le
-serveur fait d'un texte, ses comptes le disent.
+reçu (`envoye`), ce que `withdraw` a repris (`repris`), la `brique` et la `date`. Une transcription que la conversation
+a donnée en échec, d'après sa trace, s'écrit `echec` (sur la transcription et sur la ligne), jamais comme un texte non
+envoyé. La dernière ligne compte : `{ "fin": true, "sons", "echecs", "brique", "duree" }` (en ms). Un seul échec, et la
+commande échoue. Aucun classement ici : ce que le serveur fait d'un texte, ses comptes le disent.
 
 ```powershell
 $env:GESTES_STT = 'faster:small'
