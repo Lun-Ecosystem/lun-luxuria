@@ -429,3 +429,416 @@ mod tests {
         kill_tree(&mut long);
     }
 }
+
+/** The service's arguments, as the page builds them (`serviceArgs`, `src/desktop/voix.ts`) and as Rust bounds them. */
+#[cfg(test)]
+mod service_args {
+    use super::*;
+
+    fn strings(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn ok(a: &[&str]) {
+        if let Err(e) = checked_service_args(&strings(a)) {
+            panic!("{a:?} must pass, refused: {e}");
+        }
+    }
+
+    /// Refused, and the message names the field the screen shows and the argument.
+    fn refused(a: &[&str], field: &str, shown: &str) {
+        let err = checked_service_args(&strings(a)).expect_err(&format!("{a:?} must be refused"));
+        assert!(err.contains(field), "{err:?} must name {field:?}");
+        assert!(err.contains(shown), "{err:?} must show {shown:?}");
+    }
+
+    /// A voice file in a temporary folder; the folder is the test's own.
+    fn voice_file(tag: &str, name: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("luxuria-args-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(name);
+        fs::write(&file, "").unwrap();
+        file.to_str().unwrap().to_string()
+    }
+
+    fn service_dir(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("luxuria-args-dir-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(SCRIPT), "").unwrap();
+        dir
+    }
+
+    // What the page sends today.
+
+    #[test]
+    fn the_default_settings_pass() {
+        ok(&["--stt", "faster:small"]);
+    }
+
+    #[test]
+    fn whisper_server_on_the_loopback_passes() {
+        ok(&["--stt", "whisper-server:http://127.0.0.1:8080"]);
+        ok(&["--stt", "whisper-server:http://localhost:8080/"]);
+        ok(&["--stt", "whisper-server:http://[::1]:8080"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_voice_file_of_this_pc_passes_even_with_a_space() {
+        let file = voice_file("ok", "ma voix.onnx");
+        ok(&["--stt", "faster:small", "--tts", &format!("piper:{file}")]);
+    }
+
+    #[test]
+    fn no_voice_passes() {
+        ok(&["--stt", "faster:small", "--tts", "aucun"]);
+    }
+
+    #[test]
+    fn rvc_and_its_gain_pass() {
+        ok(&[
+            "--stt",
+            "faster:small",
+            "--rvc",
+            "http://127.0.0.1:5000",
+            "--rvc-gain",
+            "1",
+        ]);
+        ok(&["--rvc", "http://localhost:5000", "--rvc-gain", "0.75"]);
+        ok(&["--rvc", "http://[::1]:5000", "--rvc-gain", "-2"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn every_field_together_passes() {
+        let file = voice_file("tout", "voix.onnx");
+        ok(&[
+            "--stt",
+            "whisper-server:http://127.0.0.1:8080",
+            "--tts",
+            &format!("piper:{file}"),
+            "--rvc",
+            "http://127.0.0.1:5000",
+            "--rvc-gain",
+            "1",
+            "--lang",
+            "fr",
+        ]);
+    }
+
+    #[test]
+    fn the_free_lines_may_hold_the_allowed_flags() {
+        ok(&["--stt", "faster:small", "--lang", "fr"]);
+        ok(&["--stt", "faster:small", "--lang", "eng"]);
+    }
+
+    #[test]
+    fn a_flag_with_equals_reads_as_with_a_space() {
+        ok(&["--stt=faster:small"]);
+        ok(&["--stt=whisper-server:http://127.0.0.1:8080"]);
+        refused(
+            &["--stt=whisper-server:http://192.0.2.1:8080"],
+            "Transcription",
+            "192.0.2.1",
+        );
+        refused(&["--origin=x"], "Autres arguments", "--origin");
+    }
+
+    #[test]
+    fn a_faster_model_name_may_hold_dots_underscores_and_dashes() {
+        ok(&["--stt", "faster:large-v3"]);
+        ok(&["--stt", "faster:distil_large.v3"]);
+    }
+
+    #[test]
+    fn no_arguments_pass() {
+        ok(&[]);
+    }
+
+    #[test]
+    fn the_general_limits_still_apply() {
+        let many = vec!["--stt".to_string(); ARGS_MAX + 1];
+        assert!(checked_service_args(&many).is_err());
+        assert!(checked_service_args(&strings(&["--lang", "f\0r"])).is_err());
+    }
+
+    // Refused flags.
+
+    #[test]
+    fn origin_is_refused() {
+        refused(&["--origin", "x"], "Autres arguments", "--origin");
+    }
+
+    #[test]
+    fn origin_with_equals_is_refused() {
+        refused(&["--origin=x"], "Autres arguments", "--origin");
+    }
+
+    #[test]
+    fn the_abbreviation_of_origin_is_refused() {
+        refused(&["--orig", "x"], "Autres arguments", "--orig");
+    }
+
+    #[test]
+    fn port_is_refused() {
+        refused(&["--port", "9"], "Autres arguments", "--port");
+    }
+
+    #[test]
+    fn help_is_refused() {
+        refused(&["-h"], "Autres arguments", "-h");
+    }
+
+    #[test]
+    fn a_double_dash_is_refused() {
+        refused(&["--"], "Autres arguments", "--");
+    }
+
+    #[test]
+    fn a_lone_word_is_refused() {
+        refused(
+            &["--stt", "faster:small", "inference"],
+            "Autres arguments",
+            "inference",
+        );
+    }
+
+    #[test]
+    fn a_refused_flag_among_good_ones_is_refused() {
+        refused(
+            &["--stt", "faster:small", "--origin", "x"],
+            "Autres arguments",
+            "--origin",
+        );
+    }
+
+    #[test]
+    fn a_flag_without_a_value_is_refused() {
+        refused(&["--stt"], "--stt", "--stt");
+        refused(&["--stt", "faster:small", "--lang"], "--lang", "--lang");
+    }
+
+    #[test]
+    fn a_value_that_starts_with_a_dash_is_refused() {
+        refused(&["--stt", "--tts", "aucun"], "--stt", "--stt");
+    }
+
+    // Transcription.
+
+    #[test]
+    fn whisper_server_off_the_loopback_is_refused() {
+        refused(
+            &["--stt", "whisper-server:http://192.0.2.1:8080"],
+            "Transcription",
+            "192.0.2.1",
+        );
+    }
+
+    #[test]
+    fn whisper_server_with_a_path_is_refused() {
+        refused(
+            &["--stt", "whisper-server:http://127.0.0.1:8080/inference"],
+            "Transcription",
+            "/inference",
+        );
+    }
+
+    #[test]
+    fn a_faster_repository_is_refused() {
+        refused(&["--stt", "faster:org/model"], "Transcription", "org/model");
+    }
+
+    #[test]
+    fn a_faster_path_is_refused() {
+        refused(&["--stt", "faster:C:\\m"], "Transcription", "C:\\m");
+    }
+
+    #[test]
+    fn another_transcription_kind_is_refused() {
+        refused(&["--stt", "cloud:small"], "Transcription", "cloud:small");
+    }
+
+    // RVC.
+
+    #[test]
+    fn rvc_off_the_loopback_is_refused() {
+        refused(&["--rvc", "http://example.com"], "RVC", "example.com");
+    }
+
+    #[test]
+    fn rvc_with_user_info_is_refused() {
+        refused(
+            &["--rvc", "http://127.0.0.1:5000@example.com"],
+            "RVC",
+            "example.com",
+        );
+    }
+
+    #[test]
+    fn a_gain_that_is_not_finite_is_refused() {
+        refused(&["--rvc-gain", "inf"], "--rvc-gain", "inf");
+        refused(&["--rvc-gain", "NaN"], "--rvc-gain", "NaN");
+        refused(&["--rvc-gain", "loud"], "--rvc-gain", "loud");
+    }
+
+    // Voice.
+
+    #[cfg(windows)]
+    #[test]
+    fn a_network_path_is_refused() {
+        refused(
+            &["--tts", "piper:\\\\hote\\partage\\v.onnx"],
+            "Voix",
+            "partage",
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_forward_slash_network_path_is_refused() {
+        refused(&["--tts", "piper://hote/partage/v.onnx"], "Voix", "partage");
+    }
+
+    #[test]
+    fn a_relative_voice_is_refused() {
+        refused(&["--tts", "piper:v.onnx"], "Voix", "v.onnx");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_voice_file_that_does_not_exist_is_refused() {
+        let file = voice_file("absent", "voix.onnx");
+        fs::remove_file(&file).unwrap();
+        refused(&["--tts", &format!("piper:{file}")], "Voix", "voix.onnx");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_voice_file_that_is_not_onnx_is_refused() {
+        let file = voice_file("txt", "voix.txt");
+        refused(&["--tts", &format!("piper:{file}")], "Voix", "voix.txt");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_named_onnx_is_refused() {
+        let file = voice_file("dir", "voix.onnx");
+        fs::remove_file(&file).unwrap();
+        fs::create_dir(&file).unwrap();
+        refused(&["--tts", &format!("piper:{file}")], "Voix", "voix.onnx");
+    }
+
+    #[test]
+    fn kokoro_is_refused_with_its_message() {
+        refused(&["--tts", "kokoro:m.onnx:v.bin"], "Voix", "kokoro");
+    }
+
+    #[test]
+    fn another_voice_kind_is_refused() {
+        refused(&["--tts", "cloud:v"], "Voix", "cloud");
+    }
+
+    // Language.
+
+    #[test]
+    fn a_language_is_two_or_three_lowercase_letters() {
+        refused(&["--lang", "FR"], "--lang", "FR");
+        refused(&["--lang", "f"], "--lang", "f");
+        refused(&["--lang", "french"], "--lang", "french");
+        refused(&["--lang", "f1"], "--lang", "f1");
+    }
+
+    // Each occurrence is checked: argparse keeps the last one.
+
+    #[test]
+    fn a_refused_last_occurrence_is_refused() {
+        refused(
+            &[
+                "--stt",
+                "faster:small",
+                "--stt",
+                "whisper-server:http://192.0.2.1:8080",
+            ],
+            "Transcription",
+            "192.0.2.1",
+        );
+    }
+
+    #[test]
+    fn a_refused_first_occurrence_is_refused_too() {
+        refused(
+            &[
+                "--stt",
+                "whisper-server:http://192.0.2.1:8080",
+                "--stt",
+                "faster:small",
+            ],
+            "Transcription",
+            "192.0.2.1",
+        );
+    }
+
+    // What the launch and the restart receive.
+
+    #[test]
+    fn a_refused_argument_starts_nothing() {
+        let launched = Launched::default();
+        let dir = service_dir("start");
+        let log = dir.join("logs").join("voix.log");
+        let err = start(
+            &launched,
+            dir.to_str().unwrap(),
+            &strings(&["--origin", "x"]),
+            &log,
+        )
+        .unwrap_err();
+        assert!(err.contains("Autres arguments"), "{err:?}");
+        assert!(launched.0.lock().unwrap().is_none());
+        assert!(!log.exists(), "the log is not opened for a refused launch");
+    }
+
+    #[cfg(windows)]
+    fn ping() -> Command {
+        let mut cmd = Command::new("C:\\Windows\\System32\\PING.EXE");
+        cmd.args(["-n", "30", "127.0.0.1"]);
+        cmd
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_refused_restart_stops_nothing_and_launches_nothing() {
+        use std::cell::Cell;
+        let launched = Launched::default();
+        let args = strings(&["--stt", "faster:small"]);
+        let first = ping().stdout(Stdio::null()).spawn().unwrap();
+        let pid = first.id();
+        *launched.0.lock().unwrap() = Some((first, args.clone()));
+        let dir = service_dir("restart");
+        let log = dir.join("voix.log");
+        let made = Cell::new(false);
+        for bad in [
+            strings(&["--origin", "x"]),
+            strings(&["--stt", "whisper-server:http://192.0.2.1:8080"]),
+            strings(&["--rvc", "http://example.com"]),
+        ] {
+            let err = restart_with(&launched, dir.to_str().unwrap(), &bad, &log, |_, _| {
+                made.set(true);
+                ping()
+            })
+            .unwrap_err();
+            assert!(!err.is_empty());
+            assert_eq!(
+                running(&launched),
+                Some(args.clone()),
+                "the running one stays"
+            );
+            assert_eq!(launched.0.lock().unwrap().as_ref().unwrap().0.id(), pid);
+        }
+        assert!(!made.get(), "no new process is built for a refused restart");
+        assert!(!log.exists(), "the log is not opened either");
+        stop(&launched);
+    }
+}

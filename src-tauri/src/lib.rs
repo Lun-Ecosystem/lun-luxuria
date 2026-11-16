@@ -5,6 +5,8 @@ mod body;
 mod idle;
 mod job;
 #[cfg(test)]
+mod loopback;
+#[cfg(test)]
 mod net_scope;
 mod programs;
 mod tray;
