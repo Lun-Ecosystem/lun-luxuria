@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Session } from '../session.svelte.ts';
 import type { Program, VoiceService } from '../settings.ts';
 import type { Call } from './corps.svelte.ts';
+import { readFolders } from './dossiers.ts';
 
 const READY_WAIT_MS = 180_000; // the models load before the service answers
 const POLL_MS = 2000;
@@ -397,6 +398,7 @@ export async function startAll(
   bricks: () => Promise<Bricks | null> = readBricks(session.voiceFetch),
 ): Promise<void> {
   await readProgramPaths(session, call);
+  await readFolders(session, call);
   const started = await startPrograms(session, call);
   const follow = started ? followPrograms(session, call, sleep, bricks) : Promise.resolve();
   await startVoice(session, ping, call, sleep, bricks);

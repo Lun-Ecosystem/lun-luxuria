@@ -137,4 +137,13 @@ describe('the body’s folder, which the window keeps now', () => {
     expect(readSettings(JSON.stringify({ body: { folder: 7 } })).body.formerFolder).toBe('');
     expect(readSettings(null).body.formerFolder).toBe('');
   });
+
+  it('both saved: a former folder that is not empty wins, an empty one gives way to the folder', () => {
+    const both = (formerFolder: unknown) =>
+      readSettings(JSON.stringify({ body: { folder: 'C:\\ancien', formerFolder } })).body;
+    expect(both('C:\\corps').formerFolder).toBe('C:\\corps');
+    expect(both('').formerFolder).toBe('C:\\ancien');
+    expect(both(7).formerFolder).toBe('C:\\ancien');
+    expect(both('C:\\corps')).not.toHaveProperty('folder');
+  });
 });

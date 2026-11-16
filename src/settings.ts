@@ -43,8 +43,11 @@ export interface Settings {
     noiseSuppression: boolean;
     service: VoiceService;
   };
-  /** `folder`: in the window, the body's folder, whose `corps.json` decides; the addresses serve the browser. */
-  body: { level: 'breath' | 'images'; rest: string; talking: string; folder: string };
+  /**
+   * The addresses serve the browser; in the window, the folder the window keeps decides, by its `corps.json`.
+   * `formerFolder`: the folder an older page kept here, only shown so it can be chosen again, never sent.
+   */
+  body: { level: 'breath' | 'images'; rest: string; talking: string; formerFolder: string };
   /**
    * In the window: the scene's screen, by name (empty, the first that is not the main one), and the global
    * shortcuts between scene and small mode, and for the mute.
@@ -118,7 +121,7 @@ export const DEFAULTS: Settings = {
       args: [],
     },
   },
-  body: { level: 'breath', rest: '', talking: '', folder: '' },
+  body: { level: 'breath', rest: '', talking: '', formerFolder: '' },
   display: {
     screen: '',
     shortcut: 'Control+Shift+L',
@@ -177,6 +180,10 @@ export function readSettings(raw: string | null): Settings {
     const service = isObject(saved) && isObject(saved.voice) ? saved.voice.service : undefined;
     if (isObject(service) && Array.isArray(service.args) && !('stt' in service))
       (saved as { voice: Record<string, unknown> }).voice.service = fromArgs(service);
+    // Before 11/2026, the page kept the body's folder: a reminder now, unless one is already waiting.
+    const body = isObject(saved) && isObject(saved.body) ? saved.body : undefined;
+    if (body && (typeof body.formerFolder !== 'string' || body.formerFolder === ''))
+      body.formerFolder = body.folder;
     const settings = merged(DEFAULTS, saved);
     // Only the type is checked by the merge: an unknown transcription comes back to the local one.
     const stt = settings.voice.service.stt;

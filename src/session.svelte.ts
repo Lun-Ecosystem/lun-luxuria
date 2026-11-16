@@ -4,6 +4,7 @@ import { Conversation } from './conversation.ts';
 import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
 import { CoreClient } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
+import type { FolderName } from './desktop/dossiers.ts';
 import type { Bricks, ProgramName, ProgramState } from './desktop/voix.ts';
 import { inWindow, pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
@@ -118,6 +119,8 @@ export class Session {
   programs = $state<Partial<Record<ProgramName, ProgramState>>>({});
   /** The `.exe` the person picked for each, as the window keeps it: shown, never sent back. */
   programPaths = $state<Partial<Record<ProgramName, string>>>({});
+  /** The folders the person chose in the system's dialog, as the window keeps them: shown, never sent back. */
+  folders = $state<Partial<Record<FolderName, string>>>({});
   /** The action on the voice service under way, whatever screen started it: one at a time. */
   voiceBusy = $state<'check' | 'restart' | null>(null);
   /** One follow of the programs being launched, at most. */
