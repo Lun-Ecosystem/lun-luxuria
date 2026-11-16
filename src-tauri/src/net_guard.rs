@@ -1,0 +1,578 @@
+//! The filter of the window's network (task 7), proved through the IPC as the page calls it: `NetGuard` wraps the HTTP
+//! plugin and checks `fetch` before the plugin sees it. Tests only for now: the developer writes the code above
+//! them and drops the `cfg(test)` of `mod net_guard` in `lib.rs`.
+//!
+//! The contract these tests assume (signatures to write):
+//! - `NetGuard::<R>::new()`: the wrapper, a `Plugin<R>` named `http`, around `tauri_plugin_http::init()`.
+//! - `confirm(file: &Path, one: &OneBox, url: &str, ask: impl FnOnce(&str) -> MessageDialogResult)
+//!   -> Result<bool, String>`: `ask` is the box, given the origin; only `Custom("Confirmer")` keeps it.
+//! - `net_hosts(app: AppHandle) -> Result<Vec<String>, String>`, `net_host_forget(app: AppHandle, origin: String)
+//!   -> Result<(), String>`, plain functions here, commands in `lib.rs`.
+//! - `hotes.json`, in the config folder: a JSON array of origins as `ascii_serialization()` writes them.
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::Cell,
+        io::{Read, Write},
+        net::TcpListener,
+        path::PathBuf,
+    };
+
+    use serde_json::{Value, json};
+    use tauri::{
+        Manager,
+        ipc::InvokeBody,
+        plugin::Plugin,
+        test::{MockRuntime, get_ipc_response},
+    };
+    use tauri_plugin_dialog::MessageDialogResult;
+
+    use super::{NetGuard, confirm, net_host_forget, net_hosts};
+    use crate::net_scope::{TestApp, request, test_app, test_app_with, text};
+    use crate::one_box::{OneBox, take};
+
+    const HOSTS: &str = "hotes.json";
+    const BUSY: &str = "Une boîte est déjà ouverte.";
+
+    fn guarded() -> TestApp {
+        test_app_with(NetGuard::<MockRuntime>::new())
+    }
+
+    /// `hotes.json` of this app, in its temporary config folder.
+    fn hosts_file(t: &TestApp) -> PathBuf {
+        // `programs::config_file` takes the real runtime's handle: the guard must be generic over `R` to work on
+        // the mock one, and so must it, or this line says the same thing without it.
+        t.app.path().app_config_dir().unwrap().join(HOSTS)
+    }
+
+    fn write_hosts(t: &TestApp, content: &str) {
+        let file = hosts_file(t);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, content).unwrap();
+    }
+
+    /// A command of the plugin from the `main` page, whose scope (`default.json`) admits any host: only the guard
+    /// is left to refuse.
+    fn ipc(t: &TestApp, cmd: &str, body: Value) -> Result<Value, String> {
+        let w = t.app.get_webview_window("main").unwrap();
+        get_ipc_response(&w, request(&format!("plugin:http|{cmd}"), body))
+            .map(|b| b.deserialize::<Value>().unwrap())
+            .map_err(text)
+    }
+
+    /// What the page sends for a `fetch` as `net.ts` will: no proxy, no redirection followed.
+    fn page(url: &str) -> Value {
+        json!({ "clientConfig": {
+            "method": "GET", "url": url, "headers": [], "data": null,
+            "connectTimeout": 300, "maxRedirections": 0,
+        }})
+    }
+
+    fn with(url: &str, key: &str, value: Option<Value>) -> Value {
+        let mut body = page(url);
+        let config = body["clientConfig"].as_object_mut().unwrap();
+        match value {
+            Some(v) => config.insert(key.into(), v),
+            None => config.remove(key),
+        };
+        body
+    }
+
+    fn fetch(t: &TestApp, body: Value) -> Result<Value, String> {
+        ipc(t, "fetch", body)
+    }
+
+    fn unconfirmed(origin: &str) -> String {
+        format!("Adresse non confirmée pour la fenêtre : {origin}.")
+    }
+
+    fn assert_admitted(t: &TestApp, urls: &[&str]) {
+        for url in urls {
+            let r = fetch(t, page(url));
+            assert!(
+                r.as_ref().is_ok_and(Value::is_u64),
+                "{url} should give a resource number, got {r:?}"
+            );
+        }
+    }
+
+    /// Each URL is refused with the message naming its origin (the origin as `ascii_serialization()` writes it).
+    fn assert_unconfirmed(t: &TestApp, cases: &[(&str, &str)]) {
+        for (url, origin) in cases {
+            assert_eq!(
+                fetch(t, page(url)),
+                Err(unconfirmed(origin)),
+                "{url} should be refused"
+            );
+        }
+    }
+
+    /// One connection, answered with `answer`, on the loopback; the port.
+    fn serve_once(answer: &'static [u8]) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                // The whole request is read before answering: closing with unread data resets the connection.
+                let mut request = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !request.ends_with(b"\r\n\r\n") {
+                    match s.read(&mut buf) {
+                        Ok(n) if n > 0 => request.extend_from_slice(&buf[..n]),
+                        _ => break,
+                    }
+                }
+                let _ = s.write_all(answer);
+            }
+        });
+        port
+    }
+
+    // The wrapper itself.
+
+    #[test]
+    fn the_wrapper_is_named_http_so_that_the_acl_and_the_route_stay() {
+        assert_eq!(NetGuard::<MockRuntime>::new().name(), "http");
+        // The route `plugin:http|fetch` reaches the plugin through the wrapper.
+        let t = guarded();
+        assert_admitted(&t, &["http://127.0.0.1/"]);
+    }
+
+    #[test]
+    fn the_loopback_is_admitted_with_a_resource_number() {
+        let t = guarded();
+        assert_admitted(
+            &t,
+            &[
+                "http://127.0.0.1/",
+                "http://127.0.0.1:8080/v1",
+                "https://127.0.0.1:8080/v1",
+                "http://localhost/",
+                "http://localhost:11434/x",
+                "https://localhost/",
+                "http://[::1]/",
+                "http://[::1]:8788/",
+                "https://[::1]:8788/",
+                // The host is lowercased by the parser, the plugin's and ours.
+                "http://LOCALHOST:8080/",
+                "HTTP://127.0.0.1/",
+            ],
+        );
+    }
+
+    /// The task-2 test, through the wrapper: a 302 is not followed (`maxRedirections: 0`), so the answer is the 302
+    /// itself and nothing reaches its target. The plugin's own scope refusal needs redirections, which the guard
+    /// forbids, so it can no longer be seen here.
+    #[test]
+    fn a_redirect_is_not_followed_through_the_wrapper() {
+        let t = guarded();
+        let port = serve_once(
+            b"HTTP/1.1 302 Found\r\nLocation: http://192.0.2.1/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        let rid = fetch(&t, page(&format!("http://127.0.0.1:{port}/"))).unwrap();
+        let answer = ipc(&t, "fetch_send", json!({ "rid": rid })).unwrap();
+        assert_eq!(answer["status"], 302, "{answer}");
+        assert_eq!(answer["url"], format!("http://127.0.0.1:{port}/"));
+    }
+
+    #[test]
+    fn an_admitted_request_is_served_by_the_plugin() {
+        let t = guarded();
+        let port = serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let rid = fetch(&t, page(&format!("http://127.0.0.1:{port}/"))).unwrap();
+        let answer = ipc(&t, "fetch_send", json!({ "rid": rid })).unwrap();
+        assert_eq!(answer["status"], 200, "{answer}");
+    }
+
+    // The refusals, each with its message.
+
+    #[test]
+    fn a_proxy_is_refused() {
+        let t = guarded();
+        for proxy in [
+            json!({ "all": "http://127.0.0.1:9" }),
+            json!({ "http": "http://127.0.0.1:9" }),
+            json!({}),
+        ] {
+            let r = fetch(&t, with("http://127.0.0.1/", "proxy", Some(proxy.clone())));
+            assert_eq!(r, Err("Proxy refusé.".to_string()), "proxy {proxy}");
+        }
+    }
+
+    #[test]
+    fn an_absent_or_null_proxy_is_admitted() {
+        let t = guarded();
+        let url = "http://127.0.0.1/";
+        assert!(fetch(&t, with(url, "proxy", None)).is_ok());
+        assert!(fetch(&t, with(url, "proxy", Some(Value::Null))).is_ok());
+    }
+
+    #[test]
+    fn redirections_other_than_zero_are_refused() {
+        let t = guarded();
+        let url = "http://127.0.0.1/";
+        let refused = Err("Redirections refusées.".to_string());
+        for max in [
+            None,
+            Some(json!(1)),
+            Some(json!(20)),
+            Some(json!("0")),
+            Some(json!(-1)),
+            Some(json!(0.5)),
+            Some(Value::Null),
+            Some(json!(false)),
+        ] {
+            let r = fetch(&t, with(url, "maxRedirections", max.clone()));
+            assert_eq!(r, refused, "maxRedirections {max:?}");
+        }
+        assert!(fetch(&t, with(url, "maxRedirections", Some(json!(0)))).is_ok());
+    }
+
+    #[test]
+    fn a_host_out_of_the_loopback_is_refused_before_any_connection() {
+        let t = guarded();
+        // `fetch` only builds the request: a refusal is a refusal before any socket. Documentation addresses and
+        // `example.com` are never joined.
+        assert_unconfirmed(
+            &t,
+            &[
+                ("http://example.com/", "http://example.com"),
+                ("https://example.com/", "https://example.com"),
+                ("http://192.0.2.1:8080/", "http://192.0.2.1:8080"),
+                // The host is what follows `@`.
+                ("http://127.0.0.1@example.com/", "http://example.com"),
+                ("http://localhost:80@192.0.2.1/", "http://192.0.2.1"),
+                ("http://127.0.0.2/", "http://127.0.0.2"),
+                ("http://localhost.example/", "http://localhost.example"),
+                ("http://127.0.0.1.example/", "http://127.0.0.1.example"),
+                ("http://[::2]/", "http://[::2]"),
+                // An IPv4-mapped IPv6 address is not `::1`, whatever it maps to.
+                ("http://[::ffff:127.0.0.1]/", "http://[::ffff:7f00:1]"),
+                ("http://EXAMPLE.com/", "http://example.com"),
+            ],
+        );
+    }
+
+    /// The URL parser, the plugin's and reqwest's, reads `0x7f.0.0.1` as `127.0.0.1`: the host is the loopback, so
+    /// the request goes there and nowhere else. Admitted by `Url::host()`; a string comparison would refuse it.
+    #[test]
+    fn a_hex_spelling_of_the_loopback_is_read_as_the_loopback() {
+        let t = guarded();
+        assert_admitted(&t, &["http://0x7f.0.0.1/", "http://2130706433/"]);
+    }
+
+    #[test]
+    fn an_address_that_is_not_http_is_refused() {
+        let t = guarded();
+        assert_eq!(
+            fetch(&t, page("data:text/plain,x")),
+            Err(unconfirmed("null"))
+        );
+        for url in ["ws://127.0.0.1/", "file:///etc/hosts", "ftp://127.0.0.1/"] {
+            let e = fetch(&t, page(url)).unwrap_err();
+            assert!(e.starts_with("Adresse non confirmée"), "{url}: {e}");
+        }
+    }
+
+    #[test]
+    fn a_request_that_is_not_json_or_has_no_readable_address_is_refused() {
+        let plain = test_app();
+        let t = guarded();
+        // The guard answers itself: its refusal is not the plugin's own error for the same request.
+        let raw = |t: &TestApp| {
+            let w = t.app.get_webview_window("main").unwrap();
+            let mut r = request("plugin:http|fetch", Value::Null);
+            r.body = InvokeBody::Raw(b"not json".to_vec());
+            get_ipc_response(&w, r).map(|_| ()).map_err(text)
+        };
+        let e = raw(&t).unwrap_err();
+        assert_ne!(Err(e), raw(&plain), "a raw body reached the plugin");
+
+        for body in [
+            json!({}),
+            json!({ "clientConfig": {} }),
+            json!({ "clientConfig": { "maxRedirections": 0, "url": 12 } }),
+            json!({ "clientConfig": { "maxRedirections": 0, "url": "not an address" } }),
+        ] {
+            let e = fetch(&t, body.clone()).unwrap_err();
+            assert_ne!(
+                Err(e),
+                fetch(&plain, body.clone()),
+                "{body} reached the plugin"
+            );
+        }
+    }
+
+    // The other commands of the plugin pass untouched.
+
+    /// The guard looks at `fetch` only: for the others, the answer is the plugin's, the same as without the wrapper.
+    #[test]
+    fn the_other_commands_are_the_plugins_own() {
+        let plain = test_app();
+        let t = guarded();
+        for cmd in ["fetch_cancel", "fetch_send", "fetch_read_body"] {
+            let body = json!({ "rid": 4_000_000 });
+            let want = ipc(&plain, cmd, body.clone());
+            let got = ipc(&t, cmd, body);
+            let e = got.clone().unwrap_err();
+            assert_eq!(got, want, "{cmd} must be the plugin's answer");
+            for guard in [
+                "Proxy refusé.",
+                "Redirections refusées.",
+                "Adresse non confirmée",
+            ] {
+                assert!(!e.contains(guard), "{cmd}: the guard answered: {e}");
+            }
+        }
+    }
+
+    // `hotes.json`.
+
+    #[test]
+    fn a_confirmed_origin_is_admitted_and_only_it() {
+        let t = guarded();
+        assert_unconfirmed(&t, &[("https://example.com/", "https://example.com")]);
+        write_hosts(&t, r#"["https://example.com"]"#);
+        assert_admitted(
+            &t,
+            &[
+                "https://example.com/",
+                "https://example.com/v1/chat?x=1",
+                "https://example.com:443/",
+                "https://EXAMPLE.com/",
+            ],
+        );
+        assert_unconfirmed(
+            &t,
+            &[
+                ("https://example.com:8443/", "https://example.com:8443"),
+                // The scheme is part of the origin.
+                ("http://example.com/", "http://example.com"),
+                ("https://sub.example.com/", "https://sub.example.com"),
+                ("https://example.org/", "https://example.org"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_confirmed_origin_with_a_port_admits_that_port_only() {
+        let t = guarded();
+        write_hosts(&t, r#"["https://example.com:8443"]"#);
+        assert_admitted(&t, &["https://example.com:8443/"]);
+        assert_unconfirmed(&t, &[("https://example.com/", "https://example.com")]);
+    }
+
+    #[test]
+    fn the_file_is_read_at_each_fetch() {
+        let t = guarded();
+        let url = "https://example.com/";
+        assert!(fetch(&t, page(url)).is_err());
+        write_hosts(&t, r#"["https://example.com"]"#);
+        assert!(fetch(&t, page(url)).is_ok());
+        write_hosts(&t, "[]");
+        assert!(
+            fetch(&t, page(url)).is_err(),
+            "a removed host stays admitted"
+        );
+    }
+
+    #[test]
+    fn a_forgotten_origin_is_refused_at_the_next_fetch() {
+        let t = guarded();
+        write_hosts(&t, r#"["https://example.com","https://example.org"]"#);
+        assert_admitted(&t, &["https://example.com/"]);
+        net_host_forget(t.app.handle().clone(), "https://example.com".into()).unwrap();
+        assert_unconfirmed(&t, &[("https://example.com/", "https://example.com")]);
+        assert_admitted(&t, &["https://example.org/"]);
+    }
+
+    #[test]
+    fn an_unreadable_file_means_no_host() {
+        let t = guarded();
+        for content in ["{ not json", "", r#"{"https://example.com": true}"#, "42"] {
+            write_hosts(&t, content);
+            assert_unconfirmed(&t, &[("https://example.com/", "https://example.com")]);
+            // The loopback never depended on the file.
+            assert_admitted(&t, &["http://127.0.0.1/"]);
+            assert_eq!(
+                net_hosts(t.app.handle().clone()).unwrap(),
+                Vec::<String>::new()
+            );
+        }
+        // A folder where the file should be: unreadable too.
+        let file = hosts_file(&t);
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        assert_unconfirmed(&t, &[("https://example.com/", "https://example.com")]);
+    }
+
+    #[test]
+    fn a_missing_file_means_no_host() {
+        let t = guarded();
+        assert!(!hosts_file(&t).exists());
+        assert_unconfirmed(&t, &[("https://example.com/", "https://example.com")]);
+        assert_eq!(
+            net_hosts(t.app.handle().clone()).unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    // `net_hosts`, `net_host_confirm`.
+
+    #[test]
+    fn net_hosts_gives_the_origins_as_strings() {
+        let t = guarded();
+        write_hosts(&t, r#"["https://example.com","http://192.0.2.1:8080"]"#);
+        let hosts = net_hosts(t.app.handle().clone()).unwrap();
+        assert_eq!(hosts, ["https://example.com", "http://192.0.2.1:8080"]);
+    }
+
+    #[test]
+    fn a_confirmed_url_is_kept_as_its_origin_and_listed() {
+        let t = guarded();
+        let file = hosts_file(&t);
+        let one = OneBox::default();
+        let asked = Cell::new(0);
+        let ask = |origin: &str| {
+            asked.set(asked.get() + 1);
+            assert_eq!(origin, "https://example.com:8443");
+            MessageDialogResult::Custom("Confirmer".into())
+        };
+        let kept = confirm(&file, &one, "https://EXAMPLE.com:8443/v1/x?q=1#f", ask);
+        assert_eq!(kept, Ok(true));
+        assert_eq!(asked.get(), 1);
+        // `ascii_serialization()`: lowercase, no path, a default port left out.
+        assert_eq!(
+            net_hosts(t.app.handle().clone()).unwrap(),
+            ["https://example.com:8443"]
+        );
+        assert_admitted(&t, &["https://example.com:8443/"]);
+
+        let kept = confirm(&file, &one, "https://example.org:443/", |_| {
+            MessageDialogResult::Custom("Confirmer".into())
+        });
+        assert_eq!(kept, Ok(true));
+        assert_eq!(
+            net_hosts(t.app.handle().clone()).unwrap(),
+            ["https://example.com:8443", "https://example.org"]
+        );
+    }
+
+    #[test]
+    fn any_other_button_keeps_nothing() {
+        let t = guarded();
+        let file = hosts_file(&t);
+        let one = OneBox::default();
+        for button in [
+            MessageDialogResult::Custom("Annuler".into()),
+            MessageDialogResult::Custom("Fermer".into()),
+            MessageDialogResult::Cancel,
+            MessageDialogResult::Yes,
+            MessageDialogResult::Ok,
+            MessageDialogResult::No,
+            MessageDialogResult::Custom("confirmer".into()),
+        ] {
+            let asked = Cell::new(false);
+            let r = confirm(&file, &one, "https://example.com/", |_| {
+                asked.set(true);
+                button.clone()
+            });
+            assert_eq!(r, Ok(false), "{button:?} must not confirm");
+            assert!(asked.get());
+            assert!(net_hosts(t.app.handle().clone()).unwrap().is_empty());
+            assert_unconfirmed(&t, &[("https://example.com/", "https://example.com")]);
+        }
+        assert!(take(&one).is_ok(), "a refusal left the box taken");
+    }
+
+    #[test]
+    fn no_box_for_the_loopback_or_a_confirmed_host() {
+        let t = guarded();
+        let file = hosts_file(&t);
+        write_hosts(&t, r#"["https://example.com"]"#);
+        let one = OneBox::default();
+        let never = |_: &str| -> MessageDialogResult { panic!("the box must not open") };
+        for url in [
+            "http://127.0.0.1/",
+            "http://127.0.0.1:8080/x",
+            "https://localhost:11434/",
+            "http://[::1]:8788/",
+            "http://LOCALHOST/",
+            "https://example.com/",
+            "https://example.com:443/other?x",
+        ] {
+            assert_eq!(confirm(&file, &one, url, never), Ok(true), "{url}");
+        }
+    }
+
+    /// The loopback and a known host need no box, so a box already open does not stop them.
+    #[test]
+    fn a_taken_guard_stops_a_new_host_only() {
+        let t = guarded();
+        let file = hosts_file(&t);
+        write_hosts(&t, r#"["https://example.com"]"#);
+        let one = OneBox::default();
+        let first = take(&one).unwrap();
+        let asked = Cell::new(false);
+        let r = confirm(&file, &one, "https://example.org/", |_| {
+            asked.set(true);
+            MessageDialogResult::Custom("Confirmer".into())
+        });
+        assert_eq!(r, Err(BUSY.to_string()));
+        assert!(!asked.get(), "a box opened over another one");
+        assert_eq!(
+            net_hosts(t.app.handle().clone()).unwrap(),
+            ["https://example.com"]
+        );
+
+        let never = |_: &str| -> MessageDialogResult { panic!("the box must not open") };
+        assert_eq!(confirm(&file, &one, "http://127.0.0.1/", never), Ok(true));
+        assert_eq!(
+            confirm(&file, &one, "https://example.com/", never),
+            Ok(true)
+        );
+        drop(first);
+    }
+
+    #[test]
+    fn the_box_gives_the_guard_back_at_its_end() {
+        let t = guarded();
+        let file = hosts_file(&t);
+        let one = OneBox::default();
+        let during = Cell::new(false);
+        let r = confirm(&file, &one, "https://example.com/", |_| {
+            during.set(take(&one).is_err());
+            MessageDialogResult::Cancel
+        });
+        assert_eq!(r, Ok(false));
+        assert!(
+            during.get(),
+            "the guard was not held while the box was open"
+        );
+        assert!(take(&one).is_ok(), "the guard was not given back");
+    }
+
+    #[test]
+    fn a_url_without_an_origin_is_not_asked() {
+        let t = guarded();
+        let file = hosts_file(&t);
+        let one = OneBox::default();
+        let never = |_: &str| -> MessageDialogResult { panic!("the box must not open") };
+        for url in ["data:text/plain,x", "not an address", "", "file:///x"] {
+            assert!(confirm(&file, &one, url, never).is_err(), "{url:?}");
+        }
+        assert!(!file.exists(), "a refusal wrote the file");
+    }
+
+    #[test]
+    fn forgetting_an_unknown_origin_is_not_an_error() {
+        let t = guarded();
+        write_hosts(&t, r#"["https://example.com"]"#);
+        net_host_forget(t.app.handle().clone(), "https://example.org".into()).unwrap();
+        assert_eq!(
+            net_hosts(t.app.handle().clone()).unwrap(),
+            ["https://example.com"]
+        );
+    }
+}

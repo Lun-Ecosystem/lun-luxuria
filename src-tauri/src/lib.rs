@@ -7,6 +7,8 @@ mod idle;
 mod job;
 mod loopback;
 #[cfg(test)]
+mod net_guard;
+#[cfg(test)]
 mod net_scope;
 mod one_box;
 mod programs;

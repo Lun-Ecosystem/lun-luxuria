@@ -48,6 +48,11 @@ fn capability(label: &str, urls: &[&str]) -> Value {
 /// An app on the real context with the HTTP plugin only, on the mock runtime, with the trial capabilities `essai`, `essai-v6` and
 /// `essai-v6e`, each for its own window; `main` keeps `default.json`.
 pub(crate) fn test_app() -> TestApp {
+    test_app_with(tauri_plugin_http::init())
+}
+
+/// The same app with another plugin named `http` in place of the plugin's own (`net_guard.rs` mounts its wrapper).
+pub(crate) fn test_app_with(http: impl tauri::plugin::Plugin<MockRuntime> + 'static) -> TestApp {
     static N: AtomicU32 = AtomicU32::new(0);
     let root = std::env::temp_dir().join(format!(
         "lun-luxuria-net-scope-{}-{}",
@@ -60,10 +65,7 @@ pub(crate) fn test_app() -> TestApp {
     let mut ctx = tauri::generate_context!();
     ctx.config_mut().app.app_directories_override =
         Some(AppDirectoriesOverride::Root(root.0.clone()));
-    let app = mock_builder()
-        .plugin(tauri_plugin_http::init())
-        .build(ctx)
-        .unwrap();
+    let app = mock_builder().plugin(http).build(ctx).unwrap();
 
     let loopback = [
         "http://127.0.0.1:*/*",
@@ -89,7 +91,7 @@ pub(crate) fn test_app() -> TestApp {
     TestApp { app, root }
 }
 
-fn request(cmd: &str, body: Value) -> InvokeRequest {
+pub(crate) fn request(cmd: &str, body: Value) -> InvokeRequest {
     InvokeRequest {
         cmd: cmd.into(),
         callback: CallbackFn(0),
@@ -101,7 +103,7 @@ fn request(cmd: &str, body: Value) -> InvokeRequest {
     }
 }
 
-fn text(e: Value) -> String {
+pub(crate) fn text(e: Value) -> String {
     e.as_str().map_or_else(|| e.to_string(), str::to_string)
 }
 
