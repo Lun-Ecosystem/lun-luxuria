@@ -6,7 +6,6 @@ mod folders;
 mod idle;
 mod job;
 mod loopback;
-#[cfg(test)]
 mod net_guard;
 #[cfg(test)]
 mod net_scope;
@@ -26,7 +25,8 @@ pub fn run() {
                 let _ = w.show();
             }
         }))
-        .plugin(tauri_plugin_http::init())
+        // The HTTP plugin behind the window's network filter, under its name `http` (net_guard.rs).
+        .plugin(net_guard::NetGuard::new())
         // Used from Rust only: the person picks the programs the app may launch (programs.rs) and its folders
         // (folders.rs).
         .plugin(tauri_plugin_dialog::init())
@@ -44,6 +44,9 @@ pub fn run() {
             folders::folder_paths,
             folders::folder_forget,
             idle::idle_ms,
+            net_guard::net_hosts,
+            net_guard::net_host_confirm,
+            net_guard::net_host_forget,
             voice::voice_start,
             voice::voice_restart,
             voice::voice_running,

@@ -1,14 +1,204 @@
-//! The filter of the window's network (task 7), proved through the IPC as the page calls it: `NetGuard` wraps the HTTP
-//! plugin and checks `fetch` before the plugin sees it. Tests only for now: the developer writes the code above
-//! them and drops the `cfg(test)` of `mod net_guard` in `lib.rs`.
-//!
-//! The contract these tests assume (signatures to write):
-//! - `NetGuard::<R>::new()`: the wrapper, a `Plugin<R>` named `http`, around `tauri_plugin_http::init()`.
-//! - `confirm(file: &Path, one: &OneBox, url: &str, ask: impl FnOnce(&str) -> MessageDialogResult)
-//!   -> Result<bool, String>`: `ask` is the box, given the origin; only `Custom("Confirmer")` keeps it.
-//! - `net_hosts(app: AppHandle) -> Result<Vec<String>, String>`, `net_host_forget(app: AppHandle, origin: String)
-//!   -> Result<(), String>`, plain functions here, commands in `lib.rs`.
-//! - `hotes.json`, in the config folder: a JSON array of origins as `ascii_serialization()` writes them.
+//! The filter of the window's network: `NetGuard` wraps the HTTP plugin under its name, `http`, so that the ACL
+//! (`http:default`), the route `plugin:http|…` and `plugins.http` stay the plugin's, and checks `fetch` before the
+//! plugin sees it. Admitted: no proxy, no redirection followed, an http or https address on the loopback or at an
+//! origin the person confirmed in the system's box. The origins are kept in `hotes.json`, next to `programmes.json`,
+//! and read again at each `fetch`: a forgotten one is refused at once. The other commands, and the body's stream, are
+//! the plugin's own.
+
+use crate::one_box::{self, OneBox};
+use std::fs;
+use std::path::{Path, PathBuf};
+use tauri::{
+    AppHandle, Manager, RunEvent, Runtime, Url, Webview, Window,
+    ipc::{Invoke, InvokeBody},
+    plugin::Plugin,
+    webview::PageLoadPayload,
+};
+use tauri_plugin_dialog::MessageDialogResult;
+use tauri_runtime::webview::InitializationScript;
+
+const FILE: &str = "hotes.json";
+const NOT_JSON: &str = "Requête refusée : corps illisible.";
+const NOT_HTTP: &str = "Adresse refusée pour la fenêtre : http ou https seulement.";
+
+/** The HTTP plugin, behind the filter; each method of the trait is the plugin's, `extend_api` after the check. */
+pub struct NetGuard<R: Runtime>(Box<dyn Plugin<R>>);
+
+impl<R: Runtime> NetGuard<R> {
+    pub fn new() -> Self {
+        Self(Box::new(tauri_plugin_http::init()))
+    }
+}
+
+impl<R: Runtime> Plugin<R> for NetGuard<R> {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+
+    fn initialize(
+        &mut self,
+        app: &AppHandle<R>,
+        config: serde_json::Value,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.0.initialize(app, config)
+    }
+
+    fn initialization_script(&self) -> Option<String> {
+        self.0.initialization_script()
+    }
+
+    fn initialization_script_2(&self) -> Option<InitializationScript> {
+        self.0.initialization_script_2()
+    }
+
+    fn window_created(&mut self, window: Window<R>) {
+        self.0.window_created(window)
+    }
+
+    fn webview_created(&mut self, webview: Webview<R>) {
+        self.0.webview_created(webview)
+    }
+
+    fn on_navigation(&mut self, webview: &Webview<R>, url: &Url) -> bool {
+        self.0.on_navigation(webview, url)
+    }
+
+    fn on_page_load(&mut self, webview: &Webview<R>, payload: &PageLoadPayload<'_>) {
+        self.0.on_page_load(webview, payload)
+    }
+
+    fn on_event(&mut self, app: &AppHandle<R>, event: &RunEvent) {
+        self.0.on_event(app, event)
+    }
+
+    fn extend_api(&mut self, invoke: Invoke<R>) -> bool {
+        if invoke.message.command() == "fetch" {
+            let app = invoke.message.webview_ref().app_handle();
+            let hosts = || file(app).map(|f| read(&f)).unwrap_or_default();
+            if let Err(refused) = checked(invoke.message.payload(), hosts) {
+                // Answered here: the plugin never sees the request, nothing is created.
+                invoke.resolver.reject(refused);
+                return true;
+            }
+        }
+        self.0.extend_api(invoke)
+    }
+}
+
+/** The rules of `fetch`, in this order; `hosts` is read only for an address out of the loopback. */
+fn checked(body: &InvokeBody, hosts: impl FnOnce() -> Vec<String>) -> Result<(), String> {
+    let InvokeBody::Json(body) = body else {
+        return Err(NOT_JSON.into());
+    };
+    let config = &body["clientConfig"];
+    if !config["proxy"].is_null() {
+        return Err("Proxy refusé.".into());
+    }
+    if config["maxRedirections"].as_u64() != Some(0) {
+        return Err("Redirections refusées.".into());
+    }
+    match origin(config["url"].as_str().unwrap_or_default())? {
+        Some(o) if !hosts().contains(&o) => {
+            Err(format!("Adresse non confirmée pour la fenêtre : {o}."))
+        }
+        _ => Ok(()),
+    }
+}
+
+/**
+ * An http or https address, read by `tauri::Url` as the plugin and reqwest read it: `None` on the loopback, else its
+ * origin as `ascii_serialization()` writes it.
+ */
+fn origin(url: &str) -> Result<Option<String>, String> {
+    let url = Url::parse(url).map_err(|_| NOT_HTTP.to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(NOT_HTTP.into());
+    }
+    // The parsed host, serialized: `0x7f.0.0.1` is `127.0.0.1`, and `[::ffff:127.0.0.1]` is not `[::1]`.
+    if matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")) {
+        return Ok(None);
+    }
+    Ok(Some(url.origin().ascii_serialization()))
+}
+
+fn file<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    crate::programs::config_file(app, FILE)
+}
+
+/** The confirmed origins; an absent or unreadable file, or one that is not an array of strings, reads as none. */
+fn read(file: &Path) -> Vec<String> {
+    fs::read_to_string(file)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/** Changes the origins kept in `file`, written as `programs::save_entry` writes its file. */
+fn save(file: &Path, change: impl FnOnce(&mut Vec<String>)) -> Result<(), String> {
+    let mut hosts = read(file);
+    change(&mut hosts);
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&hosts).map_err(|e| e.to_string())?;
+    fs::write(file, text).map_err(|e| e.to_string())
+}
+
+/**
+ * `true` when `url` may be joined: the loopback and a confirmed origin at once, without a box; a new origin once the
+ * person confirms it in `ask`, then kept. `false`: refused at the box, nothing kept.
+ */
+pub fn confirm(
+    file: &Path,
+    one: &OneBox,
+    url: &str,
+    ask: impl FnOnce(&str) -> MessageDialogResult,
+) -> Result<bool, String> {
+    let Some(origin) = origin(url)? else {
+        return Ok(true);
+    };
+    if read(file).contains(&origin) {
+        return Ok(true);
+    }
+    let _box = one_box::take(one)?;
+    if !one_box::confirmed(&ask(&origin)) {
+        return Ok(false);
+    }
+    // Read again: the file may have changed while the box was open.
+    save(file, |hosts| {
+        if !hosts.contains(&origin) {
+            hosts.push(origin);
+        }
+    })?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn net_hosts<R: Runtime>(app: AppHandle<R>) -> Result<Vec<String>, String> {
+    Ok(read(&file(&app)?))
+}
+
+/** Off the window's thread, like `program_pick`: the box blocks until answered. */
+#[tauri::command(async)]
+pub fn net_host_confirm(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    one: tauri::State<'_, OneBox>,
+    url: String,
+) -> Result<bool, String> {
+    confirm(&file(&app)?, &one, &url, |origin| {
+        one_box::ask(
+            &window,
+            "Une adresse hors de ce poste",
+            &format!("La fenêtre pourra joindre {origin}."),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn net_host_forget<R: Runtime>(app: AppHandle<R>, origin: String) -> Result<(), String> {
+    save(&file(&app)?, |hosts| hosts.retain(|h| *h != origin))
+}
 
 #[cfg(test)]
 mod tests {
@@ -262,16 +452,40 @@ mod tests {
         assert_admitted(&t, &["http://0x7f.0.0.1/", "http://2130706433/"]);
     }
 
+    /// Not an origin to confirm: the message says what the window joins, not an opaque `null` origin.
     #[test]
     fn an_address_that_is_not_http_is_refused() {
         let t = guarded();
-        assert_eq!(
-            fetch(&t, page("data:text/plain,x")),
-            Err(unconfirmed("null"))
+        let refused = Err("Adresse refusée pour la fenêtre : http ou https seulement.".to_string());
+        for url in [
+            "data:text/plain,x",
+            "ws://127.0.0.1/",
+            "file:///etc/hosts",
+            "ftp://127.0.0.1/",
+        ] {
+            assert_eq!(fetch(&t, page(url)), refused, "{url}");
+        }
+    }
+
+    /// The rules are read in order, the body, the proxy, the redirections, the address: a request that breaks two
+    /// gets the first one's message.
+    #[test]
+    fn the_first_broken_rule_gives_its_message() {
+        let t = guarded();
+        let mut all = with(
+            "http://example.com/",
+            "proxy",
+            Some(json!({ "all": "http://127.0.0.1:9" })),
         );
-        for url in ["ws://127.0.0.1/", "file:///etc/hosts", "ftp://127.0.0.1/"] {
-            let e = fetch(&t, page(url)).unwrap_err();
-            assert!(e.starts_with("Adresse non confirmée"), "{url}: {e}");
+        all["clientConfig"]["maxRedirections"] = json!(1);
+        assert_eq!(fetch(&t, all), Err("Proxy refusé.".to_string()));
+        let redirections = Err("Redirections refusées.".to_string());
+        for url in ["http://example.com/", "data:text/plain,x"] {
+            assert_eq!(
+                fetch(&t, with(url, "maxRedirections", Some(json!(1)))),
+                redirections,
+                "{url}"
+            );
         }
     }
 

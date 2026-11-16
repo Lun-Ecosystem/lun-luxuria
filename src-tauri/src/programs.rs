@@ -197,7 +197,10 @@ pub fn stop_all(programs: &Programs) {
 }
 
 /** A file of the app's config folder, where the person's choices are kept. */
-pub fn config_file(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, String> {
+pub fn config_file<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    name: &str,
+) -> Result<PathBuf, String> {
     use tauri::Manager;
     Ok(app
         .path()

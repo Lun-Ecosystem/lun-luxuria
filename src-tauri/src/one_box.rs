@@ -1,7 +1,12 @@
 //! One system dialog at a time: the guard of the app's single box. A box modal to the window stops a second click,
-//! not a second call from the page: every box Rust opens takes this guard first.
+//! not a second call from the page: every box Rust opens takes this guard first. And the question box the commands
+//! ask the person through, with its reading.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
+
+/** The one button that confirms. */
+const CONFIRM: &str = "Confirmer";
 
 /** The app's one box: `true` while a box is open. */
 #[derive(Default)]
@@ -22,6 +27,30 @@ pub fn take(one: &OneBox) -> Result<Taken<'_>, String> {
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .map(|_| Taken(one))
         .map_err(|_| "Une boîte est déjà ouverte.".to_string())
+}
+
+/**
+ * A question in the system's box, modal to the window: « Annuler » first, the button of Enter, then « Confirmer »,
+ * then « Fermer », the answer of Escape. The caller holds the guard, and runs off the window's thread (an `async`
+ * command): the box blocks until answered.
+ */
+pub fn ask(window: &tauri::Window, title: &str, text: &str) -> MessageDialogResult {
+    window
+        .dialog()
+        .message(text)
+        .title(title)
+        .parent(window)
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            "Annuler".into(),
+            CONFIRM.into(),
+            "Fermer".into(),
+        ))
+        .blocking_show_with_result()
+}
+
+/** Only « Confirmer » confirms; never `blocking_show`, which says yes on the first button, Enter's. */
+pub fn confirmed(answer: &MessageDialogResult) -> bool {
+    *answer == MessageDialogResult::Custom(CONFIRM.into())
 }
 
 #[cfg(test)]
