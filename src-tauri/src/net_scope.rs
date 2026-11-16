@@ -281,7 +281,19 @@ fn a_redirect_out_of_the_scope_is_refused() {
         "the 302 was never served: {err}"
     );
     assert!(
-        err.contains(DENIED),
-        "expected the scope refusal, got: {err}"
+        err.contains(&format!("{DENIED}: http://192.0.2.1/")),
+        "expected the scope refusal naming the redirect target, got: {err}"
+    );
+}
+
+/// Task 2 drops the plugin's `cookies` feature: the page sends none, and the plugin would rewrite a file on each
+/// `Set-Cookie`. Red until then: the plugin creates `.cookies` in the cache folder when it is set up.
+#[test]
+fn no_cookie_file_is_created() {
+    let t = test_app();
+    let cache = t.app.path().app_cache_dir().unwrap();
+    assert!(
+        !cache.join(".cookies").exists(),
+        "the plugin created {cache:?}/.cookies"
     );
 }
