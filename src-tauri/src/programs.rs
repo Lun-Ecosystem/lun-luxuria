@@ -352,7 +352,7 @@ mod tests {
     fn nothing_chosen_or_refused_starts_nothing() {
         let programs = Programs::default();
         let log = dir("refus").join("x.log");
-        let none = start(&programs, "rvc", None, &[], "127.0.0.1:9", &log);
+        let none = start(&programs, "rvc", None, &[], "http://127.0.0.1:9", &log);
         assert!(none.unwrap_err().contains("Choisis"));
         assert!(
             start(
@@ -360,7 +360,7 @@ mod tests {
                 "cmd",
                 Some("C:\\x.exe"),
                 &[],
-                "127.0.0.1:9",
+                "http://127.0.0.1:9",
                 &log
             )
             .is_err()
@@ -371,12 +371,84 @@ mod tests {
                 "rvc",
                 Some("Z:\\absent.exe"),
                 &[],
-                "127.0.0.1:9",
+                "http://127.0.0.1:9",
                 &log
             )
             .is_err()
         );
         assert!(programs.0.lock().unwrap().is_empty());
+    }
+
+    /// Addresses the field may hold that are not the loopback, or not an address at all.
+    const REFUSED: [&str; 7] = [
+        "http://192.0.2.1:8080",
+        "http://example.com:80",
+        "http://127.0.0.1@example.com:80",
+        "127.0.0.1:9",
+        "http://localhost:9/inference",
+        "",
+        "pas une adresse",
+    ];
+
+    fn is_refusal(err: &str, url: &str) -> bool {
+        err.starts_with("Adresse refusée : ")
+            && err.contains(url)
+            && err.ends_with("(127.0.0.1, localhost ou [::1] seulement).")
+    }
+
+    #[test]
+    fn state_refuses_an_address_off_the_loopback_without_probing() {
+        let programs = Programs::default();
+        for url in REFUSED {
+            let err = state(&programs, "rvc", url).unwrap_err();
+            assert!(is_refusal(&err, url), "{url:?} -> {err}");
+        }
+    }
+
+    #[test]
+    fn a_refused_address_never_reaches_a_listener() {
+        // Each of these would read as the listener's `host:port` to a parser that looks only for one.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let programs = Programs::default();
+        let urls = [
+            format!("http://127.0.0.1:{port}@example.com:80"),
+            format!("http://user@127.0.0.1:{port}"),
+            format!("http://127.0.0.1:{port}/inference"),
+            format!("127.0.0.1:{port}"),
+        ];
+        let log = dir("sonde").join("rvc.log");
+        for url in &urls {
+            assert!(state(&programs, "rvc", url).is_err(), "{url}");
+            assert!(
+                start(&programs, "rvc", Some("C:\\x.exe"), &[], url, &log).is_err(),
+                "{url}"
+            );
+        }
+        let touched = listener.accept().map(|_| ()).map_err(|e| e.kind());
+        assert_eq!(touched, Err(std::io::ErrorKind::WouldBlock));
+    }
+
+    #[test]
+    fn the_loopback_hosts_are_admitted_by_the_probe() {
+        let programs = Programs::default();
+        for url in [
+            "http://localhost:9",
+            "http://[::1]:9",
+            "http://127.0.0.1:9/",
+        ] {
+            assert_eq!(state(&programs, "rvc", url), Ok("absent"), "{url}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_program_is_still_refused_by_name() {
+        let programs = Programs::default();
+        assert_eq!(
+            state(&programs, "cmd", "http://127.0.0.1:9"),
+            Err("Programme inconnu.".to_string())
+        );
     }
 
     #[cfg(windows)]
@@ -392,13 +464,14 @@ mod tests {
         fn something_answering_is_left_alone() {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let addr = listener.local_addr().unwrap().to_string();
+            let url = format!("http://{addr}");
             assert!(listening(&addr));
             let programs = Programs::default();
             let log = dir("repond").join("rvc.log");
-            let got = start(&programs, "rvc", Some(PING), &args("30"), &addr, &log).unwrap();
+            let got = start(&programs, "rvc", Some(PING), &args("30"), &url, &log).unwrap();
             assert_eq!(got.outcome, "answering");
             assert!(programs.0.lock().unwrap().is_empty());
-            assert_eq!(state(&programs, "rvc", &addr), Ok("answering"));
+            assert_eq!(state(&programs, "rvc", &url), Ok("answering"));
             drop(listener);
             assert!(!listening(&addr));
             assert!(!listening("pas une adresse"));
@@ -409,7 +482,7 @@ mod tests {
             use crate::job::probe::{Watch, in_job};
             let programs = Programs::default();
             let log = dir("lance").join("rvc.log");
-            let addr = "127.0.0.1:9";
+            let addr = "http://127.0.0.1:9";
             let pid = |p: &Programs| p.0.lock().unwrap()["rvc"].child.id();
             let first = start(&programs, "rvc", Some(PING), &args("30"), addr, &log).unwrap();
             assert_eq!(first.outcome, "started");
@@ -446,13 +519,25 @@ mod tests {
                 "whisper-server",
                 Some(whoami),
                 &[],
-                "127.0.0.1:9",
+                "http://127.0.0.1:9",
                 &log,
             )
             .unwrap_err();
             assert!(err.contains("s’est arrêté aussitôt"), "{err}");
             assert!(err.contains("whisper-server.log"));
             assert!(programs.0.lock().unwrap().is_empty());
+        }
+
+        #[test]
+        fn a_refused_address_launches_nothing() {
+            let programs = Programs::default();
+            let log = dir("refuse").join("rvc.log");
+            for url in REFUSED {
+                let err = start(&programs, "rvc", Some(PING), &args("30"), url, &log).unwrap_err();
+                assert!(is_refusal(&err, url), "{url:?} -> {err}");
+                assert!(programs.0.lock().unwrap().is_empty());
+                assert!(!log.exists(), "no log: nothing was opened for {url:?}");
+            }
         }
     }
 }
