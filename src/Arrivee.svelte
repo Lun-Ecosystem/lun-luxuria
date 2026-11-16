@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { Button, CodeInput, Field, TextInput } from './lib/ui/index.ts';
   import { missingToEnter } from './arrival.ts';
+  import { CONFIRMED, confirmHost, forgetHost, OFF_MACHINE, offMachine, readHosts } from './desktop/hotes.ts';
   import { inWindow, serverWarning } from './desktop/net.ts';
   import { unsafeAddress } from './local.ts';
   import type { Session } from './session.svelte.ts';
@@ -53,7 +54,37 @@
     }
     await session.enter();
   }
+
+  /** Rust's refusal, by origin: said under that address only. */
+  let hostSaid = $state<Record<string, string>>({});
+  // svelte-ignore state_referenced_locally
+  if (inWindow) void readHosts(session);
 </script>
+
+<!-- An address off this computer: the window reaches it once the person confirms it, in the system's box. -->
+{#snippet host(url: string)}
+  {@const origin = inWindow ? offMachine(url) : null}
+  {#if origin}
+    {@const confirmed = session.hosts.includes(origin)}
+    <div class="hote">
+      <p class={confirmed ? 'aide' : 'manque'}>{confirmed ? CONFIRMED : OFF_MACHINE}</p>
+      {#if confirmed}
+        <Button
+          variant="fantome"
+          size="petit"
+          onclick={async () => (hostSaid[origin] = await forgetHost(session, origin))}>Oublier</Button
+        >
+      {:else}
+        <Button
+          variant="secondaire"
+          size="petit"
+          onclick={async () => (hostSaid[origin] = await confirmHost(session, url))}>Confirmer…</Button
+        >
+      {/if}
+    </div>
+    {#if hostSaid[origin]}<p class="manque" role="alert">{hostSaid[origin]}</p>{/if}
+  {/if}
+{/snippet}
 
 <main class="seuil">
   <div class="colonne">
@@ -95,6 +126,7 @@
               <TextInput value={s.model.url} oninput={(e) => set((d) => (d.model.url = typed(e).trim()))} />
             </Field>
             {#if urlMissing}<p class="manque" id="{uid}-missing">{missing}</p>{/if}
+            {@render host(s.model.url)}
           </div>
           <div class="bloc">
             <Field label="Nom du modèle">
@@ -117,19 +149,22 @@
           </Field>
         {:else}
           {#if inWindow}
-            <Field
-              label="Adresse du serveur"
-              hint="Sur ce poste, l’adresse par défaut convient. Pour un autre poste, son adresse en https."
-              error={serverWarning(s.server)}
-            >
-              <TextInput
-                value={s.server}
-                onchange={(e) => {
-                  const url = typed(e).trim();
-                  if (url) session.setServer(url);
-                }}
-              />
-            </Field>
+            <div class="bloc">
+              <Field
+                label="Adresse du serveur"
+                hint="Sur ce poste, l’adresse par défaut convient. Pour un autre poste, son adresse en https."
+                error={serverWarning(s.server)}
+              >
+                <TextInput
+                  value={s.server}
+                  onchange={(e) => {
+                    const url = typed(e).trim();
+                    if (url) session.setServer(url);
+                  }}
+                />
+              </Field>
+              {@render host(s.server)}
+            </div>
           {/if}
           {#if needsCode}
             <div class="bloc">
@@ -288,6 +323,13 @@
   .manque {
     font-size: 12.5px;
     color: var(--attention);
+  }
+  .hote {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
   }
   .pied {
     display: flex;

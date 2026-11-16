@@ -28,6 +28,7 @@
   import Fenetre from './desktop/Fenetre.svelte';
   import ServiceVoix from './desktop/ServiceVoix.svelte';
   import { quit } from './desktop/window.svelte.ts';
+  import { CONFIRMED, confirmHost, forgetHost, OFF_MACHINE, offMachine, readHosts } from './desktop/hotes.ts';
   import { inWindow, serverWarning } from './desktop/net.ts';
   import { DEFAULTS, type Settings, type TalkMode } from './settings.ts';
   import type { Session } from './session.svelte.ts';
@@ -190,7 +191,35 @@
   ];
   const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
   const direct = $derived(session.latencies.map((l) => l.ms));
+
+  /** Rust's refusal, by origin: said on that address's row only. */
+  let hostSaid = $state<Record<string, string>>({});
+  // svelte-ignore state_referenced_locally
+  if (inWindow) void readHosts(session);
 </script>
+
+<!-- An address off this computer: the window reaches it once the person confirms it, in the system's box. -->
+{#snippet host(url: string)}
+  {@const origin = inWindow ? offMachine(url) : null}
+  {#if origin}
+    {@const confirmed = session.hosts.includes(origin)}
+    <SettingsRow label="Hors de ce poste" hint={confirmed ? CONFIRMED : OFF_MACHINE} error={hostSaid[origin]}>
+      {#if confirmed}
+        <Button
+          variant="fantome"
+          size="petit"
+          onclick={async () => (hostSaid[origin] = await forgetHost(session, origin))}>Oublier</Button
+        >
+      {:else}
+        <Button
+          variant="secondaire"
+          size="petit"
+          onclick={async () => (hostSaid[origin] = await confirmHost(session, url))}>Confirmer…</Button
+        >
+      {/if}
+    </SettingsRow>
+  {/if}
+{/snippet}
 
 {#snippet toggle(label: string, hint: string | undefined, checked: boolean, on: (v: boolean) => void)}
   <SettingsRow {label} {hint}>
@@ -334,6 +363,7 @@
               undefined,
               (v) => v.trim() && session.setServer(v.trim()),
             )}
+            {@render host(s.server)}
           {/if}
         </SettingsCard>
 
@@ -346,6 +376,7 @@
               undefined,
               (v) => set((d) => (d.model.url = v.trim() || DEFAULTS.model.url)),
             )}
+            {@render host(s.model.url)}
             {@render field('Nom du modèle', undefined, s.model.name, undefined, (v) =>
               set((d) => (d.model.name = v.trim())),
             )}

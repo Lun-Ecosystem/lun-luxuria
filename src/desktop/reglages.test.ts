@@ -762,6 +762,27 @@ describe('an address off this computer, confirmed in the settings', () => {
     },
   );
 
+  it.each([
+    ['http://127.0.0.1@example.com:8788', 'http://example.com:8788'],
+    ['http://127.0.0.1.example:8788', 'http://127.0.0.1.example:8788'],
+    ['http://localhost.example:8788', 'http://localhost.example:8788'],
+  ])(
+    '%s only looks local: its host is read by the URL parser, and it is off this computer',
+    async (address, origin) => {
+      rust([]);
+      linked(address);
+      expect(screen.getByText(NOTICE)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /^Confirmer/ }));
+      expect(invoke).toHaveBeenCalledWith('net_host_confirm', { url: address });
+      // Confirmed by the origin Rust keeps, the parser's: never by the text that looked local.
+      expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
+      cleanup();
+      rust([origin]);
+      alone(address + '/v1');
+      expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
+    },
+  );
+
   it('showing the notice asks nothing of the person: only the click does', () => {
     rust([]);
     linked();

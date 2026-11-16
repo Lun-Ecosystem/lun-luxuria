@@ -118,6 +118,8 @@ export class Session {
   programs = $state<Partial<Record<ProgramName, ProgramState>>>({});
   /** The `.exe` the person picked for each, as the window keeps it: shown, never sent back. */
   programPaths = $state<Partial<Record<ProgramName, string>>>({});
+  /** The origins off this computer the person confirmed, as the window keeps them: Rust checks each request. */
+  hosts = $state<string[]>([]);
   /** The action on the voice service under way, whatever screen started it: one at a time. */
   voiceBusy = $state<'check' | 'restart' | null>(null);
   /** One follow of the programs being launched, at most. */
