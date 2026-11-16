@@ -4,7 +4,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ENDPOINT_DEFAULTS, levelToVoice } from './endpoint.ts';
 import { decide } from './filter.ts';
-import { FRAME_MS, readWav, replay, writeWav, type Heard } from './replay.ts';
+import { FRAME_MS, noise, readWav, replay, writeWav, type Heard } from './replay.ts';
 import { FRAME, loadSilero, SileroVoice } from './vad.ts';
 import { Conversation } from '../conversation.ts';
 import { DEFAULTS } from '../settings.ts';
@@ -16,15 +16,6 @@ const byLevel = (frame: Float32Array) => levelToVoice(frame, DEFAULTS.endOfSpeec
 async function byModel() {
   const silero = new SileroVoice(await loadSilero(MODEL));
   return (frame: Float32Array, listening: boolean) => silero.voice(frame, listening);
-}
-
-/** The same noise every time. */
-function noise(seconds: number, level: number, seed = 1): Float32Array {
-  let x = seed;
-  return Float32Array.from({ length: seconds * 16000 }, () => {
-    x = (x * 1664525 + 1013904223) % 4294967296;
-    return (x / 2147483648 - 1) * level;
-  });
 }
 
 describe('a file of sound', () => {

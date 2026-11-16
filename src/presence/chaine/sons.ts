@@ -106,9 +106,9 @@ async function lire(path: string): Promise<Float32Array | undefined> {
 
 /**
  * One text through the voice's cache, then its synthesis, whose raw sound is kept: trimmed before it is written, the
- * key would have to carry the margin.
+ * key would have to carry the margin. The bench of gestures says its words through it too.
  */
-async function dire(
+export async function dire(
   texte: string,
   dir: string,
   voix: Voix,

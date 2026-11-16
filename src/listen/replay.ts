@@ -3,6 +3,15 @@ import { FRAME } from './vad.ts';
 
 export const FRAME_MS = 32;
 
+/** The same noise every time, at 16 kHz. */
+export function noise(seconds: number, level: number, seed = 1): Float32Array {
+  let x = seed;
+  return Float32Array.from({ length: seconds * 16000 }, () => {
+    x = (x * 1664525 + 1013904223) % 4294967296;
+    return (x / 2147483648 - 1) * level;
+  });
+}
+
 /** A WAV of 16-bit samples, one channel kept, as the microphone would give it: 16 kHz, from -1 to 1. */
 export function readWav(bytes: Uint8Array): Float32Array {
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
