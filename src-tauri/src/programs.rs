@@ -9,7 +9,7 @@ use crate::voice::{checked_args, early_exit, ended, hold, kill_tree, open_log, s
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -102,10 +102,15 @@ fn probed(url: &str) -> Result<String, String> {
 }
 
 /** Something listens at `host:port`, from `probed`: a program already running, started by hand or by another app. */
-pub fn listening(addr: &str) -> bool {
+fn listening(addr: &str) -> bool {
     addr.to_socket_addrs()
-        .map(|mut all| all.any(|a| TcpStream::connect_timeout(&a, PROBE).is_ok()))
+        .map(|all| on_loopback(all).any(|a| TcpStream::connect_timeout(&a, PROBE).is_ok()))
         .unwrap_or(false)
+}
+
+/** `localhost` goes through the system's resolver, which a `hosts` line can send elsewhere: only the loopback stays. */
+fn on_loopback(all: impl Iterator<Item = SocketAddr>) -> impl Iterator<Item = SocketAddr> {
+    all.filter(|a| a.ip().is_loopback())
 }
 
 /** The program in its own folder, where it finds its models and files, without a console. */
@@ -460,6 +465,46 @@ mod tests {
             state(&programs, "cmd", "http://127.0.0.1:9"),
             Err("Programme inconnu.".to_string())
         );
+    }
+
+    #[test]
+    fn the_name_is_checked_before_the_address() {
+        let programs = Programs::default();
+        let url = "http://192.0.2.1:8080";
+        assert_eq!(
+            state(&programs, "cmd", url).unwrap_err(),
+            "Programme inconnu."
+        );
+        let log = dir("nom").join("cmd.log");
+        let err = start(&programs, "cmd", None, &[], url, &log).unwrap_err();
+        assert_eq!(err, "Programme inconnu.");
+    }
+
+    #[test]
+    fn the_address_is_checked_before_the_program() {
+        let programs = Programs::default();
+        let log = dir("ordre").join("rvc.log");
+        let url = "http://192.0.2.1:8080";
+        let err = start(&programs, "rvc", None, &[], url, &log).unwrap_err();
+        assert!(is_refusal(&err, url), "{err}");
+    }
+
+    #[test]
+    fn a_resolved_address_off_the_loopback_is_never_probed() {
+        // What a `hosts` line could make `localhost` resolve to, next to what it should.
+        let all: Vec<SocketAddr> = [
+            "192.0.2.1:9",
+            "127.0.0.1:9",
+            "[::1]:9",
+            "[::ffff:127.0.0.1]:9",
+        ]
+        .iter()
+        .map(|a| a.parse().unwrap())
+        .collect();
+        let kept: Vec<_> = on_loopback(all.into_iter())
+            .map(|a| a.to_string())
+            .collect();
+        assert_eq!(kept, ["127.0.0.1:9", "[::1]:9"]);
     }
 
     #[cfg(windows)]
