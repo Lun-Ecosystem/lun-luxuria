@@ -70,6 +70,12 @@ const dossiers: string[] = [];
 const temp = () => (dossiers.push(mkdtempSync(join(tmpdir(), 'gestes-'))), dossiers.at(-1)!);
 afterAll(() => dossiers.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
+const jsonl = (dir: string) =>
+  readFileSync(join(dir, 'gestes.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+
 /** A folder of the bench: its list, and a take of noise for each one asked. */
 function dossier(lignes: unknown[], prises: string[]): string {
   const dir = temp();
@@ -185,11 +191,10 @@ describe('a word through a new conversation', () => {
       async () => (samples) =>
         ecouter(samples, byLevel, async () => ({ text: ' Oui ?', confidence: 0.612345678901 })),
     );
-    const lignes = readFileSync(join(dir, 'gestes.jsonl'), 'utf8')
-      .trim()
-      .split('\n')
-      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    const lignes = jsonl(dir);
+    const fin = lignes.pop()!;
     expect(n).toBe(lignes.length);
+    expect(fin).toMatchObject({ fin: true, sons: n, echecs: 0, brique: 'faux', duree: expect.any(Number) });
     expect(lignes.map((l) => [l['id'], l['source'], l['condition'], l['niveau'], l['attendu']])).toEqual([
       ['oui', 'fausse', 'propre', undefined, 'accepter'],
       ['oui', 'fausse', 'bruit', 0, 'accepter'],
@@ -224,6 +229,30 @@ describe('a word through a new conversation', () => {
     );
     expect(premiere['envoye']).toEqual([{ texte: ' Oui ?', confiance: 0.612345678901 }]);
     expect(premiere['brique']).toBe('faux');
+  });
+});
+
+describe('a failed transcription', () => {
+  it('makes its line a failure, as the conversation wrote it, counted at the end, and fails the command', async () => {
+    const dir = dossier([bonne], ['oui-1.wav']);
+    const panne = async (): Promise<never> => {
+      throw new Error('le service voix ne répond pas');
+    };
+    await expect(banc(dir, [], 'faux', async () => (s) => ecouter(s, byLevel, panne))).rejects.toThrow(
+      /sur 5 sons ont une transcription en échec/,
+    );
+    const lignes = jsonl(dir);
+    const fin = lignes.pop()!;
+    expect(lignes[0]).toMatchObject({
+      id: 'oui',
+      echec: true,
+      transcriptions: [{ echec: 'le service voix ne répond pas' }],
+      envoye: [],
+    });
+    expect(lignes[0]!['transcriptions']).not.toMatchObject([{ texte: expect.anything() }]);
+    const echecs = lignes.filter((l) => l['echec'] === true).length;
+    expect(echecs).toBeGreaterThan(0);
+    expect(fin).toMatchObject({ fin: true, sons: 5, echecs, brique: 'faux', duree: expect.any(Number) });
   });
 });
 

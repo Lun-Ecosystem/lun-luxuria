@@ -6,7 +6,7 @@ import { Conversation, type Heard } from '../conversation.ts';
 import { dire, voixDe, type Voix } from '../presence/chaine/sons.ts';
 import { DEFAULTS } from '../settings.ts';
 import { Speaker } from '../speech/speaker.ts';
-import { Trace, type TraceEvent } from '../trace.ts';
+import { Trace, type TraceEvent, type TraceName } from '../trace.ts';
 
 /**
  * The bench of gestures (`npm run gestes`): what the page sends to the server, text and confidence, for each sound of
@@ -101,6 +101,8 @@ export interface Ecoute {
   /** What `send` received, as it received it; `repris`, what `withdraw` took back of it. */
   envoye: Envoi[];
   repris: Envoi[];
+  /** A transcription failed: this sound says nothing of what the page would send. */
+  echec?: true;
 }
 
 /**
@@ -149,6 +151,8 @@ export async function ecouter(
       cut: async () => {},
       withdraw: async (id) => void out.repris.push(out.envoye[id - 1]!),
     },
+    // shortcut: after lun-luxuria#82, the conversation gives a `signal` cut at its 20 s guard; on the rebase, take it
+    // here and pass it to `stt`, and on to `transcribe`, so that a try given up on is not waited for.
     stt: (audio) => {
       const t = mesurer(audio);
       enRoute.push(t.catch(() => {}));
@@ -176,13 +180,19 @@ export async function ecouter(
   out.ecoute = heard.events.map((ev) => ev.type);
   await Promise.all(enRoute);
   await new Promise((r) => setTimeout(r));
-  // In the order they came back; a try withdrawn before its verdict has none.
-  const verdict = (essai: TraceEvent | undefined) =>
+  const deSonEssai = (name: TraceName, essai: TraceEvent | undefined) =>
     essai &&
-    trace.events.find((v) => v.name === 'verdict' && v.phrase === essai.phrase && v.essai === essai.essai);
-  out.transcriptions = faites.map(({ t, essai }) =>
-    'texte' in t ? { ...t, verdict: verdict(essai)?.['resultat'] as string | undefined } : t,
-  );
+    trace.events.find((v) => v.name === name && v.phrase === essai.phrase && v.essai === essai.essai);
+  // In the order they came back, as the conversation took them: a try it gave up on is a failure, whatever came
+  // back late; a try withdrawn before its verdict has none.
+  out.transcriptions = faites.map(({ t, essai }) => {
+    if (deSonEssai('transcrite', essai)?.['echec'] === true)
+      return { echec: 'echec' in t ? t.echec : 'abandonnée par la conversation', duree: t.duree, son: t.son };
+    return 'texte' in t
+      ? { ...t, verdict: deSonEssai('verdict', essai)?.['resultat'] as string | undefined }
+      : t;
+  });
+  if (out.transcriptions.some((t) => 'echec' in t)) out.echec = true;
   return out;
 }
 
@@ -200,7 +210,8 @@ type Son = { id: string; source: string; attendu: Ligne['attendu'] };
  * - a speech of `mots.json`, said by each voice, clean then in the noise at its fixed level; then each of its takes;
  * - a sound that is not speech, each take clean then in the noise at the three levels, as each file of `temoins/` and
  *   a silent sound made here.
- * The list and every take are read before anything plays: a missing one stops it all, and is named.
+ * The list and every take are read before anything plays: a missing one stops it all, and is named. A last line
+ * counts the sounds and those whose transcription failed; one failed, the bench fails.
  */
 export async function banc(
   dir: string,
@@ -208,6 +219,7 @@ export async function banc(
   brique: string,
   ouvrir: () => Promise<(samples: Float32Array) => Promise<Ecoute>>,
 ): Promise<number> {
+  const debut = performance.now();
   const liste = join(dir, 'mots.json');
   if (!existsSync(liste)) throw new Error(`Pas de liste des gestes : ${liste}`);
   const lignes = lireListe(readFileSync(liste, 'utf8'));
@@ -235,6 +247,7 @@ export async function banc(
   const sortie = join(dir, 'gestes.jsonl');
   writeFileSync(sortie, '');
   let n = 0;
+  let echecs = 0;
   const jouer = async (son: Son, samples: Float32Array, niveau?: number) => {
     const pose = autour(samples);
     const e = await ecoute(niveau === undefined ? pose : dansLeBruit(pose, niveau));
@@ -242,6 +255,7 @@ export async function banc(
     const date = new Date().toISOString();
     appendFileSync(sortie, `${JSON.stringify({ ...son, condition, niveau, ...e, brique, date })}\n`);
     n++;
+    if (e.echec) echecs++;
   };
   const nonParole = async (son: Son, samples: Float32Array) => {
     await jouer(son, samples);
@@ -262,5 +276,8 @@ export async function banc(
   }
   for (const t of temoins) await nonParole({ id: t.id, source: 'temoin', attendu: 'aucun' }, t.samples);
   await nonParole({ id: 'nul', source: 'code', attendu: 'aucun' }, new Float32Array(2 * 16000));
+  const duree = Math.round(performance.now() - debut);
+  appendFileSync(sortie, `${JSON.stringify({ fin: true, sons: n, echecs, brique, duree })}\n`);
+  if (echecs > 0) throw new Error(`${echecs} sur ${n} sons ont une transcription en échec : ${sortie}`);
   return n;
 }
