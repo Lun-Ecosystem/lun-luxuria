@@ -1,11 +1,12 @@
 import { flushSync } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const calls = vi.hoisted(() => ({ n: 0 }));
+const calls = vi.hoisted(() => ({ n: 0, args: [] as unknown[] }));
 vi.mock('@tauri-apps/api/core', async (real) => ({
   ...(await real<typeof import('@tauri-apps/api/core')>()),
-  invoke: async (command: string) => {
+  invoke: async (command: string, args?: unknown) => {
     calls.n++;
+    calls.args.push(args ?? {});
     if (command === 'body_config') return '{"repos":"r.png"}';
     return new Uint8Array([1]).buffer;
   },
@@ -18,11 +19,11 @@ beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn());
   calls.n = 0;
+  calls.args = [];
 });
 
 describe('bodyFollows', () => {
-  it('reads the folder once, then again only when the folder changes: the new body never loops back', async () => {
-    localStorage.setItem('luxuria.settings', JSON.stringify({ body: { folder: 'D:\\corps' } }));
+  it('reads the body when the window opens, and no setting saved afterwards reads it again', async () => {
     const session = new Session();
     const stop = $effect.root(() => bodyFollows(session));
     flushSync();
@@ -32,20 +33,31 @@ describe('bodyFollows', () => {
     expect(calls.n).toBe(2); // corps.json, then the rest image
     expect(session.bodyView?.level).toBe('images');
 
-    session.saveSettings({ ...session.settings, body: { ...session.settings.body, folder: 'D:\\autre' } });
+    // The old folder is only a reminder: changing it, or any other setting, reads nothing.
+    session.saveSettings({
+      ...session.settings,
+      body: { ...session.settings.body, formerFolder: 'C:\\corps' },
+    });
     flushSync();
     await new Promise((r) => setTimeout(r, 50));
-    flushSync();
-    expect(calls.n).toBe(4);
-
-    // Any other setting saved replaces the whole settings object: the folder is the same, nothing is read.
     session.saveSettings({
       ...session.settings,
       display: { ...session.settings.display, shortcut: 'Alt+L' },
     });
     flushSync();
     await new Promise((r) => setTimeout(r, 50));
-    expect(calls.n).toBe(4);
+    expect(calls.n).toBe(2);
+    stop();
+  });
+
+  it('never names a folder to the window, even with an old one saved', async () => {
+    localStorage.setItem('luxuria.settings', JSON.stringify({ body: { folder: 'C:\\corps' } }));
+    const session = new Session();
+    const stop = $effect.root(() => bodyFollows(session));
+    flushSync();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls.n).toBeGreaterThan(0);
+    expect(JSON.stringify(calls.args)).not.toMatch(/folder|C:/);
     stop();
   });
 });

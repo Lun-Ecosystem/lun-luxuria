@@ -113,3 +113,28 @@ describe('the voice service', () => {
     expect(readSettings(JSON.stringify({ voice: { service } })).voice.service).toEqual(service);
   });
 });
+
+describe('the body’s folder, which the window keeps now', () => {
+  it('a default has no folder to send: only a reminder, empty', () => {
+    expect(DEFAULTS.body).not.toHaveProperty('folder');
+    expect(DEFAULTS.body.formerFolder).toBe('');
+  });
+
+  it('a folder saved by an older page is read as the former folder, and kept at the next load', () => {
+    const s = readSettings(JSON.stringify({ body: { level: 'images', folder: 'C:\\corps' } }));
+    expect(s.body.formerFolder).toBe('C:\\corps');
+    expect(s.body).not.toHaveProperty('folder');
+    const again = readSettings(JSON.stringify(s));
+    expect(again.body.formerFolder).toBe('C:\\corps');
+    expect(again.body).not.toHaveProperty('folder');
+  });
+
+  it('a former folder already saved wins over nothing, and an empty or odd folder gives an empty reminder', () => {
+    expect(readSettings(JSON.stringify({ body: { formerFolder: 'C:\\corps' } })).body.formerFolder).toBe(
+      'C:\\corps',
+    );
+    expect(readSettings(JSON.stringify({ body: { folder: '' } })).body.formerFolder).toBe('');
+    expect(readSettings(JSON.stringify({ body: { folder: 7 } })).body.formerFolder).toBe('');
+    expect(readSettings(null).body.formerFolder).toBe('');
+  });
+});

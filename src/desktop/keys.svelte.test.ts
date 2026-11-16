@@ -98,7 +98,7 @@ describe('keysFollow', () => {
     expect(register).toHaveBeenCalledTimes(3);
     session.saveSettings({
       ...session.settings,
-      body: { ...session.settings.body, folder: 'D:\\corps' },
+      body: { ...session.settings.body, formerFolder: 'C:\\corps' },
     } as Settings);
     await settle();
     expect(register).toHaveBeenCalledTimes(3);

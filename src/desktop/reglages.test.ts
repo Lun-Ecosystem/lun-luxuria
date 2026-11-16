@@ -344,6 +344,144 @@ describe('the voice theme, after a change', () => {
   });
 });
 
+describe('the body’s folder, chosen in the system’s dialog and kept by the window', () => {
+  /** The window's answers by command name. */
+  function window_(answers: Record<string, unknown> = {}) {
+    invoke.mockImplementation(async (cmd: string) => {
+      const answer = answers[cmd];
+      if (answer instanceof Error) throw answer.message;
+      return cmd === 'body_config' && answer === undefined ? '{"niveau":"souffle"}' : (answer ?? null);
+    });
+  }
+  const open = (settings: object = {}) => {
+    localStorage.setItem('luxuria.settings', JSON.stringify(settings));
+    const session = new Session();
+    render(Reglages, { session, close: () => {}, start: 'corps' });
+    return session;
+  };
+  const asked = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd);
+  const writeText = vi.fn<(text: string) => Promise<void>>(async () => {});
+  beforeEach(() => {
+    writeText.mockClear();
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  });
+
+  it('no folder kept: no field to type in, « Choisir… » and « Relire », nothing to forget', () => {
+    window_();
+    open();
+    expect(screen.queryByRole('textbox', { name: 'Dossier du corps' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Choisir/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Relire' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Oublier/ })).toBeNull();
+  });
+
+  it('« Choisir… » asks the window for « corps », shows the path it keeps, and reads the body again', async () => {
+    window_({ folder_pick: 'C:\\corps' });
+    const session = open();
+    await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+    expect(invoke).toHaveBeenCalledWith('folder_pick', { name: 'corps' });
+    await vi.waitFor(() => expect(screen.getByText('C:\\corps')).toBeInTheDocument());
+    expect(session.folders.corps).toBe('C:\\corps');
+    await vi.waitFor(() => expect(asked('body_config').length).toBeGreaterThan(0));
+    expect(screen.getByRole('button', { name: /^Oublier/ })).toBeInTheDocument();
+  });
+
+  it('cancelled: nothing changes and nothing is read', async () => {
+    window_({ folder_pick: null });
+    const session = open();
+    await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+    await vi.waitFor(() => expect(asked('folder_pick')).toHaveLength(1));
+    expect(session.folders.corps).toBeUndefined();
+    expect(asked('body_config')).toHaveLength(0);
+  });
+
+  it('refused by the window: its message is shown, no folder is kept', async () => {
+    window_({ folder_pick: new Error('Ce dossier n’a pas de corps.json.') });
+    const session = open();
+    await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+    await vi.waitFor(() =>
+      expect(screen.getByText(/Ce dossier n’a pas de corps\.json\./)).toBeInTheDocument(),
+    );
+    expect(session.folders.corps).toBeUndefined();
+  });
+
+  it('« Oublier » asks the window to forget « corps », the path goes, the body is read again', async () => {
+    window_({ folder_paths: { corps: 'C:\\corps' } });
+    const session = open();
+    session.folders.corps = 'C:\\corps';
+    await fireEvent.click(await screen.findByRole('button', { name: /^Oublier/ }));
+    expect(invoke).toHaveBeenCalledWith('folder_forget', { name: 'corps' });
+    await vi.waitFor(() => expect(screen.queryByText('C:\\corps')).toBeNull());
+    expect(session.folders.corps).toBeUndefined();
+    await vi.waitFor(() => expect(asked('body_config').length).toBeGreaterThan(0));
+  });
+
+  it('no command of the window is ever called with a folder', async () => {
+    window_({ folder_pick: 'C:\\corps' });
+    open({ body: { folder: 'C:\\ancien' } });
+    await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Relire' }));
+    await vi.waitFor(() => expect(asked('body_config').length).toBeGreaterThan(1));
+    for (const [, args] of invoke.mock.calls) {
+      expect(Object.keys((args as object | undefined) ?? {})).not.toContain('folder');
+      expect(JSON.stringify(args ?? {})).not.toContain('ancien');
+    }
+  });
+
+  describe('the folder an older page saved', () => {
+    const former = { body: { folder: 'C:\\corps' } };
+
+    it('while the window keeps none: the notice, the path as selectable text, and « Copier »', async () => {
+      window_();
+      open(former);
+      expect(
+        screen.getByText(/Le dossier se choisit maintenant dans la boîte de dialogue du système\./),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/Choisis de nouveau celui-ci/)).toBeInTheDocument();
+      expect(screen.getByText('C:\\corps')).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: /^Copier/ }));
+      expect(writeText).toHaveBeenCalledExactlyOnceWith('C:\\corps');
+    });
+
+    it('is never sent to the window, whatever is clicked', async () => {
+      window_();
+      open(former);
+      await fireEvent.click(screen.getByRole('button', { name: /^Copier/ }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Relire' }));
+      await vi.waitFor(() => expect(asked('body_config').length).toBeGreaterThan(0));
+      expect(JSON.stringify(invoke.mock.calls)).not.toContain('corps');
+    });
+
+    it('the first folder chosen empties it, on the screen and in what is saved', async () => {
+      window_({ folder_pick: 'C:\\autre' });
+      const session = open(former);
+      await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+      await vi.waitFor(() => expect(screen.queryByText(/Le dossier se choisit maintenant/)).toBeNull());
+      expect(session.settings.body.formerFolder).toBe('');
+      const saved = JSON.parse(localStorage.getItem('luxuria.settings') ?? '{}');
+      expect(saved.body).not.toHaveProperty('folder');
+      expect(saved.body.formerFolder).toBe('');
+    });
+
+    it('a cancelled choice keeps it', async () => {
+      window_({ folder_pick: null });
+      const session = open(former);
+      await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+      await vi.waitFor(() => expect(asked('folder_pick')).toHaveLength(1));
+      expect(session.settings.body.formerFolder).toBe('C:\\corps');
+      expect(screen.getByText(/Le dossier se choisit maintenant/)).toBeInTheDocument();
+    });
+
+    it('no notice once the window keeps a folder', async () => {
+      window_({ folder_paths: { corps: 'C:\\autre' } });
+      const session = open(former);
+      session.folders.corps = 'C:\\autre';
+      await vi.waitFor(() => expect(screen.getByText('C:\\autre')).toBeInTheDocument());
+      expect(screen.queryByText(/Le dossier se choisit maintenant/)).toBeNull();
+    });
+  });
+});
+
 type Theme = 'agent' | 'corps' | 'ecoute' | 'voix' | 'fenetre';
 /** The settings opened on a theme, with these settings saved. */
 function opened(start: Theme, settings: object = {}) {
