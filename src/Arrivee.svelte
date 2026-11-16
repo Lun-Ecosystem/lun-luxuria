@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { Button, CodeInput, Field, TextInput } from './lib/ui/index.ts';
   import { missingToEnter } from './arrival.ts';
   import { CONFIRMED, confirmHost, forgetHost, OFF_MACHINE, offMachine, readHosts } from './desktop/hotes.ts';
@@ -55,23 +55,30 @@
     await session.enter();
   }
 
-  /** Rust's refusal, by origin: said under that address only. */
+  /** Rust's refusal, by origin: said in that address's field only. */
   let hostSaid = $state<Record<string, string>>({});
-  // svelte-ignore state_referenced_locally
-  if (inWindow) void readHosts(session);
+  onMount(() => {
+    if (inWindow) void readHosts(session);
+  });
+  /** An address off this computer blocks until confirmed: the field's error says it, after its own. */
+  function hostError(url: string): string | undefined {
+    const origin = inWindow ? offMachine(url) : null;
+    if (!origin) return undefined;
+    return hostSaid[origin] || (session.hosts.includes(origin) ? undefined : OFF_MACHINE);
+  }
 </script>
 
-<!-- An address off this computer: the window reaches it once the person confirms it, in the system's box. -->
+<!-- Under an address off this computer: « Confirmer… » opens the system's box, from the window. -->
 {#snippet host(url: string)}
   {@const origin = inWindow ? offMachine(url) : null}
   {#if origin}
-    {@const confirmed = session.hosts.includes(origin)}
     <div class="hote">
-      <p class={confirmed ? 'aide' : 'manque'}>{confirmed ? CONFIRMED : OFF_MACHINE}</p>
-      {#if confirmed}
+      {#if session.hosts.includes(origin)}
+        <p class="aide">{CONFIRMED}</p>
         <Button
           variant="fantome"
           size="petit"
+          aria-label="Oublier l’adresse confirmée {origin}"
           onclick={async () => (hostSaid[origin] = await forgetHost(session, origin))}>Oublier</Button
         >
       {:else}
@@ -82,7 +89,6 @@
         >
       {/if}
     </div>
-    {#if hostSaid[origin]}<p class="manque" role="alert">{hostSaid[origin]}</p>{/if}
   {/if}
 {/snippet}
 
@@ -121,7 +127,9 @@
             <Field
               label="Adresse du modèle"
               hint="Compatible OpenAI, souvent terminée par /v1."
-              error={urlMissing ? undefined : unsafeAddress(s.model.url, s.model.key)}
+              error={urlMissing
+                ? undefined
+                : (unsafeAddress(s.model.url, s.model.key) ?? hostError(s.model.url))}
             >
               <TextInput value={s.model.url} oninput={(e) => set((d) => (d.model.url = typed(e).trim()))} />
             </Field>
@@ -153,7 +161,7 @@
               <Field
                 label="Adresse du serveur"
                 hint="Sur ce poste, l’adresse par défaut convient. Pour un autre poste, son adresse en https."
-                error={serverWarning(s.server)}
+                error={serverWarning(s.server) ?? hostError(s.server)}
               >
                 <TextInput
                   value={s.server}

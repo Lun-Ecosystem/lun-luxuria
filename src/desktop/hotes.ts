@@ -25,7 +25,10 @@ const said = (err: unknown) => (err instanceof Error ? err.message : String(err)
 /** The origins the person confirmed, as the window keeps them. */
 export async function readHosts(session: Session, call: Call = invoke): Promise<void> {
   const hosts = await Promise.resolve(call('net_hosts', {})).catch(() => null);
-  session.hosts = Array.isArray(hosts) ? hosts.filter((h): h is string => typeof h === 'string') : [];
+  // Once each: the screens list them by origin.
+  session.hosts = Array.isArray(hosts)
+    ? [...new Set(hosts.filter((h): h is string => typeof h === 'string'))]
+    : [];
 }
 
 /** The system's box, opened by the window: only the person lets it reach an address off this computer. Its refusal, said. */

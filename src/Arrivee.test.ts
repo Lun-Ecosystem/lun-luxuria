@@ -151,7 +151,8 @@ describe('an address off this computer, confirmed on the arrival', () => {
       const a = (args ?? {}) as { url?: string };
       if (cmd === 'net_hosts') return [...list];
       if (cmd === 'net_host_confirm') {
-        if (answer instanceof Error) throw answer;
+        // Tauri rejects with Rust's message, a string.
+        if (answer instanceof Error) throw answer.message;
         if (answer) list.push(new URL(a.url!).origin);
         return answer;
       }
@@ -170,7 +171,7 @@ describe('an address off this computer, confirmed on the arrival', () => {
     expect(invoke).toHaveBeenCalledWith('net_host_confirm', { url: SERVER });
     expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
     expect(confirmButton()).toBeNull();
-    expect(screen.getByRole('button', { name: 'Oublier' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: `Oublier l’adresse confirmée ${SERVER}` })).toBeInTheDocument();
   });
 
   it('the model: the same, with the model’s address', async () => {
@@ -215,6 +216,17 @@ describe('an address off this computer, confirmed on the arrival', () => {
       expect(confirmCalls()).toEqual([]);
     },
   );
+
+  it('the notice is what blocks: said as the field’s error, as in the settings', () => {
+    where.inWindow = true;
+    rust([]);
+    linked();
+    expect(screen.getByRole('textbox', { name: 'Adresse du serveur' })).toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
+    expect(screen.getByRole('textbox', { name: 'Adresse du serveur' })).toHaveAccessibleDescription(NOTICE);
+  });
 
   it('showing the notice asks nothing of the person', () => {
     where.inWindow = true;

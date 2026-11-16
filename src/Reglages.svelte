@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import AudioLines from '@lucide/svelte/icons/audio-lines';
   import Ear from '@lucide/svelte/icons/ear';
@@ -194,22 +194,33 @@
 
   /** Rust's refusal, by origin: said on that address's row only. */
   let hostSaid = $state<Record<string, string>>({});
-  // svelte-ignore state_referenced_locally
-  if (inWindow) void readHosts(session);
+  onMount(() => {
+    if (inWindow) void readHosts(session);
+  });
 </script>
 
-<!-- An address off this computer: the window reaches it once the person confirms it, in the system's box. -->
+{#snippet forget(origin: string)}
+  <Button
+    variant="fantome"
+    size="petit"
+    aria-label="Oublier l’adresse confirmée {origin}"
+    onclick={async () => (hostSaid[origin] = await forgetHost(session, origin))}>Oublier</Button
+  >
+{/snippet}
+
+<!-- An address off this computer: the window reaches it once the person confirms it, in the system's box. Until
+then it blocks, and says so as an error: a folded block opens on it. -->
 {#snippet host(url: string)}
   {@const origin = inWindow ? offMachine(url) : null}
   {#if origin}
     {@const confirmed = session.hosts.includes(origin)}
-    <SettingsRow label="Hors de ce poste" hint={confirmed ? CONFIRMED : OFF_MACHINE} error={hostSaid[origin]}>
+    <SettingsRow
+      label="Accès"
+      hint={confirmed ? CONFIRMED : undefined}
+      error={hostSaid[origin] || (confirmed ? null : OFF_MACHINE)}
+    >
       {#if confirmed}
-        <Button
-          variant="fantome"
-          size="petit"
-          onclick={async () => (hostSaid[origin] = await forgetHost(session, origin))}>Oublier</Button
-        >
+        {@render forget(origin)}
       {:else}
         <Button
           variant="secondaire"
@@ -678,6 +689,19 @@
         </Avance>
       {:else if page.id === 'fenetre'}
         <Fenetre {session} {set} />
+        <!-- Every origin confirmed stays here, whatever the fields now say: each can be forgotten. -->
+        <SettingsCard
+          title="Adresses hors de ce poste"
+          description="Celles que la fenêtre peut joindre, confirmées dans la boîte du système."
+        >
+          {#each session.hosts as origin (origin)}
+            <SettingsRow label={origin} error={hostSaid[origin] || null}>
+              {@render forget(origin)}
+            </SettingsRow>
+          {:else}
+            <SettingsRow label="Aucune" hint="La fenêtre ne joint que ce poste." />
+          {/each}
+        </SettingsCard>
       {/if}
     </div>
   </div>

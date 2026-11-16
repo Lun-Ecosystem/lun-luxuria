@@ -129,12 +129,13 @@ describe('the window follows no redirection, and takes no proxy', () => {
 
 describe('an address off this computer is confirmed in the settings, never at a call', () => {
   it('a request to an address Rust refuses shows Rust’s message, and asks nothing of the person', async () => {
-    const said = 'Adresse non confirmée : https://serveur.exemple. Confirme-la dans les réglages.';
+    const said = 'Adresse non confirmée pour la fenêtre : https://serveur.exemple.';
     invoke.mockClear();
-    const http = vi.fn(async () => Promise.reject(new Error(said))) as unknown as typeof fetch;
+    // Tauri rejects with Rust's message, a string: it reaches the caller as it is.
+    const http = vi.fn(async () => Promise.reject(said)) as unknown as typeof fetch;
     const net = routes(() => 'https://serveur.exemple', http, seen().f);
-    await expect(net.server('/api/live')).rejects.toThrow(said);
-    await expect(net.server('https://modele.exemple/v1/models')).rejects.toThrow(said);
+    await expect(net.server('/api/live')).rejects.toBe(said);
+    await expect(net.server('https://modele.exemple/v1/models')).rejects.toBe(said);
     expect(invoke).not.toHaveBeenCalled();
   });
 

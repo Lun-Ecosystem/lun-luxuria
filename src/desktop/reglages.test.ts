@@ -659,6 +659,8 @@ describe('an address off this computer, confirmed in the settings', () => {
   const NOTICE = /Cette adresse est hors de ce poste : la fenêtre ne la joint qu.une fois confirmée\./;
   const CONFIRMED = 'Confirmée pour la fenêtre.';
   const confirmButton = () => screen.queryByRole('button', { name: /^Confirmer/ });
+  /** « Oublier » says what it forgets. */
+  const forget = (origin: string) => ({ name: `Oublier l’adresse confirmée ${origin}` });
 
   /** Rust's side: the confirmed origins, what « Confirmer… » answers, and what « Oublier » forgets. */
   function rust(confirmed: string[], answer: boolean | Error = true) {
@@ -667,7 +669,8 @@ describe('an address off this computer, confirmed in the settings', () => {
       const a = (args ?? {}) as { url?: string; origin?: string };
       if (cmd === 'net_hosts') return [...list];
       if (cmd === 'net_host_confirm') {
-        if (answer instanceof Error) throw answer;
+        // Tauri rejects with Rust's message, a string.
+        if (answer instanceof Error) throw answer.message;
         if (answer) list.push(new URL(a.url!).origin);
         return answer;
       }
@@ -692,7 +695,7 @@ describe('an address off this computer, confirmed in the settings', () => {
     expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
     expect(screen.queryByText(NOTICE)).toBeNull();
     expect(confirmButton()).toBeNull();
-    expect(screen.getByRole('button', { name: 'Oublier' })).toBeInTheDocument();
+    expect(screen.getByRole('button', forget(SERVER))).toBeInTheDocument();
   });
 
   it('the model: the same, with the model’s address as typed', async () => {
@@ -733,7 +736,7 @@ describe('an address off this computer, confirmed in the settings', () => {
   it('« Oublier » forgets the origin, and the notice is back', async () => {
     rust([SERVER]);
     linked();
-    await userEvent.click(await screen.findByRole('button', { name: 'Oublier' }));
+    await userEvent.click(await screen.findByRole('button', forget(SERVER)));
     expect(invoke).toHaveBeenCalledWith('net_host_forget', { origin: SERVER });
     expect(await screen.findByText(NOTICE)).toBeInTheDocument();
     expect(screen.queryByText(CONFIRMED)).toBeNull();
@@ -782,6 +785,56 @@ describe('an address off this computer, confirmed in the settings', () => {
       expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
     },
   );
+
+  it('the model’s address unconfirmed opens the folded block: it never hides what blocks', async () => {
+    rust([]);
+    alone();
+    await waitFor(() => expect(advanced()).toHaveAttribute('open'));
+    expect(within(advanced()).getByText(NOTICE)).toBeInTheDocument();
+  });
+
+  it('the notice is what blocks: it is said as an error, as Rust’s refusal is', () => {
+    rust([]);
+    linked();
+    expect(screen.getByText(NOTICE).closest('[role="alert"]')).not.toBeNull();
+  });
+
+  describe('the window’s theme lists the confirmed origins', () => {
+    it('one confirmed, then replaced in the field: still listed, and « Oublier » there forgets it', async () => {
+      rust([]);
+      const session = linked();
+      await userEvent.click(screen.getByRole('button', { name: /^Confirmer/ }));
+      await screen.findByText(CONFIRMED);
+      session.setServer('https://autre.exemple');
+      cleanup();
+      render(Reglages, { session, close: () => {}, start: 'fenetre' });
+      const card = screen.getByRole('heading', { name: 'Adresses hors de ce poste' }).closest('section')!;
+      expect(await within(card).findByText(SERVER)).toBeInTheDocument();
+      await userEvent.click(within(card).getByRole('button', forget(SERVER)));
+      expect(invoke).toHaveBeenCalledWith('net_host_forget', { origin: SERVER });
+      expect(await within(card).findByText(/Aucune/)).toBeInTheDocument();
+      expect(within(card).queryByText(SERVER)).toBeNull();
+    });
+
+    it('each origin has its own « Oublier »', async () => {
+      rust([SERVER, 'https://modele.exemple']);
+      opened('fenetre', { brain: 'linked', server: 'http://127.0.0.1:8788' });
+      expect(await screen.findByRole('button', forget(SERVER))).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', forget('https://modele.exemple')));
+      expect(invoke).toHaveBeenCalledWith('net_host_forget', { origin: 'https://modele.exemple' });
+      await waitFor(() => expect(screen.queryByRole('button', forget('https://modele.exemple'))).toBeNull());
+      expect(screen.getByRole('button', forget(SERVER))).toBeInTheDocument();
+    });
+
+    it('none confirmed: a line says so', async () => {
+      rust([]);
+      opened('fenetre');
+      const card = screen.getByRole('heading', { name: 'Adresses hors de ce poste' }).closest('section')!;
+      await waitFor(() => expect(invoke.mock.calls.some(([cmd]) => cmd === 'net_hosts')).toBe(true));
+      expect(within(card).getByText(/Aucune/)).toBeInTheDocument();
+      expect(within(card).queryByRole('button', { name: /^Oublier/ })).toBeNull();
+    });
+  });
 
   it('showing the notice asks nothing of the person: only the click does', () => {
     rust([]);
