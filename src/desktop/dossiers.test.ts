@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { forgetFolder, pickFolder, readFolders } from './dossiers.ts';
+import { forgetFolder, formerWaiting, pickFolder, readFolders } from './dossiers.ts';
 import { Session } from '../session.svelte.ts';
 
 /** The window's answers by command name; what the page asked, kept. */
@@ -44,6 +44,20 @@ describe('the folders the window keeps', () => {
       window_({ folder_pick: new Error('Une boîte est déjà ouverte.') }).call,
     );
     expect(session.folders.corps).toBe('C:\\corps');
+  });
+
+  it('formerWaiting: the old folder by its name, only while the window keeps none', () => {
+    const session = new Session();
+    expect(formerWaiting(session, 'corps')).toBe('');
+    session.saveSettings({
+      ...session.settings,
+      body: { ...session.settings.body, formerFolder: 'C:\\corps' },
+    });
+    expect(formerWaiting(session, 'corps')).toBe('C:\\corps');
+    expect(formerWaiting(session, 'voix')).toBe('');
+    session.folders.corps = 'C:\\autre';
+    expect(formerWaiting(session, 'corps')).toBe('');
+    localStorage.clear();
   });
 
   it('forgetFolder: by its name, and the page forgets it only when the window did', async () => {

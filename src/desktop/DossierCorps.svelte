@@ -3,7 +3,7 @@
   import type { Session } from '../session.svelte.ts';
   import type { Settings } from '../settings.ts';
   import { reloadBody } from './corps.svelte.ts';
-  import { forgetFolder, pickFolder } from './dossiers.ts';
+  import { forgetFolder, formerWaiting, pickFolder } from './dossiers.ts';
 
   /*
    * In the window, the body comes from the folder the person chose in the system's dialog: the window keeps it,
@@ -13,21 +13,24 @@
   let { session, set }: { session: Session; set: (change: (draft: Settings) => void) => void } = $props();
   const path = $derived(session.folders.corps);
   // Kept by an older page: shown until the window keeps a folder, never sent.
-  const former = $derived(path ? '' : session.settings.body.formerFolder);
+  const former = $derived(formerWaiting(session, 'corps'));
+  /** The window's refusal, announced on the folder's row until the next try; the body's state stays below. */
+  let refused = $state('');
 
-  /** A refusal of the window is said where the body's state is. */
   async function choose() {
+    refused = '';
     const done = await pickFolder(session, 'corps');
-    if (typeof done === 'string') session.bodySaid = done;
+    if (typeof done === 'string') refused = done;
     else if (done) {
       set((d) => (d.body.formerFolder = ''));
       void reloadBody(session);
     }
   }
   async function forget() {
+    refused = '';
     const done = await forgetFolder(session, 'corps');
     if (done === true) void reloadBody(session);
-    else session.bodySaid = done;
+    else refused = done;
   }
   async function copy() {
     try {
@@ -45,7 +48,8 @@
 <SettingsCard title="Son corps" description="Sur ce poste seulement.">
   <SettingsRow
     label="Dossier du corps"
-    hint={path ?? (former ? notice : 'Aucun : le souffle. Choisis le dossier de son corps.json.')}
+    hint={path ?? (former ? notice : 'Aucun : le souffle. Choisis le dossier qui contient son corps.json.')}
+    error={refused}
   >
     <span class="gestes">
       {#if path}

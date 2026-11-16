@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { flushSync } from 'svelte';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const where = vi.hoisted(() => ({ inWindow: true }));
 vi.mock('./net.ts', async (real) => ({
@@ -365,6 +365,8 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
     writeText.mockClear();
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
   });
+  // jsdom has no clipboard of its own: the one set here must not reach the tests after these.
+  afterEach(() => void Reflect.deleteProperty(navigator, 'clipboard'));
 
   it('no folder kept: no field to type in, « Choisir… » and « Relire », nothing to forget', () => {
     window_();
@@ -405,6 +407,29 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
     expect(session.folders.corps).toBeUndefined();
   });
 
+  it('refused: announced on the folder’s row, and the body’s state stays beside « Relire »', async () => {
+    window_({ folder_pick: new Error('Une boîte est déjà ouverte.') });
+    const session = open();
+    session.bodySaid = 'Les images du dossier.';
+    await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+    await vi.waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Une boîte est déjà ouverte.'),
+    );
+    expect(screen.getByText('Les images du dossier.')).toBeInTheDocument();
+    expect(session.bodySaid).toBe('Les images du dossier.');
+  });
+
+  it('« Oublier » refused: announced, the folder stays kept and nothing is read', async () => {
+    window_({ folder_forget: new Error('Oubli refusé.') });
+    const session = open();
+    session.folders.corps = 'C:\\corps';
+    await fireEvent.click(await screen.findByRole('button', { name: /^Oublier/ }));
+    await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Oubli refusé.'));
+    expect(session.folders.corps).toBe('C:\\corps');
+    expect(screen.getByRole('button', { name: /^Oublier/ })).toBeInTheDocument();
+    expect(asked('body_config')).toHaveLength(0);
+  });
+
   it('« Oublier » asks the window to forget « corps », the path goes, the body is read again', async () => {
     window_({ folder_paths: { corps: 'C:\\corps' } });
     const session = open();
@@ -441,6 +466,19 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
       expect(screen.getByText('C:\\corps')).toBeInTheDocument();
       await fireEvent.click(screen.getByRole('button', { name: /^Copier/ }));
       expect(writeText).toHaveBeenCalledExactlyOnceWith('C:\\corps');
+    });
+
+    it('the clipboard refuses: a toast in the danger tone, and the path stays on the screen', async () => {
+      window_();
+      open(former);
+      writeText.mockRejectedValueOnce(new Error('refusé'));
+      await fireEvent.click(screen.getByRole('button', { name: /^Copier/ }));
+      await vi.waitFor(() =>
+        expect(toasts()).toContainEqual(
+          expect.objectContaining({ message: 'Copie impossible : sélectionne le chemin.', tone: 'danger' }),
+        ),
+      );
+      expect(screen.getByText('C:\\corps')).toBeInTheDocument();
     });
 
     it('is never sent to the window, whatever is clicked', async () => {

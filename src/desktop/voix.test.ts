@@ -433,6 +433,7 @@ describe('startAll', () => {
     const call = vi.fn(async (cmd: string) => {
       order.push(cmd);
       if (cmd === 'program_paths') return { rvc: 'D:/rvc.exe' };
+      if (cmd === 'folder_paths') return { corps: 'C:/corps' };
       if (cmd === 'program_start') return { outcome: 'started', log: 'C:/logs/rvc.log' };
       if (cmd === 'program_state') return 'answering';
       if (cmd === 'voice_running') return ['--stt', 'faster:small'];
@@ -448,6 +449,10 @@ describe('startAll', () => {
     );
     expect(order[0]).toBe('program_paths');
     expect(order.indexOf('program_start')).toBeLessThan(order.indexOf('voice_start'));
+    // The folders the window keeps are known before the service starts.
+    expect(order).toContain('folder_paths');
+    expect(order.indexOf('folder_paths')).toBeLessThan(order.indexOf('voice_start'));
+    expect(session.folders).toEqual({ corps: 'C:/corps' });
     expect(session.programs.rvc?.said).toBe('RVC répond.');
     expect(session.voiceStatus).toBe('up');
   });
