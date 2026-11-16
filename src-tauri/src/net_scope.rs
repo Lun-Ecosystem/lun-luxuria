@@ -1,6 +1,6 @@
 //! What the page may reach through the HTTP plugin, proved through the IPC as the page calls it. The test app below
 //! is shared: it is built on the real context (ACL manifests and configuration, plugins included), with every
-//! directory of the app in a temporary folder so the plugin never touches the cookie file of this machine.
+//! directory of the app in a temporary folder, so no test reads or writes the app's real folders on this machine.
 
 use std::{
     io::{Read, Write},
@@ -45,7 +45,7 @@ fn capability(label: &str, urls: &[&str]) -> Value {
     })
 }
 
-/// The app as `run()` builds it, on the mock runtime, with the trial capabilities `essai`, `essai-v6` and
+/// An app on the real context with the HTTP plugin only, on the mock runtime, with the trial capabilities `essai`, `essai-v6` and
 /// `essai-v6e`, each for its own window; `main` keeps `default.json`.
 pub(crate) fn test_app() -> TestApp {
     static N: AtomicU32 = AtomicU32::new(0);
@@ -249,8 +249,7 @@ fn main_admits_any_host_today() {
 }
 
 /// A redirect out of the scope must be refused, not followed: the 302 points at a documentation address.
-/// Red on `main` until the plugin gets `scopeRedirects` (task 2): the redirect is followed and ends in a network
-/// error.
+/// Without `scopeRedirects` in `tauri.conf.json`, the redirect is followed and ends in a network error.
 #[test]
 fn a_redirect_out_of_the_scope_is_refused() {
     let t = test_app();
@@ -277,7 +276,10 @@ fn a_redirect_out_of_the_scope_is_refused() {
     let rid = fetch(&t, "essai", &format!("http://127.0.0.1:{port}/")).unwrap();
     let err = fetch_send(&t, "essai", rid).unwrap_err();
     assert!(
-        was_served.try_recv().is_ok(),
+        // The server signals after writing the 302; the client may have answered first, so wait for it.
+        was_served
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_ok(),
         "the 302 was never served: {err}"
     );
     assert!(
@@ -287,7 +289,7 @@ fn a_redirect_out_of_the_scope_is_refused() {
 }
 
 /// Task 2 drops the plugin's `cookies` feature: the page sends none, and the plugin would rewrite a file on each
-/// `Set-Cookie`. Red until then: the plugin creates `.cookies` in the cache folder when it is set up.
+/// `Set-Cookie`. With the feature, the plugin creates `.cookies` in the cache folder when it is set up.
 #[test]
 fn no_cookie_file_is_created() {
     let t = test_app();
