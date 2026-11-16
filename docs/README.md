@@ -170,8 +170,8 @@ neuve, aux réglages par défaut et en scène, puis par `/stt` du service de voi
 transcription (`texte`, `confiance`, `verdict` du filtre, `duree` qu'elle a prise et `son` reçu, en ms), ce que `send` a
 reçu (`envoye`), ce que `withdraw` a repris (`repris`), la `brique` et la `date`. Une transcription que la conversation
 a donnée en échec, d'après sa trace, s'écrit `echec` (sur la transcription et sur la ligne), jamais comme un texte non
-envoyé. La dernière ligne compte : `{ "fin": true, "sons", "echecs", "brique", "duree" }` (en ms). Un seul échec, et la
-commande échoue. Aucun classement ici : ce que le serveur fait d'un texte, ses comptes le disent.
+envoyé. La dernière ligne compte : `{ "fin": true, "sons", "echecs", "brique", "duree" }` (en ms). Un relevé sans
+elle vient d'une partie interrompue, et ne compte pas. Un seul échec, et la commande échoue. Aucun classement ici : ce que le serveur fait d'un texte, ses comptes le disent.
 
 ```powershell
 $env:GESTES_STT = 'faster:small'
