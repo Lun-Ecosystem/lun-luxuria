@@ -8,7 +8,7 @@ import { DEFAUTS, type Apres, type Geste, type Parole, type Reponse, type Scenar
 
 /**
  * The person's sounds for the chain, and the game plan the probe reads. Nothing here goes in the repository: the
- * sounds live in `dir/sons/` (`CHAINE_DIR`), laid by hand or synthesized by a voice and cached there, one folder
+ * sounds live in `dir/sons/` (`BANC_DIR/chaine`), laid by hand or synthesized by a voice and cached there, one folder
  * per voice.
  */
 

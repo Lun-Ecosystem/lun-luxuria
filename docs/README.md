@@ -20,7 +20,7 @@
      service doit accepter les appels du navigateur : Ollama accepte 127.0.0.1, un autre peut demander de régler ses
      origines (CORS).
    - **Relié** : un serveur joignable par `CORE_URL` (8788 par défaut) et son code d'appairage. Dans l'écosystème Lun',
-     c'est le core : `npm run pair-code` dans lun-anima, et pour un essai un core jetable avec son propre `DB_PATH`.
+     c'est le core, qui donne le code d'appairage.
 
 Le micro reste coupé tant que le bouton ne l'a pas ouvert. Coupé, aucune capture ne tourne, et il ne se rallume jamais seul.
 

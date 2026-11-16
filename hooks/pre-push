@@ -1,5 +1,5 @@
 #!/bin/sh
-# Core privé : refuse tout push vers main (pas de protection de branche sans GitHub Pro).
+# Refuse tout push vers main : passer par une branche et une PR. Dans un dépôt public, le ruleset le refuse aussi ; ce hook arrête l'erreur avant le réseau.
 # Activer avec : git config core.hooksPath hooks
 while read -r local_ref local_sha remote_ref remote_sha; do
   if [ "$remote_ref" = "refs/heads/main" ]; then
