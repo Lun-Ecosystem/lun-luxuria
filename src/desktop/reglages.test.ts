@@ -415,17 +415,32 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
     await vi.waitFor(() =>
       expect(screen.getByRole('alert')).toHaveTextContent('Une boîte est déjà ouverte.'),
     );
+    expect(screen.getByText(/Choisis le dossier qui contient son corps\.json\./)).toBeInTheDocument();
     expect(screen.getByText('Les images du dossier.')).toBeInTheDocument();
     expect(session.bodySaid).toBe('Les images du dossier.');
   });
 
-  it('« Oublier » refused: announced, the folder stays kept and nothing is read', async () => {
+  it('refused while a folder is kept: announced beside its path, which stays with « Oublier »', async () => {
+    window_({ folder_pick: new Error('Ce dossier n’a pas de corps.json.') });
+    const session = open();
+    session.folders.corps = 'C:\\corps';
+    await fireEvent.click(await screen.findByRole('button', { name: /^Choisir/ }));
+    await vi.waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Ce dossier n’a pas de corps.json.'),
+    );
+    expect(screen.getByText('C:\\corps')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Oublier/ })).toBeInTheDocument();
+    expect(session.folders.corps).toBe('C:\\corps');
+  });
+
+  it('« Oublier » refused: announced, the folder stays kept and shown, and nothing is read', async () => {
     window_({ folder_forget: new Error('Oubli refusé.') });
     const session = open();
     session.folders.corps = 'C:\\corps';
     await fireEvent.click(await screen.findByRole('button', { name: /^Oublier/ }));
     await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Oubli refusé.'));
     expect(session.folders.corps).toBe('C:\\corps');
+    expect(screen.getByText('C:\\corps')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Oublier/ })).toBeInTheDocument();
     expect(asked('body_config')).toHaveLength(0);
   });
@@ -508,6 +523,21 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
       await vi.waitFor(() => expect(asked('folder_pick')).toHaveLength(1));
       expect(session.settings.body.formerFolder).toBe('C:\\corps');
       expect(screen.getByText(/Le dossier se choisit maintenant/)).toBeInTheDocument();
+    });
+
+    it('a refused choice: announced beside the notice, the old path and « Copier » stay', async () => {
+      window_({ folder_pick: new Error('Ce dossier n’a pas de corps.json.') });
+      const session = open(former);
+      await fireEvent.click(screen.getByRole('button', { name: /^Choisir/ }));
+      await vi.waitFor(() =>
+        expect(screen.getByRole('alert')).toHaveTextContent('Ce dossier n’a pas de corps.json.'),
+      );
+      expect(
+        screen.getByText(/Le dossier se choisit maintenant dans la boîte de dialogue du système\./),
+      ).toBeInTheDocument();
+      expect(screen.getByText('C:\\corps')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Copier/ })).toBeInTheDocument();
+      expect(session.settings.body.formerFolder).toBe('C:\\corps');
     });
 
     it('no notice once the window keeps a folder', async () => {

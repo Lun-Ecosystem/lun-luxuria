@@ -14,7 +14,7 @@
   const path = $derived(session.folders.corps);
   // Kept by an older page: shown until the window keeps a folder, never sent.
   const former = $derived(formerWaiting(session, 'corps'));
-  /** The window's refusal, announced on the folder's row until the next try; the body's state stays below. */
+  /** The window's refusal, announced on the folder's row until the next try; the body's state stays beside « Relire ». */
   let refused = $state('');
 
   async function choose() {
@@ -42,15 +42,16 @@
   }
 </script>
 
-{#snippet notice()}Le dossier se choisit maintenant dans la boîte de dialogue du système. Choisis de nouveau
-  celui-ci : <span class="chemin">{former}</span>.{/snippet}
+<!-- The refusal goes beside the path or the notice, never in their place: the old path is the fallback to copy. -->
+{#snippet folder()}
+  {#if path}{path}{:else if former}Le dossier se choisit maintenant dans la boîte de dialogue du système.
+    Choisis de nouveau celui-ci : <span class="chemin">{former}</span>.{:else}Aucun : le souffle. Choisis le
+    dossier qui contient son corps.json.{/if}
+  {#if refused}<span class="refus" role="alert">{refused}</span>{/if}
+{/snippet}
 
 <SettingsCard title="Son corps" description="Sur ce poste seulement.">
-  <SettingsRow
-    label="Dossier du corps"
-    hint={path ?? (former ? notice : 'Aucun : le souffle. Choisis le dossier qui contient son corps.json.')}
-    error={refused}
-  >
+  <SettingsRow label="Dossier du corps" hint={folder}>
     <span class="gestes">
       {#if path}
         <Button variant="fantome" size="petit" aria-label="Oublier le dossier du corps" onclick={forget}
@@ -81,5 +82,10 @@
     user-select: all;
     overflow-wrap: anywhere;
     color: var(--texte-2);
+  }
+  /* The kit's tone for a refused value, on its own line under the path. */
+  .refus {
+    display: block;
+    color: var(--danger);
   }
 </style>

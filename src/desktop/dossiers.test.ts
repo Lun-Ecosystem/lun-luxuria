@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { forgetFolder, formerWaiting, pickFolder, readFolders } from './dossiers.ts';
 import { Session } from '../session.svelte.ts';
 
@@ -15,6 +15,9 @@ function window_(answers: Record<string, unknown>) {
 }
 
 describe('the folders the window keeps', () => {
+  // A setting saved by a test stays out of the next one, even when an assertion stops it early.
+  afterEach(() => localStorage.clear());
+
   it('readFolders: what the window keeps, nothing otherwise', async () => {
     const session = new Session();
     await readFolders(session, window_({ folder_paths: { corps: 'C:\\corps' } }).call);
@@ -57,7 +60,6 @@ describe('the folders the window keeps', () => {
     expect(formerWaiting(session, 'voix')).toBe('');
     session.folders.corps = 'C:\\autre';
     expect(formerWaiting(session, 'corps')).toBe('');
-    localStorage.clear();
   });
 
   it('forgetFolder: by its name, and the page forgets it only when the window did', async () => {
