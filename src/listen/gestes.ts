@@ -240,7 +240,7 @@ export async function banc(
   const sons = prises.map((ps) => ps.map(lire));
   const dossier = join(dir, 'temoins');
   const temoins = (existsSync(dossier) ? readdirSync(dossier) : [])
-    .filter((f) => f.endsWith('.wav'))
+    .filter((f) => /\.wav$/i.test(f))
     .sort()
     .map((f) => ({ id: f.slice(0, -4), samples: lire(join(dossier, f)) }));
 

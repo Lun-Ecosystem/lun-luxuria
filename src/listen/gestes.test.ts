@@ -114,6 +114,15 @@ describe('the takes', () => {
     await expect(banc(dir, [], 'faux', ouvrir)).rejects.toThrow(/oui-1\.wav/);
     expect(ouvrir).not.toHaveBeenCalled();
   });
+
+  it('a witness whose name ends in capitals is played all the same', async () => {
+    const dir = dossier([], []);
+    mkdirSync(join(dir, 'temoins'));
+    writeFileSync(join(dir, 'temoins', 'TOUX.WAV'), writeWav([new Float32Array(1600)]));
+    const rien: Ecoute = { ecoute: [], transcriptions: [], envoye: [], repris: [] };
+    await banc(dir, [], 'faux', async () => async () => rien);
+    expect(jsonl(dir).map((l) => [l['id'], l['source']])).toContainEqual(['TOUX', 'temoin']);
+  });
 });
 
 describe('the noise of the bench', () => {
