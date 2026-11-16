@@ -18,6 +18,7 @@
 ```bash
 npm install && npm run dev                                   # http://127.0.0.1:5180
 uv run voix/service.py --stt faster:small --tts piper:<voix.onnx>   # dans un autre terminal
+GESTES_STT=faster:small npm run gestes   # le banc des gestes : BANC_DIR/gestes, GESTES_VOIX, poste seul (docs/README.md)
 ```
 
 Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
