@@ -1,8 +1,9 @@
 //! whisper-server and RVC, started by the app when asked. The page never names what runs: each program is a `.exe`
 //! chosen by the person in the system's file dialog, kept here in `programmes.json`, next to the app's settings.
-//! The page only gives its arguments and the address where it answers. It is launched without a shell or a console,
-//! in its own folder, joins the app's job (`job.rs`), and nothing is started when something already answers at its
-//! address. Only what this app started is stopped, at exit or when its arguments change.
+//! The page only gives its arguments and the address where it answers, on the loopback only (`loopback.rs`). It is
+//! launched without a shell or a console, in its own folder, joins the app's job (`job.rs`), and nothing is started
+//! when something already answers at its address. Only what this app started is stopped, at exit or when its
+//! arguments change.
 
 use crate::voice::{checked_args, early_exit, ended, hold, kill_tree, open_log, spawn_logged};
 use serde::Serialize;
@@ -93,7 +94,14 @@ pub fn save_entry(file: &Path, name: &str, path: Option<&Path>) -> Result<(), St
     fs::write(file, text).map_err(|e| e.to_string())
 }
 
-/** Something listens at `host:port`: a program already running, started by hand or by another app. */
+/** The field's address, as `host:port` on the loopback (`loopback.rs`); refused, as typed, when it is not. */
+fn probed(url: &str) -> Result<String, String> {
+    crate::loopback::addr(url).ok_or_else(|| {
+        format!("Adresse refusée : {url} (127.0.0.1, localhost ou [::1] seulement).")
+    })
+}
+
+/** Something listens at `host:port`, from `probed`: a program already running, started by hand or by another app. */
 pub fn listening(addr: &str) -> bool {
     addr.to_socket_addrs()
         .map(|mut all| all.any(|a| TcpStream::connect_timeout(&a, PROBE).is_ok()))
@@ -120,10 +128,11 @@ pub fn start(
     name: &str,
     path: Option<&str>,
     args: &[String],
-    addr: &str,
+    url: &str,
     log: &Path,
 ) -> Result<Started, String> {
     let name = checked_name(name)?;
+    let addr = probed(url)?;
     let exe = checked_exe(path.ok_or("Choisis d’abord son programme.")?)?;
     checked_args(args)?;
     // shortcut: held through the probe and the early wait (1.5 s), so two programs start one after the other;
@@ -142,7 +151,7 @@ pub fn start(
         // Ours, with what it was given before: it makes room for the new arguments.
         kill_tree(&mut h.child);
         restarted = true;
-    } else if listening(addr) {
+    } else if listening(&addr) {
         return Ok(Started {
             outcome: "answering",
             log: String::new(),
@@ -176,9 +185,9 @@ pub fn start(
 }
 
 /** `answering` at its address; else this app's `starting` (alive) or `stopped` (gone); else `absent`. */
-pub fn state(programs: &Programs, name: &str, addr: &str) -> Result<&'static str, String> {
+pub fn state(programs: &Programs, name: &str, url: &str) -> Result<&'static str, String> {
     let name = checked_name(name)?;
-    if listening(addr) {
+    if listening(&probed(url)?) {
         return Ok("answering");
     }
     let mut held = hold(&programs.0);
@@ -253,23 +262,25 @@ pub fn program_start(
     programs: tauri::State<'_, Programs>,
     name: String,
     args: Vec<String>,
-    addr: String,
+    url: String,
 ) -> Result<Started, String> {
     use tauri::Manager;
     let name = checked_name(&name)?;
+    // Before the config is read; `start` checks it again, as it does the name.
+    probed(&url)?;
     let path = read_paths(&config_file(&app, PATHS)?).remove(name);
     let logs = app.path().app_log_dir().map_err(|e| e.to_string())?;
     let log = logs.join(format!("{name}.log"));
-    start(&programs, name, path.as_deref(), &args, &addr, &log)
+    start(&programs, name, path.as_deref(), &args, &url, &log)
 }
 
 #[tauri::command(async)]
 pub fn program_state(
     programs: tauri::State<'_, Programs>,
     name: String,
-    addr: String,
+    url: String,
 ) -> Result<&'static str, String> {
-    state(&programs, &name, &addr)
+    state(&programs, &name, &url)
 }
 
 #[cfg(test)]
