@@ -1,9 +1,9 @@
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { ENDPOINT_DEFAULTS, type EndpointParams } from './endpoint.ts';
 import { noise, readWav, replay } from './replay.ts';
 import { Conversation, type Heard } from '../conversation.ts';
-import { dire, type Voix } from '../presence/chaine/sons.ts';
+import { dire, voixDe, type Voix } from '../presence/chaine/sons.ts';
 import { DEFAULTS } from '../settings.ts';
 import { Speaker } from '../speech/speaker.ts';
 import { Trace, type TraceEvent } from '../trace.ts';
@@ -52,6 +52,20 @@ export function lireListe(texte: string): Ligne[] {
     if (l['parole'] !== undefined && typeof l['parole'] !== 'boolean') throw faute('« parole » vrai ou faux');
     return l as unknown as Ligne;
   });
+}
+
+// shortcut: Piper and her voice where the laptop keeps them, as `npm run chaine`; elsewhere GESTES_VOIX and CHAINE_TTS.
+const PIPER = resolve('../../piper');
+const UPMC = `${join(PIPER, 'piper.exe')}|${join(PIPER, 'fr_FR-upmc-medium.onnx')}`;
+const CINQ = `hortense,julie,paul,piper:${UPMC}#jessica,piper:${UPMC}#pierre`;
+const SIENNE = `piper:${join(PIPER, 'fr_FR-siwis-medium.onnx')}`;
+
+/**
+ * The voices of `GESTES_VOIX`, in the format of `CHAINE_VOIX`, the five by default. Hers is refused: the voice her
+ * service speaks with in use (`CHAINE_TTS`), not this bench's, which speaks with none.
+ */
+export function voixDuBanc(voix = CINQ, tts = SIENNE): Voix[] {
+  return voix.split(',').map((v) => voixDe(v, tts));
 }
 
 /** shortcut: a fixed level chosen, not measured in a room (about -39 dBFS RMS); set it from a room recording if needed. */

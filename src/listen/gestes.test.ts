@@ -6,10 +6,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { ENDPOINT_DEFAULTS, levelToVoice } from './endpoint.ts';
-import { banc, dansLeBruit, ecouter, lireListe, NIVEAUX, type Ecoute } from './gestes.ts';
+import { banc, dansLeBruit, ecouter, lireListe, NIVEAUX, voixDuBanc, type Ecoute } from './gestes.ts';
 import { FRAME_MS, noise, replay, writeWav } from './replay.ts';
 import { loadSilero, SileroVoice } from './vad.ts';
-import { voixDe, type Voix } from '../presence/chaine/sons.ts';
+import type { Voix } from '../presence/chaine/sons.ts';
 import { DEFAULTS } from '../settings.ts';
 import { transcribe } from '../voice.ts';
 
@@ -48,6 +48,21 @@ describe('the list of the bench of gestures', () => {
     const illisible = () => lireListe('[{"id": motprive}]');
     expect(illisible).toThrow(/mots\.json/);
     expect(illisible).not.toThrow(/motprive/);
+  });
+});
+
+describe('the voices of the bench', () => {
+  it('refuse hers, the voice of the service in use, not of this one', () => {
+    const p = (onnx: string) => `piper:${join('p', 'piper.exe')}|${join('p', onnx)}`;
+    const siwis = p('fr_FR-siwis-medium.onnx');
+    const x = `piper:${join('ailleurs', 'fr_FR-x.onnx')}`;
+    // Without CHAINE_TTS, hers is siwis, as for the chain.
+    expect(() => voixDuBanc(siwis, undefined)).toThrow(/sa voix/);
+    expect(() => voixDuBanc(`hortense,${p('fr_FR-x.onnx')}`, x)).toThrow(/sa voix/);
+    expect(voixDuBanc(`hortense,${siwis}`, x).map((v) => v.nom)).toEqual([
+      'hortense',
+      'piper:fr_FR-siwis-medium',
+    ]);
   });
 });
 
@@ -217,10 +232,6 @@ describe('a word through a new conversation', () => {
  * listening, a new conversation and the real transcription of the voice service it launches (`GESTES_STT`).
  */
 const asked = import.meta.env.MODE === 'gestes';
-// shortcut: Piper where the laptop keeps it, as `npm run chaine`; another poste sets GESTES_VOIX.
-const PIPER = resolve('../../piper');
-const UPMC = `${join(PIPER, 'piper.exe')}|${join(PIPER, 'fr_FR-upmc-medium.onnx')}`;
-const CINQ = `hortense,julie,paul,piper:${UPMC}#jessica,piper:${UPMC}#pierre`;
 
 const libre = () =>
   new Promise<number>((ok, ko) => {
@@ -254,8 +265,7 @@ describe.runIf(asked)('the bench of gestures', () => {
           'GESTES_STT : la brique à mesurer (faster:small, whisper-server:<url>…), sans défaut.',
         );
       const dir = resolve(process.env['BANC_DIR'] ?? '../banc-sons', 'gestes');
-      // Her service speaks with no voice here (`--tts aucun`): none of these can be hers.
-      const voix = (process.env['GESTES_VOIX'] ?? CINQ).split(',').map((v) => voixDe(v, 'aucun'));
+      const voix = voixDuBanc(process.env['GESTES_VOIX'], process.env['CHAINE_TTS']);
       let service: ChildProcess | undefined;
       const debut = performance.now();
       try {
