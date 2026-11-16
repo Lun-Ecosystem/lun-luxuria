@@ -344,7 +344,7 @@ describe('the voice theme, after a change', () => {
     expect(invoke).toHaveBeenCalledWith('program_start', {
       name: 'whisper-server',
       args: ['-m', 'models/small.bin'],
-      addr: '127.0.0.1:8080',
+      url: 'http://127.0.0.1:8080',
     });
     expect(screen.queryByRole('button', { name: 'Lancer RVC' })).toBeNull();
 

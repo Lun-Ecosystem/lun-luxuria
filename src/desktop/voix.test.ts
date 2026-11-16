@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Session } from '../session.svelte.ts';
 import { DEFAULTS, type Settings, type VoiceService } from '../settings.ts';
 import {
-  addrOf,
   argsOf,
   changes,
   checkVoice,
@@ -368,27 +367,21 @@ describe('whisper-server and RVC', () => {
   };
   const started = (log = 'C:\\logs\\rvc.log') => vi.fn(async () => ({ outcome: 'started', log }));
 
-  it('the address to probe, with its default port', () => {
-    expect(addrOf('http://127.0.0.1:8080')).toBe('127.0.0.1:8080');
-    expect(addrOf('http://localhost')).toBe('localhost:80');
-    expect(addrOf('https://[::1]/x')).toBe('[::1]:443');
-    expect(addrOf('pas une adresse')).toBeNull();
-  });
-
-  it('the page never names the program: only its arguments and its address go to the window', async () => {
+  it('the page never names the program: only its arguments and the address of its field go to the window', async () => {
     const session = both();
     const call = started();
     expect(await startPrograms(session, call)).toBe(true);
     expect(call).toHaveBeenCalledWith('program_start', {
       name: 'whisper-server',
       args: ['-m', 'small.bin'],
-      addr: '127.0.0.1:8080',
+      url: 'http://127.0.0.1:8080',
     });
     expect(call).toHaveBeenCalledWith(
       'program_start',
-      expect.objectContaining({ name: 'rvc', addr: 'localhost:18888' }),
+      expect.objectContaining({ name: 'rvc', url: 'http://localhost:18888' }),
     );
     expect(JSON.stringify(call.mock.calls)).not.toContain('.exe');
+    expect(JSON.stringify(call.mock.calls)).not.toContain('addr');
     expect(session.programs['whisper-server']).toMatchObject({
       said: 'Lancé par l’appli : il se charge.',
       starting: true,
@@ -510,8 +503,39 @@ describe('whisper-server and RVC', () => {
       states.shift(),
     );
     await followPrograms(session, call, sleep, noBricks);
-    expect(call).toHaveBeenCalledWith('program_state', { name: 'rvc', addr: 'localhost:18888' });
+    expect(call).toHaveBeenCalledWith('program_state', { name: 'rvc', url: 'http://localhost:18888' });
     expect(session.programs.rvc).toMatchObject({ said: 'RVC répond.', ok: true });
+  });
+
+  it('the address is the field as typed, empty or not: Rust refuses it and its words are shown', async () => {
+    const refusal = (u: string) => `Adresse refusée : ${u} (127.0.0.1, localhost ou [::1] seulement).`;
+    for (const url of ['', 'pas une adresse', 'http://example.com:80']) {
+      const session = both({ rvc: { ...READY.rvc, on: true, url, program: PROGRAM } });
+      const call = vi.fn(async () => Promise.reject(refusal(url)));
+      expect(await launchProgram(session, 'rvc', call)).toBe(false);
+      expect(call).toHaveBeenCalledWith('program_start', { name: 'rvc', args: PROGRAM.args, url });
+      expect(session.programs.rvc).toEqual({ said: refusal(url) });
+    }
+  });
+
+  it('a refusal of program_state stops that program with Rust’s words, the other goes on', async () => {
+    const session = both();
+    await launchProgram(session, 'whisper-server', started('C:\\logs\\whisper-server.log'));
+    await launchProgram(session, 'rvc', started('C:\\logs\\rvc.log'));
+    const refusal = 'Adresse refusée : http://127.0.0.1:8080 (127.0.0.1, localhost ou [::1] seulement).';
+    const states = ['starting', 'answering'];
+    const call = vi.fn(async (_cmd: string, a?: Record<string, unknown>) => {
+      if (a?.name === 'whisper-server') return Promise.reject(refusal);
+      return states.shift();
+    });
+    await followPrograms(session, call, noSleep, noBricks);
+    expect(session.programs['whisper-server']?.said).toBe(refusal);
+    expect(session.programs['whisper-server']?.starting).toBeUndefined();
+    expect(session.programs['whisper-server']?.ok).toBeUndefined();
+    expect(session.programs.rvc).toMatchObject({ said: 'RVC répond.', ok: true });
+    expect(call).toHaveBeenCalledWith('program_state', { name: 'rvc', url: 'http://localhost:18888' });
+    expect(call.mock.calls.filter(([, a]) => a?.name === 'whisper-server')).toHaveLength(1);
+    expect(JSON.stringify(call.mock.calls)).not.toContain('addr');
   });
 
   it('a second follow joins the one under way', async () => {
