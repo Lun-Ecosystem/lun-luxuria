@@ -272,16 +272,6 @@ export interface ProgramState {
   left?: number;
 }
 
-/** `host:port` of an address, with the scheme's port when none is written; null when it is not one. */
-export function addrOf(url: string): string | null {
-  try {
-    const u = new URL(url);
-    return `${u.hostname}:${u.port || (u.protocol === 'https:' ? '443' : '80')}`;
-  } catch {
-    return null;
-  }
-}
-
 /** The programs in use: whisper-server when it transcribes, RVC when it is on. */
 function inUse(v: VoiceService): { name: ProgramName; url: string; program: Program }[] {
   const stt = { name: 'whisper-server' as const, url: v.stt.url, program: v.stt.program };
@@ -328,19 +318,15 @@ export async function launchProgram(
   call: Call = invoke,
 ): Promise<boolean> {
   const p = inUse(session.settings.voice.service).find((x) => x.name === name);
-  const addr = p && addrOf(p.url);
-  if (!p || !addr || !session.programPaths[name]) {
+  if (!p || !session.programPaths[name]) {
     session.programs[name] = {
-      said: !p
-        ? 'Pas utilisé dans ces réglages.'
-        : !addr
-          ? 'Son adresse n’est pas valide.'
-          : 'Choisis d’abord son programme.',
+      said: !p ? 'Pas utilisé dans ces réglages.' : 'Choisis d’abord son programme.',
     };
     return false;
   }
   try {
-    const { outcome, log } = (await call('program_start', { name, args: p.program.args, addr })) as {
+    // The field as typed, even empty: the window decides which address it probes.
+    const { outcome, log } = (await call('program_start', { name, args: p.program.args, url: p.url })) as {
       outcome: string;
       log: string;
     };
@@ -392,8 +378,14 @@ export async function followPrograms(
       for (const name of waiting()) {
         const s = session.programs[name]!;
         const label = PROGRAMS[name];
-        const addr = addrOf(urlOf(session.settings.voice.service, name)) ?? '';
-        const now = await Promise.resolve(call('program_state', { name, addr })).catch(() => 'starting');
+        let now: unknown;
+        try {
+          now = await call('program_state', { name, url: urlOf(session.settings.voice.service, name) });
+        } catch (err) {
+          // The window only refuses: this one is no longer followed, the others go on.
+          session.programs[name] = { said: String(err) };
+          continue;
+        }
         const left = (s.left ?? 0) - 1;
         if (now === 'answering') session.programs[name] = { said: `${label} répond.`, ok: true, log: s.log };
         else if (now !== 'starting')
