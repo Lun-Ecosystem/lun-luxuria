@@ -57,9 +57,27 @@ describe('the folders the window keeps', () => {
       body: { ...session.settings.body, formerFolder: 'C:\\corps' },
     });
     expect(formerWaiting(session, 'corps')).toBe('C:\\corps');
+    // The service's former folder is its own: the body's does not wait for it.
     expect(formerWaiting(session, 'voix')).toBe('');
     session.folders.corps = 'C:\\autre';
     expect(formerWaiting(session, 'corps')).toBe('');
+  });
+
+  it('formerWaiting: the service’s old folder too, by its own name, only while the window keeps none', () => {
+    const session = new Session();
+    session.saveSettings({
+      ...session.settings,
+      voice: {
+        ...session.settings.voice,
+        service: { ...session.settings.voice.service, formerFolder: 'D:\\voix' },
+      },
+    });
+    expect(formerWaiting(session, 'voix')).toBe('D:\\voix');
+    expect(formerWaiting(session, 'corps')).toBe('');
+    session.folders.corps = 'C:\\autre';
+    expect(formerWaiting(session, 'voix')).toBe('D:\\voix');
+    session.folders.voix = 'D:\\autre';
+    expect(formerWaiting(session, 'voix')).toBe('');
   });
 
   it('forgetFolder: by its name, and the page forgets it only when the window did', async () => {

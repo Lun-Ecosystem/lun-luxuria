@@ -57,6 +57,78 @@ describe('a voice that does not answer', () => {
   });
 });
 
+describe('the folders an older page kept', () => {
+  const LINE = /Les dossiers se choisissent de nouveau, dans les réglages\./;
+  const formerBody = (session: Session) =>
+    session.saveSettings({
+      ...session.settings,
+      body: { ...session.settings.body, formerFolder: 'C:/ancien/corps' },
+    } as Settings);
+  const formerService = (session: Session) =>
+    session.saveSettings({
+      ...session.settings,
+      voice: {
+        ...session.settings.voice,
+        service: { ...session.settings.voice.service, formerFolder: 'D:/ancien/voix' },
+      },
+    } as Settings);
+
+  it('nothing waits: no line', () => {
+    render(Scene, { session: new Session(), openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('an old folder of the body waits: the line, and a button that opens the settings', async () => {
+    const session = new Session();
+    formerBody(session);
+    const openSettings = vi.fn();
+    render(Scene, { session, openSettings });
+    const line = screen.getByText(LINE);
+    await fireEvent.click(within(line.parentElement!).getByRole('button'));
+    expect(openSettings).toHaveBeenCalledOnce();
+  });
+
+  it('an old folder of the service waits: the same line', () => {
+    const session = new Session();
+    formerService(session);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+  });
+
+  it('it says no path: the person finds them in the settings', () => {
+    const session = new Session();
+    formerBody(session);
+    formerService(session);
+    const { container } = render(Scene, { session, openSettings: () => {} });
+    expect(container.textContent).not.toMatch(/ancien/);
+  });
+
+  it('it stays until the last folder is chosen, and goes then', () => {
+    const session = new Session();
+    formerBody(session);
+    formerService(session);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+    session.folders.corps = 'C:/corps';
+    flushSync();
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+    session.folders.voix = 'D:/voix';
+    flushSync();
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('it comes back with the old folder when the window forgets the new one', () => {
+    const session = new Session();
+    formerBody(session);
+    session.folders.corps = 'C:/corps';
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+    delete session.folders.corps;
+    flushSync();
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+  });
+});
+
 describe('the body in images', () => {
   it('a broken image gives the breath, and a repaired address brings the image back without a reload', () => {
     const session = new Session();

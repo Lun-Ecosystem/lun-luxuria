@@ -28,11 +28,12 @@ beforeEach(() => {
 const READY: VoiceService = {
   ...DEFAULTS.voice.service,
   launch: true,
-  folder: 'D:\\voix',
   piper: 'D:\\v.onnx',
 };
+/** The service's folder is the window's: kept by it (`session.folders.voix`), never a setting of the page. */
 const withService = (launch: boolean, folder = 'D:\\voix', over: Partial<VoiceService> = {}) => {
   const session = new Session();
+  if (folder) session.folders.voix = folder;
   session.saveSettings({
     ...session.settings,
     voice: { ...session.settings.voice, service: { ...READY, launch, folder, ...over } },
@@ -76,14 +77,14 @@ describe('the fields of the service', () => {
   });
 
   it('say what is missing, first the folder', () => {
-    expect(missing(READY)).toBeNull();
-    expect(missing({ ...READY, folder: '' })).toMatch(/dossier du service/);
-    expect(missing({ ...READY, piper: '' })).toMatch(/fichier de la voix/);
-    expect(missing({ ...READY, piper: '', args: ['--tts', 'kokoro:a:b'] })).toBeNull();
-    expect(missing({ ...READY, stt: { ...READY.stt, kind: 'whisper-server', url: '' } })).toMatch(
-      /whisper-server/,
-    );
-    expect(missing({ ...READY, rvc: { ...READY.rvc, on: true, url: ' ' } })).toMatch(/RVC/);
+    const lacking = (over: Partial<VoiceService>, folder = 'D:\\voix') =>
+      missing(withService(true, folder, over));
+    expect(lacking({})).toBeNull();
+    expect(lacking({}, '')).toMatch(/dossier du service/);
+    expect(lacking({ piper: '' })).toMatch(/fichier de la voix/);
+    expect(lacking({ piper: '', args: ['--tts', 'kokoro:a:b'] })).toBeNull();
+    expect(lacking({ stt: { ...READY.stt, kind: 'whisper-server', url: '' } })).toMatch(/whisper-server/);
+    expect(lacking({ rvc: { ...READY.rvc, on: true, url: ' ' } })).toMatch(/RVC/);
   });
 
   it('the state of its programs: read from the service, nothing when it does not answer', async () => {
@@ -147,8 +148,8 @@ describe('startVoice', () => {
     const call = vi.fn(async () => 'C:\\logs\\voix.log');
     const answers = [false, false, false, true];
     await startVoice(session, async () => answers.shift()!, call, noSleep, noBricks);
+    // The window keeps the folder: the page sends the arguments alone.
     expect(call).toHaveBeenCalledWith('voice_start', {
-      dir: 'D:\\voix',
       args: ['--stt', 'faster:small', '--tts', 'piper:D:\\v.onnx'],
     });
     expect(session.voiceSaid).toMatch(/répond/);
@@ -158,7 +159,9 @@ describe('startVoice', () => {
   it('keeps the arguments the app started it with', async () => {
     const session = withService(true);
     const args = ['--stt', 'faster:small', '--tts', 'piper:D:\\v.onnx'];
-    const call = vi.fn(async (cmd: string) => (cmd === 'voice_running' ? args : 'C:\\logs\\voix.log'));
+    const call = vi.fn(async (cmd: string) =>
+      cmd === 'voice_running' ? { folder: 'D:\\voix', args } : 'C:\\logs\\voix.log',
+    );
     const answers = [false, true];
     await startVoice(session, async () => answers.shift()!, call, noSleep, noBricks);
     expect(session.voiceArgs).toEqual(args);
@@ -182,6 +185,102 @@ describe('startVoice', () => {
       noSleep,
     );
     expect(silent.voiceSaid).toMatch(/Journal : C:\\logs\\voix\.log/);
+  });
+});
+
+describe('the service’s folder, kept by the window', () => {
+  const FORMER = 'D:\\ancien\\voix';
+  const NOTICE = `Le dossier du service se choisit de nouveau, dans les réglages avancés de la voix : ${FORMER}.`;
+  const former = (session: Session) =>
+    session.saveSettings({
+      ...session.settings,
+      voice: {
+        ...session.settings.voice,
+        service: { ...session.settings.voice.service, formerFolder: FORMER },
+      },
+    } as Settings);
+
+  it('no setting of the page names a folder to send', () => {
+    expect(DEFAULTS.voice.service).not.toHaveProperty('folder');
+    expect(DEFAULTS.voice.service.formerFolder).toBe('');
+  });
+
+  it('voice_start and voice_restart get { args } alone, never a dir or any folder', async () => {
+    const session = withService(true);
+    former(session);
+    const call = vi.fn(async (cmd: string) =>
+      cmd === 'voice_running'
+        ? { folder: 'D:\\voix', args: serviceArgs(session.settings.voice.service) }
+        : 'C:\\logs\\voix.log',
+    );
+    await startVoice(session, async () => false, call, noSleep, noBricks);
+    await restartVoice(session, async () => true, call, noSleep, noBricks);
+    const sent = call.mock.calls.filter(([c]) => c === 'voice_start' || c === 'voice_restart');
+    expect(sent.map(([c]) => c)).toEqual(['voice_start', 'voice_restart']);
+    for (const [, args] of sent) expect(Object.keys(args as object)).toEqual(['args']);
+    expect(JSON.stringify(call.mock.calls)).not.toContain('ancien');
+  });
+
+  it('no folder kept: nothing starts, and the page says what is missing', async () => {
+    const session = withService(true, '');
+    const call = vi.fn();
+    await startVoice(session, async () => false, call, noSleep, noBricks);
+    expect(call).not.toHaveBeenCalledWith('voice_start', expect.anything());
+    expect(session.voiceSaid).toMatch(/Il manque le dossier du service/);
+  });
+
+  it('missing: with an old folder waiting, the notice of the plan, word for word', () => {
+    const session = withService(true, '');
+    former(session);
+    expect(missing(session)).toBe(NOTICE);
+  });
+
+  it('missing: the old folder says nothing once the window keeps one', () => {
+    const session = withService(true);
+    former(session);
+    expect(missing(session)).toBeNull();
+  });
+
+  it('the notice goes to voiceSaid at the start, and nothing is started or sent', async () => {
+    const session = withService(true, '');
+    former(session);
+    const call = vi.fn();
+    await startVoice(session, async () => false, call, noSleep, noBricks);
+    expect(session.voiceSaid).toContain(NOTICE);
+    expect(call).not.toHaveBeenCalledWith('voice_start', expect.anything());
+  });
+
+  it('the same notice on a restart, and nothing is restarted', async () => {
+    const session = withService(true, '');
+    former(session);
+    const call = vi.fn();
+    await restartVoice(session, async () => true, call, noSleep, noBricks);
+    expect(session.voiceSaid).toBe(NOTICE);
+    expect(call).not.toHaveBeenCalledWith('voice_restart', expect.anything());
+  });
+
+  it('a folder changed since the service started waits for a restart, as arguments do', async () => {
+    const session = withService(true);
+    const args = serviceArgs(session.settings.voice.service);
+    const call = vi.fn(async (cmd: string) =>
+      cmd === 'voice_running' ? { folder: 'D:\\voix', args } : 'C:\\logs\\voix.log',
+    );
+    const answers = [false, true];
+    await startVoice(session, async () => answers.shift() ?? true, call, noSleep, noBricks);
+    expect(session.voiceStatus).toBe('up');
+    expect(changes(session)).toBe('none');
+    session.folders.voix = 'D:\\autre\\voix';
+    expect(changes(session)).toBe('restart');
+    session.folders.voix = 'D:\\voix';
+    expect(changes(session)).toBe('none');
+  });
+
+  it('a running folder the window did not say is not a change', () => {
+    const session = withService(true);
+    session.voiceStatus = 'up';
+    session.voiceArgs = serviceArgs(session.settings.voice.service);
+    session.folders.voix = 'D:\\autre\\voix';
+    expect(changes(session)).toBe('none');
   });
 });
 
@@ -236,10 +335,12 @@ describe('restartVoice', () => {
   it('restarts with the fields, then waits for its answer and says so', async () => {
     const session = withService(true);
     const args = serviceArgs(session.settings.voice.service);
-    const call = vi.fn(async (cmd: string) => (cmd === 'voice_running' ? args : 'C:\\logs\\voix.log'));
+    const call = vi.fn(async (cmd: string) =>
+      cmd === 'voice_running' ? { folder: 'D:\\voix', args } : 'C:\\logs\\voix.log',
+    );
     const answers = [false, true];
     await restartVoice(session, async () => answers.shift()!, call, noSleep, noBricks);
-    expect(call).toHaveBeenCalledWith('voice_restart', { dir: 'D:\\voix', args });
+    expect(call).toHaveBeenCalledWith('voice_restart', { args });
     expect(session.voiceStatus).toBe('up');
     expect(session.voiceArgs).toEqual(args);
   });
@@ -433,10 +534,10 @@ describe('startAll', () => {
     const call = vi.fn(async (cmd: string) => {
       order.push(cmd);
       if (cmd === 'program_paths') return { rvc: 'D:/rvc.exe' };
-      if (cmd === 'folder_paths') return { corps: 'C:/corps' };
+      if (cmd === 'folder_paths') return { corps: 'C:/corps', voix: 'D:/voix' };
       if (cmd === 'program_start') return { outcome: 'started', log: 'C:/logs/rvc.log' };
       if (cmd === 'program_state') return 'answering';
-      if (cmd === 'voice_running') return ['--stt', 'faster:small'];
+      if (cmd === 'voice_running') return { folder: 'D:/voix', args: ['--stt', 'faster:small'] };
       return 'C:/logs/voix.log';
     });
     const answers = [false, true];
@@ -452,7 +553,7 @@ describe('startAll', () => {
     // The folders the window keeps are known before the service starts.
     expect(order).toContain('folder_paths');
     expect(order.indexOf('folder_paths')).toBeLessThan(order.indexOf('voice_start'));
-    expect(session.folders).toEqual({ corps: 'C:/corps' });
+    expect(session.folders).toEqual({ corps: 'C:/corps', voix: 'D:/voix' });
     expect(session.programs.rvc?.said).toBe('RVC répond.');
     expect(session.voiceStatus).toBe('up');
   });

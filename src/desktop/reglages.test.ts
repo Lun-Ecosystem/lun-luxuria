@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
+import { readFileSync } from 'node:fs';
 import { flushSync } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -160,7 +161,7 @@ describe('the voice theme', () => {
     );
 
   it('named fields, no argument line to write; what is missing is said, and the button waits for it', () => {
-    service({ folder: '', piper: '' });
+    service({ piper: '' });
     render(Reglages, { session: new Session(), close: () => {}, start: 'voix' });
     expect(screen.getByRole('textbox', { name: 'Fichier de la voix' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'whisper-server' })).toBeInTheDocument();
@@ -169,19 +170,15 @@ describe('the voice theme', () => {
     expect(screen.getByRole('button', { name: 'Lancer ou vérifier' })).toBeDisabled();
   });
 
-  it('a field counts as typed, without leaving it', async () => {
-    service({ folder: '' });
-    const session = new Session();
-    render(Reglages, { session, close: () => {}, start: 'voix' });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Dossier du service' }), {
-      target: { value: 'D:\\voix' },
-    });
-    expect(session.settings.voice.service.folder).toBe('D:\\voix');
+  it('the folder is no field to type in: « Choisir… » only, the window keeps what is chosen', () => {
+    service({});
+    render(Reglages, { session: new Session(), close: () => {}, start: 'voix' });
+    expect(screen.queryByRole('textbox', { name: 'Dossier du service' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Choisir le dossier du service' })).toBeInTheDocument();
   });
 
   it('a program the service could not check is not shown as answering', () => {
     service({
-      folder: 'D:/voix',
       piper: 'D:/v.onnx',
       stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' },
     });
@@ -199,7 +196,6 @@ describe('the voice theme', () => {
 
   it('each brick says its state, and what to do when it does not answer', () => {
     service({
-      folder: 'D:\\voix',
       piper: 'D:\\v.onnx',
       stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' },
       rvc: { on: true, url: 'http://127.0.0.1:18888', gain: 2 },
@@ -214,7 +210,13 @@ describe('the voice theme', () => {
 });
 
 describe('the voice theme, after a change', () => {
-  const READY = { launch: true, folder: 'D:/voix', piper: 'D:/v.onnx' };
+  const READY = { launch: true, piper: 'D:/v.onnx' };
+  // The window keeps the service's folder: the page only shows it.
+  const kept = () => {
+    const session = new Session();
+    session.folders.voix = 'D:/voix';
+    return session;
+  };
   const service = (over: object = {}) =>
     localStorage.setItem('luxuria.settings', JSON.stringify({ voice: { service: { ...READY, ...over } } }));
   const answering = () =>
@@ -231,7 +233,7 @@ describe('the voice theme, after a change', () => {
     answering();
     let release = () => {};
     invoke.mockImplementation(() => new Promise((r) => (release = () => r(null))));
-    const session = new Session();
+    const session = kept();
     render(Reglages, { session, close: () => {}, start: 'voix' });
     await fireEvent.click(screen.getByRole('button', { name: 'Lancer ou vérifier' }));
     await vi.waitFor(() =>
@@ -245,7 +247,7 @@ describe('the voice theme, after a change', () => {
   it('started by the app with other fields: says it waits, and restarts it', async () => {
     service({ stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' } });
     answering();
-    const session = new Session();
+    const session = kept();
     session.voiceStatus = 'up';
     session.voiceArgs = ['--stt', 'faster:small', '--tts', 'piper:D:/v.onnx'];
     render(Reglages, { session, close: () => {}, start: 'voix' });
@@ -254,7 +256,6 @@ describe('the voice theme, after a change', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Relancer le service' }));
     await vi.waitFor(() =>
       expect(invoke).toHaveBeenCalledWith('voice_restart', {
-        dir: 'D:/voix',
         args: ['--stt', 'whisper-server:http://127.0.0.1:8080', '--tts', 'piper:D:/v.onnx'],
       }),
     );
@@ -262,7 +263,7 @@ describe('the voice theme, after a change', () => {
 
   it('started by hand with another transcription: says to restart it by hand, no restart button', () => {
     service({ stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' } });
-    const session = new Session();
+    const session = kept();
     session.voiceStatus = 'up';
     session.bricks = { stt: { kind: 'faster', up: true }, rvc: null };
     render(Reglages, { session, close: () => {}, start: 'voix' });
@@ -275,7 +276,7 @@ describe('the voice theme, after a change', () => {
       stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' },
       rvc: { on: true, url: 'http://127.0.0.1:18888', gain: 2 },
     });
-    const session = new Session();
+    const session = kept();
     session.voiceStatus = 'up';
     session.voiceArgs = ['--stt', 'faster:small', '--tts', 'piper:D:/v.onnx'];
     render(Reglages, { session, close: () => {}, start: 'voix' });
@@ -287,7 +288,7 @@ describe('the voice theme, after a change', () => {
 
   it('started by hand with RVC, RVC switched off: says other settings wait, not another transcription', () => {
     service({ rvc: { on: false, url: 'http://127.0.0.1:18888', gain: 2 } });
-    const session = new Session();
+    const session = kept();
     session.voiceStatus = 'up';
     session.bricks = { stt: { kind: 'faster', up: true }, rvc: { up: true } };
     render(Reglages, { session, close: () => {}, start: 'voix' });
@@ -306,7 +307,7 @@ describe('the voice theme, after a change', () => {
           ? { outcome: 'answering', log: '' }
           : null,
     );
-    const session = new Session();
+    const session = kept();
     render(Reglages, { session, close: () => {}, start: 'voix' });
     // Not picked: no path field to type, nothing to launch from here.
     expect(screen.queryByRole('textbox', { name: /Programme/ })).toBeNull();
@@ -497,6 +498,15 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
     await vi.waitFor(() => expect(asked('body_config').length).toBeGreaterThan(0));
   });
 
+  it('after « Oublier » worked, the focus goes to « Choisir… », whose neighbour just went', async () => {
+    window_({ folder_paths: {} });
+    const session = open();
+    session.folders.corps = 'C:\\corps';
+    await fireEvent.click(await screen.findByRole('button', { name: /^Oublier/ }));
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: /^Oublier/ })).toBeNull());
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: /^Choisir/ })).toHaveFocus());
+  });
+
   it('no command of the window is ever called with a folder', async () => {
     window_({ folder_pick: 'C:\\corps' });
     open({ body: { folder: 'C:\\ancien' } });
@@ -591,11 +601,241 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
   });
 });
 
+describe('the service’s folder, chosen in the system’s dialog and kept by the window', () => {
+  const LONG = `D:\\${'un-dossier-sans-espace\\'.repeat(12)}voix`;
+  /** The window's answers by command name. */
+  function window_(answers: Record<string, unknown> = {}) {
+    invoke.mockImplementation(async (cmd: string) => {
+      const answer = answers[cmd];
+      if (answer instanceof Error) throw answer.message;
+      return answer ?? null;
+    });
+  }
+  const open = (service: object = {}, kept?: string) => {
+    localStorage.setItem(
+      'luxuria.settings',
+      JSON.stringify({ voice: { service: { launch: true, piper: 'D:/v.onnx', ...service } } }),
+    );
+    const session = new Session();
+    if (kept) session.folders.voix = kept;
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    return session;
+  };
+  const asked = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd);
+  const choose = () => screen.getByRole('button', { name: 'Choisir le dossier du service' });
+  const forget = () => screen.getByRole('button', { name: 'Oublier le dossier du service' });
+  const writeText = vi.fn<(text: string) => Promise<void>>(async () => {});
+  beforeEach(() => {
+    writeText.mockClear();
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  });
+  afterEach(() => void Reflect.deleteProperty(navigator, 'clipboard'));
+
+  it('no folder kept: « Choisir… » only, nothing to forget, no field', () => {
+    window_();
+    open();
+    expect(screen.queryByRole('textbox', { name: 'Dossier du service' })).toBeNull();
+    expect(choose()).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Oublier le dossier du service/ })).toBeNull();
+  });
+
+  it('« Choisir… » asks the window for « voix » and shows the path it keeps', async () => {
+    window_({ folder_pick: 'D:\\voix' });
+    const session = open();
+    await fireEvent.click(choose());
+    expect(invoke).toHaveBeenCalledWith('folder_pick', { name: 'voix' });
+    await vi.waitFor(() => expect(screen.getByText('D:\\voix')).toBeInTheDocument());
+    expect(session.folders.voix).toBe('D:\\voix');
+    expect(forget()).toBeInTheDocument();
+  });
+
+  it('« Oublier » asks the window to forget « voix », and the path goes', async () => {
+    window_();
+    const session = open({}, 'D:\\voix');
+    await fireEvent.click(forget());
+    expect(invoke).toHaveBeenCalledWith('folder_forget', { name: 'voix' });
+    await vi.waitFor(() => expect(screen.queryByText('D:\\voix')).toBeNull());
+    expect(session.folders.voix).toBeUndefined();
+  });
+
+  it('after « Oublier » worked, the focus goes to « Choisir… »', async () => {
+    window_();
+    open({}, 'D:\\voix');
+    await fireEvent.click(forget());
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: /^Oublier le dossier/ })).toBeNull());
+    await vi.waitFor(() => expect(choose()).toHaveFocus());
+  });
+
+  it('refused beside the path, which stays with « Oublier » and its name', async () => {
+    window_({ folder_pick: new Error('Ce dossier n’a pas de service.py.') });
+    const session = open({}, 'D:\\voix');
+    await fireEvent.click(choose());
+    await vi.waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Ce dossier n’a pas de service.py.'),
+    );
+    expect(screen.getByText('D:\\voix')).toBeInTheDocument();
+    expect(forget()).toBeInTheDocument();
+    expect(session.folders.voix).toBe('D:\\voix');
+  });
+
+  it('refused with no folder kept: beside what tells to choose, not in its place', async () => {
+    window_({ folder_pick: new Error('Une boîte est déjà ouverte.') });
+    open();
+    await fireEvent.click(choose());
+    await vi.waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Une boîte est déjà ouverte.'),
+    );
+    expect(screen.getByText(/service\.py/)).toBeInTheDocument();
+  });
+
+  it('« Oublier » refused: announced, the path stays, and both buttons come back', async () => {
+    window_({ folder_forget: new Error('Oubli refusé.') });
+    const session = open({}, 'D:\\voix');
+    await fireEvent.click(forget());
+    await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Oubli refusé.'));
+    expect(screen.getByText('D:\\voix')).toBeInTheDocument();
+    expect(session.folders.voix).toBe('D:\\voix');
+    await vi.waitFor(() => expect(choose()).toBeEnabled());
+    expect(forget()).toBeEnabled();
+  });
+
+  it('one call at a time: two clicks make one call, and « Oublier » waits meanwhile', async () => {
+    let answer: (path: string | null) => void = () => {};
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'folder_pick' ? new Promise((r) => (answer = r)) : null,
+    );
+    open({}, 'D:\\voix');
+    await fireEvent.click(choose());
+    await fireEvent.click(choose());
+    expect(asked('folder_pick')).toHaveLength(1);
+    expect(forget()).toBeDisabled();
+    await fireEvent.click(forget());
+    expect(asked('folder_forget')).toHaveLength(0);
+    answer(null);
+    await vi.waitFor(() => expect(forget()).toBeEnabled());
+  });
+
+  it('two « Oublier » make one call, and « Choisir… » waits meanwhile', async () => {
+    let done: () => void = () => {};
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'folder_forget' ? new Promise<null>((r) => (done = () => r(null))) : null,
+    );
+    open({}, 'D:\\voix');
+    const button = forget();
+    await fireEvent.click(button);
+    await fireEvent.click(button);
+    expect(asked('folder_forget')).toHaveLength(1);
+    expect(choose()).toBeDisabled();
+    done();
+    await vi.waitFor(() => expect(asked('folder_forget')).toHaveLength(1));
+  });
+
+  // jsdom applies no stylesheet of a component: the rule is read in the source, and must reach the element.
+  const wraps = (el: Element) => {
+    const css = readFileSync(new URL('./ServiceVoix.svelte', import.meta.url), 'utf8').match(
+      /<style[^>]*>([\s\S]*)<\/style>/,
+    )?.[1];
+    return [...(css ?? '').matchAll(/([^{}]+)\{([^}]*)\}/g)].some(
+      ([, selectors, body]) =>
+        /overflow-wrap:\s*anywhere/.test(body ?? '') &&
+        (selectors ?? '').split(',').some((sel) => {
+          try {
+            return el.matches(sel.trim());
+          } catch {
+            return false; // an at-rule or a selector the DOM does not read
+          }
+        }),
+    );
+  };
+
+  it('a long path, and a long refusal, break anywhere instead of passing under the buttons', async () => {
+    window_({ folder_pick: new Error(LONG) });
+    open({}, LONG);
+    expect(wraps(screen.getByText(LONG))).toBe(true);
+    await fireEvent.click(choose());
+    await vi.waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(wraps(screen.getByRole('alert'))).toBe(true);
+  });
+
+  it('a long old path breaks anywhere too', () => {
+    window_();
+    open({ folder: LONG });
+    expect(wraps(screen.getByText(LONG))).toBe(true);
+  });
+
+  it('no command of the window is ever called with a folder', async () => {
+    window_({ folder_pick: 'D:\\voix' });
+    open({ folder: 'D:\\ancien' });
+    await fireEvent.click(choose());
+    await vi.waitFor(() => expect(screen.getByText('D:\\voix')).toBeInTheDocument());
+    await fireEvent.click(forget());
+    await vi.waitFor(() => expect(asked('folder_forget')).toHaveLength(1));
+    for (const [, args] of invoke.mock.calls) {
+      expect(Object.keys((args as object | undefined) ?? {})).not.toContain('folder');
+      expect(JSON.stringify(args ?? {})).not.toContain('ancien');
+    }
+  });
+
+  describe('the folder an older page saved', () => {
+    const former = { folder: 'D:\\ancien\\voix' };
+
+    it('while the window keeps none: the notice, the path as selectable text, and « Copier »', async () => {
+      window_();
+      open(former);
+      expect(screen.getByText(/Choisis de nouveau celui-ci/)).toBeInTheDocument();
+      expect(screen.getByText('D:\\ancien\\voix')).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: /^Copier/ }));
+      expect(writeText).toHaveBeenCalledExactlyOnceWith('D:\\ancien\\voix');
+    });
+
+    it('the clipboard refuses: a toast in the danger tone, and the path stays', async () => {
+      window_();
+      open(former);
+      writeText.mockRejectedValueOnce(new Error('refusé'));
+      await fireEvent.click(screen.getByRole('button', { name: /^Copier/ }));
+      await vi.waitFor(() =>
+        expect(toasts()).toContainEqual(
+          expect.objectContaining({ message: 'Copie impossible : sélectionne le chemin.', tone: 'danger' }),
+        ),
+      );
+      expect(screen.getByText('D:\\ancien\\voix')).toBeInTheDocument();
+    });
+
+    it('the first folder chosen empties it, on the screen and in what is saved', async () => {
+      window_({ folder_pick: 'D:\\voix' });
+      const session = open(former);
+      await fireEvent.click(choose());
+      await vi.waitFor(() => expect(screen.queryByText('D:\\ancien\\voix')).toBeNull());
+      expect(session.settings.voice.service.formerFolder).toBe('');
+      const saved = JSON.parse(localStorage.getItem('luxuria.settings') ?? '{}');
+      expect(saved.voice.service).not.toHaveProperty('folder');
+      expect(saved.voice.service.formerFolder).toBe('');
+    });
+
+    it('a cancelled or refused choice keeps it', async () => {
+      window_({ folder_pick: null });
+      const session = open(former);
+      await fireEvent.click(choose());
+      await vi.waitFor(() => expect(asked('folder_pick')).toHaveLength(1));
+      expect(session.settings.voice.service.formerFolder).toBe('D:\\ancien\\voix');
+      expect(screen.getByRole('button', { name: /^Copier/ })).toBeInTheDocument();
+    });
+
+    it('no notice once the window keeps a folder', () => {
+      window_();
+      open(former, 'D:\\voix');
+      expect(screen.queryByText(/Choisis de nouveau celui-ci/)).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Copier/ })).toBeNull();
+    });
+  });
+});
+
 type Theme = 'agent' | 'corps' | 'ecoute' | 'voix' | 'fenetre';
 /** The settings opened on a theme, with these settings saved. */
-function opened(start: Theme, settings: object = {}) {
+function opened(start: Theme, settings: object = {}, folders: Record<string, string> = {}) {
   localStorage.setItem('luxuria.settings', JSON.stringify(settings));
   const session = new Session();
+  Object.assign(session.folders, folders);
   render(Reglages, { session, close: () => {}, start });
   return session;
 }
@@ -737,7 +977,12 @@ describe('nothing disappears', () => {
     opened('voix', {
       voice: { service: { launch: true, stt: { kind: 'whisper-server' }, rvc: { on: true } } },
     });
-    for (const label of ['Dossier du service', 'Adresse de whisper-server', 'Adresse de RVC', 'Gain de RVC'])
+    for (const label of [
+      'Choisir le dossier du service',
+      'Adresse de whisper-server',
+      'Adresse de RVC',
+      'Gain de RVC',
+    ])
       expect(screen.getByLabelText(label)).toBeInTheDocument();
   });
 
@@ -799,13 +1044,13 @@ describe('folded, as rows', () => {
 
 describe('folded, never hiding what blocks', () => {
   it('the launch lacks a field: the block opens by itself, and says what', () => {
-    opened('voix', { voice: { service: { launch: true, folder: '' } } });
+    opened('voix', { voice: { service: { launch: true } } });
     expect(advanced()).toHaveAttribute('open');
     expect(within(advanced()).getByText(/Il manque le dossier du service/)).toBeInTheDocument();
   });
 
   it('nothing lacks: it stays folded', () => {
-    opened('voix', { voice: { service: { launch: true, folder: 'C:/voix', piper: 'voix.onnx' } } });
+    opened('voix', { voice: { service: { launch: true, piper: 'voix.onnx' } } }, { voix: 'C:/voix' });
     expect(advanced()).not.toHaveAttribute('open');
   });
 });
