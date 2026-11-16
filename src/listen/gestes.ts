@@ -27,14 +27,20 @@ const CLES = ['id', 'dit', 'attendu', 'prises', 'parole'];
 
 /** The lines of `mots.json`; a wrong one is refused by its rank and why, never by what it says. */
 export function lireListe(texte: string): Ligne[] {
-  const lignes: unknown = JSON.parse(texte);
+  let lignes: unknown;
+  try {
+    lignes = JSON.parse(texte);
+  } catch {
+    // The parser's message copies a piece of the file: one of its words could be in it.
+    throw new Error('mots.json : JSON illisible');
+  }
   if (!Array.isArray(lignes)) throw new Error('mots.json : un tableau de lignes');
   const ids = new Set<string>();
   return lignes.map((l: Record<string, unknown>, i) => {
     const faute = (raison: string) => new Error(`mots.json, ligne ${i + 1} : ${raison}`);
     if (typeof l !== 'object' || l === null || Array.isArray(l)) throw faute('un objet');
-    const autre = Object.keys(l).find((k) => !CLES.includes(k));
-    if (autre !== undefined) throw faute(`clé inconnue « ${autre} »`);
+    // A key could be one of its words: it is not named.
+    if (Object.keys(l).some((k) => !CLES.includes(k))) throw faute('clé inconnue');
     if (typeof l['id'] !== 'string' || !/^[a-z0-9-]+$/.test(l['id'])) throw faute('« id » en [a-z0-9-]+');
     if (ids.has(l['id'])) throw faute('« id » déjà pris');
     ids.add(l['id']);

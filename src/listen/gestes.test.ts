@@ -33,7 +33,7 @@ describe('the list of the bench of gestures', () => {
       [{ ...bonne, prises: 0 }, /prises/],
       [{ ...bonne, prises: 1.5 }, /prises/],
       [{ ...bonne, parole: 'non' }, /parole/],
-      [{ ...bonne, note: 'x' }, /note/],
+      [{ ...bonne, motprive: 'x' }, /clé inconnue/],
     ];
     for (const [faute, raison] of fautes) {
       const essai = () => lireListe(JSON.stringify([{ ...bonne, id: 'ok' }, faute]));
@@ -41,6 +41,13 @@ describe('the list of the bench of gestures', () => {
       expect(essai).toThrow(raison);
     }
     expect(() => lireListe('{}')).toThrow(/tableau/);
+  });
+
+  it('never says what a line holds, not even a key, nor what an unreadable list holds', () => {
+    expect(() => lireListe(JSON.stringify([{ ...bonne, motprive: 'x' }]))).not.toThrow(/motprive/);
+    const illisible = () => lireListe('[{"id": motprive}]');
+    expect(illisible).toThrow(/mots\.json/);
+    expect(illisible).not.toThrow(/motprive/);
   });
 });
 
