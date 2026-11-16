@@ -1,9 +1,11 @@
 //! The voice service, started with the app when it is not already running. The program and the script are
-//! fixed; the folder must hold `service.py`; the arguments, bounded to the flags the screen fills
-//! (`checked_service_args`), go to the script as they are, never through a shell.
+//! fixed; the folder is the one the person chose (`folders.rs`) and must still hold `service.py` at each launch;
+//! the arguments, bounded to the flags the screen fills (`checked_service_args`), go to the script as they are,
+//! never through a shell.
 //! Its output goes to a log file, emptied at each launch: a pipe nobody reads would block it. Only what this app
 //! started is stopped, and it joins the app's job (`job.rs`) so that it dies with it.
 
+use serde::Serialize;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -16,21 +18,25 @@ const ARG_LEN_MAX: usize = 1024;
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/** The service this app started, if any, with its arguments: one at most, whatever the page asks. */
+/** What the service was started with: the page compares it to what it would start now. */
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Running {
+    pub folder: String,
+    pub args: Vec<String>,
+}
+
+/** The service this app started, if any, with what it was started with: one at most, whatever the page asks. */
 #[derive(Default)]
-pub struct Launched(pub Mutex<Option<(Child, Vec<String>)>>);
+pub struct Launched(pub Mutex<Option<(Child, Running)>>);
 
 /** A lock whose holder panicked still holds the processes to stop. */
 pub fn hold<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/** A folder by its full path, with `service.py`, kept as given. */
 pub fn checked_dir(dir: &str) -> Result<PathBuf, String> {
-    let root = fs::canonicalize(dir).map_err(|_| "Dossier du service introuvable.".to_string())?;
-    if !root.join(SCRIPT).is_file() {
-        return Err(format!("Ce dossier n’a pas de {SCRIPT}."));
-    }
-    Ok(root)
+    crate::folders::holding(dir, SCRIPT, "Dossier du service introuvable.")
 }
 
 pub fn checked_args(args: &[String]) -> Result<(), String> {
@@ -235,14 +241,30 @@ pub fn start(
     let root = checked_dir(dir)?;
     checked_service_args(args)?;
     let out = open_log(log)?;
-    spawn_into(&mut held, command(&root, args), out, args, log)
+    spawn_into(&mut held, command(&root, args), out, &root, args, log)
 }
 
-/** The arguments of the service this app started, while it runs; `None`: not started here, or gone. */
-pub fn running(launched: &Launched) -> Option<Vec<String>> {
+/** The folder kept in `file` (`dossiers.json`). */
+fn kept_dir(file: &Path) -> Result<String, String> {
+    crate::folders::kept(file, "voix")
+        .ok_or_else(|| "Choisis d’abord le dossier du service.".to_string())
+}
+
+/** `start` in the folder the person chose, checked again: it may have changed on the disk since. */
+pub fn start_kept(
+    launched: &Launched,
+    file: &Path,
+    args: &[String],
+    log: &Path,
+) -> Result<String, String> {
+    start(launched, &kept_dir(file)?, args, log)
+}
+
+/** What the service this app started was started with, while it runs; `None`: not started here, or gone. */
+pub fn running(launched: &Launched) -> Option<Running> {
     let mut held = hold(&launched.0);
-    let (child, args) = held.as_mut()?;
-    matches!(child.try_wait(), Ok(None)).then(|| args.clone())
+    let (child, run) = held.as_mut()?;
+    matches!(child.try_wait(), Ok(None)).then(|| run.clone())
 }
 
 /**
@@ -280,13 +302,14 @@ fn restart_with(
     if let Some((mut child, _)) = held.take() {
         kill_tree(&mut child);
     }
-    spawn_into(&mut held, make(&root, args), out, args, log)
+    spawn_into(&mut held, make(&root, args), out, &root, args, log)
 }
 
 fn spawn_into(
-    held: &mut Option<(Child, Vec<String>)>,
+    held: &mut Option<(Child, Running)>,
     cmd: Command,
     out: File,
+    root: &Path,
     args: &[String],
     log: &Path,
 ) -> Result<String, String> {
@@ -297,7 +320,11 @@ fn spawn_into(
             format!("Lancement refusé : {e}")
         }
     })?;
-    *held = Some((child, args.to_vec()));
+    let run = Running {
+        folder: root.display().to_string(),
+        args: args.to_vec(),
+    };
+    *held = Some((child, run));
     Ok(log.display().to_string())
 }
 
@@ -328,28 +355,32 @@ pub fn kill_tree(child: &mut Child) {
 pub fn voice_start(
     app: tauri::AppHandle,
     launched: tauri::State<'_, Launched>,
-    dir: String,
     args: Vec<String>,
 ) -> Result<String, String> {
     use tauri::Manager;
     let logs = app.path().app_log_dir().map_err(|e| e.to_string())?;
-    start(&launched, &dir, &args, &logs.join("voix.log"))
+    start_kept(
+        &launched,
+        &crate::folders::file(&app)?,
+        &args,
+        &logs.join("voix.log"),
+    )
 }
 
 #[tauri::command(async)]
 pub fn voice_restart(
     app: tauri::AppHandle,
     launched: tauri::State<'_, Launched>,
-    dir: String,
     args: Vec<String>,
 ) -> Result<String, String> {
     use tauri::Manager;
     let logs = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    let dir = kept_dir(&crate::folders::file(&app)?)?;
     restart(&launched, &dir, &args, &logs.join("voix.log"))
 }
 
 #[tauri::command]
-pub fn voice_running(launched: tauri::State<'_, Launched>) -> Option<Vec<String>> {
+pub fn voice_running(launched: tauri::State<'_, Launched>) -> Option<Running> {
     running(&launched)
 }
 
@@ -466,8 +497,12 @@ mod tests {
         let launched = Launched::default();
         let args = vec!["--stt".to_string(), "faster:small".to_string()];
         let first = ping("30").stdout(Stdio::null()).spawn().unwrap();
-        *launched.0.lock().unwrap() = Some((first, args.clone()));
-        assert_eq!(running(&launched), Some(args.clone()));
+        let was = Running {
+            folder: "C:\\voix\\avant".to_string(),
+            args: args.clone(),
+        };
+        *launched.0.lock().unwrap() = Some((first, was.clone()));
+        assert_eq!(running(&launched), Some(was.clone()));
         let base = folder("relance-refus", false);
         // A folder without the script, or a log that cannot open: refused before the running one stops.
         let no_script = folder("sans-script", false);
@@ -488,7 +523,7 @@ mod tests {
             .unwrap_err()
             .contains("Journal")
         );
-        assert_eq!(running(&launched), Some(args));
+        assert_eq!(running(&launched), Some(was));
         let next = vec![
             "--stt".to_string(),
             "whisper-server:http://127.0.0.1:8080".to_string(),
@@ -503,7 +538,14 @@ mod tests {
             .is_ok()
         );
         assert!(old.ended(Duration::from_secs(5)), "the old run must stop");
-        assert_eq!(running(&launched), Some(next));
+        // The new folder comes with the new arguments: the page sees either change.
+        assert_eq!(
+            running(&launched),
+            Some(Running {
+                folder: dir.display().to_string(),
+                args: next
+            })
+        );
         assert!(in_job(&launched.0.lock().unwrap().as_ref().unwrap().0));
         let now = Watch::new(pid(&launched));
         stop(&launched);
@@ -944,7 +986,11 @@ mod service_args {
         let args = strings(&["--stt", "faster:small"]);
         let first = ping().stdout(Stdio::null()).spawn().unwrap();
         let pid = first.id();
-        *launched.0.lock().unwrap() = Some((first, args.clone()));
+        let was = Running {
+            folder: "C:\\voix\\avant".to_string(),
+            args: args.clone(),
+        };
+        *launched.0.lock().unwrap() = Some((first, was.clone()));
         let dir = service_dir("restart");
         let log = dir.join("voix.log");
         let made = Cell::new(false);
@@ -961,7 +1007,7 @@ mod service_args {
             assert!(!err.is_empty());
             assert_eq!(
                 running(&launched),
-                Some(args.clone()),
+                Some(was.clone()),
                 "the running one stays"
             );
             assert_eq!(launched.0.lock().unwrap().as_ref().unwrap().0.id(), pid);

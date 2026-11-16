@@ -1,4 +1,28 @@
-//! One system dialog at a time: the guard of the app's single box. Tests first; the code comes with task 4.
+//! One system dialog at a time: the guard of the app's single box. A box modal to the window stops a second click,
+//! not a second call from the page: every box Rust opens takes this guard first.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/** The app's one box: `true` while a box is open. */
+#[derive(Default)]
+pub struct OneBox(AtomicBool);
+
+/** Held while the box is open; gives it back when dropped, on every path out, an error's included. */
+pub struct Taken<'a>(&'a OneBox);
+
+impl Drop for Taken<'_> {
+    fn drop(&mut self) {
+        self.0.0.store(false, Ordering::Release);
+    }
+}
+
+/** The guard, or « Une boîte est déjà ouverte. » and nothing opens. */
+pub fn take(one: &OneBox) -> Result<Taken<'_>, String> {
+    one.0
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .map(|_| Taken(one))
+        .map_err(|_| "Une boîte est déjà ouverte.".to_string())
+}
 
 #[cfg(test)]
 mod tests {

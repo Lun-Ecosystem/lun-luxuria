@@ -1,6 +1,115 @@
-//! The folders the person chose (the body's, the voice service's): checked, kept in `dossiers.json`, read back by
-//! the commands. Tests first; the code comes with task 4. Nothing here touches the app's real config folder:
-//! every file lives under the system's temp folder.
+//! The folders the person chose (the body's, the voice service's) in the system's dialog, opened here: checked, kept
+//! in `dossiers.json` next to `programmes.json`, read back by the commands. The page never gives a folder.
+
+use crate::programs::{read_paths, save_entry};
+use serde::Serialize;
+use std::path::{Path, PathBuf};
+
+const NAMES: [&str; 2] = ["corps", "voix"];
+const FILE: &str = "dossiers.json";
+
+/** What the page reads: a folder not chosen is left out, never `null`. */
+#[derive(Serialize, Default)]
+pub struct Paths {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    corps: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    voix: Option<String>,
+}
+
+pub fn checked_name(name: &str) -> Result<&'static str, String> {
+    NAMES
+        .into_iter()
+        .find(|n| *n == name)
+        .ok_or_else(|| "Dossier inconnu.".to_string())
+}
+
+/**
+ * An existing folder by its full path that holds `file`, kept as given, like `checked_exe`: `fs::canonicalize`
+ * would give `\\?\` on Windows.
+ */
+pub fn holding(dir: &str, file: &str, missing: &str) -> Result<PathBuf, String> {
+    let root = PathBuf::from(dir);
+    if !root.is_absolute() || !root.is_dir() {
+        return Err(missing.to_string());
+    }
+    if !root.join(file).is_file() {
+        return Err(format!("Ce dossier n’a pas de {file}."));
+    }
+    Ok(root)
+}
+
+/** Checks the folder for its name, then keeps it; refused, nothing is written and the old choice stays. */
+pub fn keep(file: &Path, name: &str, dir: &str) -> Result<String, String> {
+    let name = checked_name(name)?;
+    let root = match name {
+        "corps" => holding(dir, crate::body::CONFIG, "Dossier du corps introuvable.")?,
+        _ => crate::voice::checked_dir(dir)?,
+    };
+    save_entry(file, name, Some(&root))?;
+    Ok(root.display().to_string())
+}
+
+/** The folder kept under `name`; an absent or unreadable file reads as none chosen. */
+pub fn kept(file: &Path, name: &str) -> Option<String> {
+    read_paths(file).remove(name)
+}
+
+pub fn forget(file: &Path, name: &str) -> Result<(), String> {
+    save_entry(file, checked_name(name)?, None)
+}
+
+pub fn paths(file: &Path) -> Paths {
+    let mut all = read_paths(file);
+    Paths {
+        corps: all.remove("corps"),
+        voix: all.remove("voix"),
+    }
+}
+
+pub fn file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    crate::programs::config_file(app, FILE)
+}
+
+/**
+ * The system's folder dialog, opened here, like `program_pick`: the chosen path, or `None` when cancelled. Modal to
+ * the window, behind the app's one box.
+ */
+#[tauri::command(async)]
+pub fn folder_pick(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    one: tauri::State<'_, crate::one_box::OneBox>,
+    name: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let name = checked_name(&name)?;
+    let _box = crate::one_box::take(&one)?;
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title(match name {
+            "corps" => "Le dossier du corps",
+            _ => "Le dossier du service voix",
+        })
+        .blocking_pick_folder()
+    else {
+        return Ok(None);
+    };
+    let dir = picked.into_path().map_err(|e| e.to_string())?;
+    keep(&file(&app)?, name, &dir.display().to_string()).map(Some)
+}
+
+#[tauri::command]
+pub fn folder_paths(app: tauri::AppHandle) -> Result<Paths, String> {
+    Ok(paths(&file(&app)?))
+}
+
+#[tauri::command]
+pub fn folder_forget(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    forget(&file(&app)?, &name)
+}
 
 #[cfg(test)]
 mod tests {
@@ -242,8 +351,11 @@ mod tests {
         let mut ping = Command::new("C:\\Windows\\System32\\PING.EXE");
         ping.args(["-n", "30", "127.0.0.1"]).stdout(Stdio::null());
         let child = ping.spawn().unwrap();
-        // Assumed shape: the folder as the third member of what `Launched` holds.
-        *launched.0.lock().unwrap() = Some((child, args.clone(), "C:\\voix\\ma voix".to_string()));
+        let run = crate::voice::Running {
+            folder: "C:\\voix\\ma voix".to_string(),
+            args: args.clone(),
+        };
+        *launched.0.lock().unwrap() = Some((child, run));
         let got = crate::voice::running(&launched).unwrap();
         assert_eq!(got.folder, "C:\\voix\\ma voix");
         assert_eq!(got.args, args);

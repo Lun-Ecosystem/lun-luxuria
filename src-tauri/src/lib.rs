@@ -2,14 +2,12 @@
 //! what a browser tab cannot: a window of its own, global keys, requests without CORS.
 
 mod body;
-#[cfg(test)]
 mod folders;
 mod idle;
 mod job;
 mod loopback;
 #[cfg(test)]
 mod net_scope;
-#[cfg(test)]
 mod one_box;
 mod programs;
 mod tray;
@@ -27,7 +25,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_http::init())
-        // Used from Rust only: the person picks the programs the app may launch (programs.rs).
+        // Used from Rust only: the person picks the programs the app may launch (programs.rs) and its folders
+        // (folders.rs).
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // Starting with Windows is the person's switch on the settings screen; nothing is set here.
@@ -35,9 +34,13 @@ pub fn run() {
         .setup(|app| Ok(tray::setup(app.handle())?))
         .manage(voice::Launched::default())
         .manage(programs::Programs::default())
+        .manage(one_box::OneBox::default())
         .invoke_handler(tauri::generate_handler![
             body::body_config,
             body::body_image,
+            folders::folder_pick,
+            folders::folder_paths,
+            folders::folder_forget,
             idle::idle_ms,
             voice::voice_start,
             voice::voice_restart,

@@ -66,7 +66,7 @@ pub fn checked_exe(path: &str) -> Result<PathBuf, String> {
     Ok(exe)
 }
 
-/** The chosen programs, by name; an unreadable file reads as none chosen. */
+/** The chosen paths, by name: the programs', the folders' (`folders.rs`); an unreadable file reads as none chosen. */
 pub fn read_paths(file: &Path) -> HashMap<String, String> {
     fs::read_to_string(file)
         .ok()
@@ -76,7 +76,11 @@ pub fn read_paths(file: &Path) -> HashMap<String, String> {
 
 /** Keeps a program's path, or forgets it with `None`. */
 pub fn save_path(file: &Path, name: &str, path: Option<&Path>) -> Result<(), String> {
-    let name = checked_name(name)?;
+    save_entry(file, checked_name(name)?, path)
+}
+
+/** Keeps `name`'s path in `file`, or forgets it with `None`; the name is checked by the caller. */
+pub fn save_entry(file: &Path, name: &str, path: Option<&Path>) -> Result<(), String> {
     let mut paths = read_paths(file);
     match path {
         Some(p) => paths.insert(name.to_string(), p.display().to_string()),
@@ -192,32 +196,35 @@ pub fn stop_all(programs: &Programs) {
     }
 }
 
-fn paths_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+/** A file of the app's config folder, where the person's choices are kept. */
+pub fn config_file(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, String> {
     use tauri::Manager;
     Ok(app
         .path()
         .app_config_dir()
         .map_err(|e| e.to_string())?
-        .join(PATHS))
+        .join(name))
 }
 
 #[tauri::command]
 pub fn program_paths(app: tauri::AppHandle) -> Result<HashMap<String, String>, String> {
-    Ok(read_paths(&paths_file(&app)?))
+    Ok(read_paths(&config_file(&app, PATHS)?))
 }
 
 /**
  * The system's dialog, opened here: only the person chooses what the app may launch. `None`: cancelled. Modal to
- * the window, so that a second click cannot open another one.
+ * the window, so that a second click cannot open another one; the app's one box (`one_box.rs`) stops a second call.
  */
 #[tauri::command(async)]
 pub fn program_pick(
     app: tauri::AppHandle,
     window: tauri::Window,
+    one: tauri::State<'_, crate::one_box::OneBox>,
     name: String,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let name = checked_name(&name)?;
+    let _box = crate::one_box::take(&one)?;
     let Some(picked) = app
         .dialog()
         .file()
@@ -230,13 +237,13 @@ pub fn program_pick(
     };
     let path = picked.into_path().map_err(|e| e.to_string())?;
     let exe = checked_exe(&path.display().to_string())?;
-    save_path(&paths_file(&app)?, name, Some(&exe))?;
+    save_path(&config_file(&app, PATHS)?, name, Some(&exe))?;
     Ok(Some(exe.display().to_string()))
 }
 
 #[tauri::command]
 pub fn program_forget(app: tauri::AppHandle, name: String) -> Result<(), String> {
-    save_path(&paths_file(&app)?, &name, None)
+    save_path(&config_file(&app, PATHS)?, &name, None)
 }
 
 /** Off the window's thread: the probe, the early wait and a stop take a moment. */
@@ -250,7 +257,7 @@ pub fn program_start(
 ) -> Result<Started, String> {
     use tauri::Manager;
     let name = checked_name(&name)?;
-    let path = read_paths(&paths_file(&app)?).remove(name);
+    let path = read_paths(&config_file(&app, PATHS)?).remove(name);
     let logs = app.path().app_log_dir().map_err(|e| e.to_string())?;
     let log = logs.join(format!("{name}.log"));
     start(&programs, name, path.as_deref(), &args, &addr, &log)
