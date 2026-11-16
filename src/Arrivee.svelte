@@ -2,7 +2,15 @@
   import { onMount, untrack } from 'svelte';
   import { Button, CodeInput, Field, TextInput } from './lib/ui/index.ts';
   import { missingToEnter } from './arrival.ts';
-  import { CONFIRMED, confirmHost, forgetHost, OFF_MACHINE, offMachine, readHosts } from './desktop/hotes.ts';
+  import {
+    CHECKING,
+    CONFIRMED,
+    confirmHost,
+    forgetHost,
+    OFF_MACHINE,
+    offMachine,
+    readHosts,
+  } from './desktop/hotes.ts';
   import { inWindow, serverWarning } from './desktop/net.ts';
   import { unsafeAddress } from './local.ts';
   import type { Session } from './session.svelte.ts';
@@ -63,7 +71,7 @@
   /** An address off this computer blocks until confirmed: the field's error says it, after its own. */
   function hostError(url: string): string | undefined {
     const origin = inWindow ? offMachine(url) : null;
-    if (!origin) return undefined;
+    if (!origin || !session.hosts) return undefined;
     return hostSaid[origin] || (session.hosts.includes(origin) ? undefined : OFF_MACHINE);
   }
 </script>
@@ -73,7 +81,9 @@
   {@const origin = inWindow ? offMachine(url) : null}
   {#if origin}
     <div class="hote">
-      {#if session.hosts.includes(origin)}
+      {#if !session.hosts}
+        <p class="aide">{CHECKING}</p>
+      {:else if session.hosts.includes(origin)}
         <p class="aide">{CONFIRMED}</p>
         <Button
           variant="fantome"

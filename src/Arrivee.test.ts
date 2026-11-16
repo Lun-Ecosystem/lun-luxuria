@@ -159,6 +159,13 @@ describe('an address off this computer, confirmed on the arrival', () => {
       return null;
     });
   }
+  /** Rust's net_hosts, held until the test answers. */
+  function heldHosts() {
+    let answer!: (hosts: string[]) => void;
+    const held = new Promise<string[]>((resolve) => (answer = resolve));
+    invoke.mockImplementation(async (cmd) => (cmd === 'net_hosts' ? held : null));
+    return answer;
+  }
   const linked = (server = SERVER) => arriving({ brain: 'linked', server });
   const alone = (url = MODEL) => arriving({ brain: 'alone', model: { url, name: 'un-modele', key: '' } });
 
@@ -166,7 +173,7 @@ describe('an address off this computer, confirmed on the arrival', () => {
     where.inWindow = true;
     rust([]);
     linked();
-    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^Confirmer/ }));
     expect(invoke).toHaveBeenCalledWith('net_host_confirm', { url: SERVER });
     expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
@@ -178,7 +185,7 @@ describe('an address off this computer, confirmed on the arrival', () => {
     where.inWindow = true;
     rust([]);
     alone();
-    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^Confirmer/ }));
     expect(invoke).toHaveBeenCalledWith('net_host_confirm', { url: MODEL });
     expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
@@ -188,7 +195,7 @@ describe('an address off this computer, confirmed on the arrival', () => {
     where.inWindow = true;
     rust([], new Error('Adresse illisible.'));
     linked();
-    await userEvent.click(screen.getByRole('button', { name: /^Confirmer/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Confirmer/ }));
     expect(await screen.findByText(/Adresse illisible\./)).toBeInTheDocument();
     expect(screen.queryByText(CONFIRMED)).toBeNull();
   });
@@ -203,24 +210,28 @@ describe('an address off this computer, confirmed on the arrival', () => {
 
   it.each(['http://127.0.0.1:8788', 'http://localhost:8788', 'http://[::1]:8788'])(
     'this computer, %s: nothing to confirm',
-    (address) => {
+    async (address) => {
       where.inWindow = true;
       rust([]);
-      linked(address);
+      // Once Rust has answered, when an address off this computer would show its notice.
+      const server = linked(address);
+      await waitFor(() => expect(server.hosts).toEqual([]));
       expect(screen.queryByText(NOTICE)).toBeNull();
       expect(confirmButton()).toBeNull();
       cleanup();
-      alone(address + '/v1');
+      const model = alone(address + '/v1');
+      await waitFor(() => expect(model.hosts).toEqual([]));
       expect(screen.queryByText(NOTICE)).toBeNull();
       expect(confirmButton()).toBeNull();
       expect(confirmCalls()).toEqual([]);
     },
   );
 
-  it('the notice is what blocks: said as the field’s error, as in the settings', () => {
+  it('the notice is what blocks: said as the field’s error, as in the settings', async () => {
     where.inWindow = true;
     rust([]);
     linked();
+    await screen.findByText(NOTICE);
     expect(screen.getByRole('textbox', { name: 'Adresse du serveur' })).toHaveAttribute(
       'aria-invalid',
       'true',
@@ -228,11 +239,26 @@ describe('an address off this computer, confirmed on the arrival', () => {
     expect(screen.getByRole('textbox', { name: 'Adresse du serveur' })).toHaveAccessibleDescription(NOTICE);
   });
 
-  it('showing the notice asks nothing of the person', () => {
+  it('Rust has not answered yet, the address already confirmed: nothing blocks, it checks', async () => {
+    where.inWindow = true;
+    const answer = heldHosts();
+    linked();
+    await waitFor(() => expect(invoke.mock.calls.some(([cmd]) => cmd === 'net_hosts')).toBe(true));
+    const field = screen.getByRole('textbox', { name: 'Adresse du serveur' });
+    expect(field).not.toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Vérification…')).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+    expect(confirmButton()).toBeNull();
+    answer([SERVER]);
+    expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
+    expect(field).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('showing the notice asks nothing of the person', async () => {
     where.inWindow = true;
     rust([]);
     alone();
-    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
     expect(confirmCalls()).toEqual([]);
   });
 

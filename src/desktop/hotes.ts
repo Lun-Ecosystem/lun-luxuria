@@ -6,6 +6,7 @@ import type { Call } from './corps.svelte.ts';
 export const OFF_MACHINE =
   'Cette adresse est hors de ce poste : la fenêtre ne la joint qu’une fois confirmée.';
 export const CONFIRMED = 'Confirmée pour la fenêtre.';
+export const CHECKING = 'Vérification…';
 
 /**
  * The origin to confirm for the window, or null: this computer, or not an address. Read by the URL parser, never
@@ -22,7 +23,7 @@ export function offMachine(url: string): string | null {
 
 const said = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-/** The origins the person confirmed, as the window keeps them. */
+/** The origins the person confirmed, as the window keeps them; none when it cannot say, on the closed side. */
 export async function readHosts(session: Session, call: Call = invoke): Promise<void> {
   const hosts = await Promise.resolve(call('net_hosts', {})).catch(() => null);
   // Once each: the screens list them by origin.

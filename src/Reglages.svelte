@@ -28,7 +28,15 @@
   import Fenetre from './desktop/Fenetre.svelte';
   import ServiceVoix from './desktop/ServiceVoix.svelte';
   import { quit } from './desktop/window.svelte.ts';
-  import { CONFIRMED, confirmHost, forgetHost, OFF_MACHINE, offMachine, readHosts } from './desktop/hotes.ts';
+  import {
+    CHECKING,
+    CONFIRMED,
+    confirmHost,
+    forgetHost,
+    OFF_MACHINE,
+    offMachine,
+    readHosts,
+  } from './desktop/hotes.ts';
   import { inWindow, serverWarning } from './desktop/net.ts';
   import { DEFAULTS, type Settings, type TalkMode } from './settings.ts';
   import type { Session } from './session.svelte.ts';
@@ -213,15 +221,16 @@ then it blocks, and says so as an error: a folded block opens on it. -->
 {#snippet host(url: string)}
   {@const origin = inWindow ? offMachine(url) : null}
   {#if origin}
-    {@const confirmed = session.hosts.includes(origin)}
+    {@const hosts = session.hosts}
+    {@const confirmed = hosts?.includes(origin)}
     <SettingsRow
       label="Accès"
-      hint={confirmed ? CONFIRMED : undefined}
-      error={hostSaid[origin] || (confirmed ? null : OFF_MACHINE)}
+      hint={!hosts ? CHECKING : confirmed ? CONFIRMED : undefined}
+      error={hostSaid[origin] || (hosts && !confirmed ? OFF_MACHINE : null)}
     >
       {#if confirmed}
         {@render forget(origin)}
-      {:else}
+      {:else if hosts}
         <Button
           variant="secondaire"
           size="petit"
@@ -694,13 +703,17 @@ then it blocks, and says so as an error: a folded block opens on it. -->
           title="Adresses hors de ce poste"
           description="Celles que la fenêtre peut joindre, confirmées dans la boîte du système."
         >
-          {#each session.hosts as origin (origin)}
-            <SettingsRow label={origin} error={hostSaid[origin] || null}>
-              {@render forget(origin)}
-            </SettingsRow>
+          {#if session.hosts}
+            {#each session.hosts as origin (origin)}
+              <SettingsRow label={origin} error={hostSaid[origin] || null}>
+                {@render forget(origin)}
+              </SettingsRow>
+            {:else}
+              <SettingsRow label="Aucune" hint="La fenêtre ne joint que ce poste." />
+            {/each}
           {:else}
-            <SettingsRow label="Aucune" hint="La fenêtre ne joint que ce poste." />
-          {/each}
+            <SettingsRow label="Adresses confirmées" hint={CHECKING} />
+          {/if}
         </SettingsCard>
       {/if}
     </div>
