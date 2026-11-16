@@ -170,6 +170,16 @@ describe('the voice theme', () => {
     expect(screen.getByRole('button', { name: 'Lancer ou vérifier' })).toBeDisabled();
   });
 
+  it('a field counts as typed, without leaving it', async () => {
+    service({});
+    const session = new Session();
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Fichier de la voix' }), {
+      target: { value: 'D:\\v.onnx' },
+    });
+    expect(session.settings.voice.service.piper).toBe('D:\\v.onnx');
+  });
+
   it('the folder is no field to type in: « Choisir… » only, the window keeps what is chosen', () => {
     service({});
     render(Reglages, { session: new Session(), close: () => {}, start: 'voix' });

@@ -35,7 +35,8 @@
   let refused = $state('');
   // One call at a time: two clicks before the dialog shows would open a second, refused one.
   let working = $state<'choose' | 'forget' | null>(null);
-  let gestes: HTMLSpanElement;
+  // Null once the settings close: the window may answer after.
+  let gestes: HTMLSpanElement | null = null;
 
   async function choose() {
     if (working) return;
@@ -63,7 +64,7 @@
       // « Oublier » went with the folder: the focus goes to « Choisir… », once it is enabled again.
       working = null;
       await tick();
-      gestes.querySelector<HTMLElement>(`[aria-label="Choisir le dossier ${of}"]`)?.focus();
+      gestes?.querySelector<HTMLElement>(`[aria-label="Choisir le dossier ${of}"]`)?.focus();
     } finally {
       working = null;
     }
