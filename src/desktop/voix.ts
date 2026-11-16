@@ -263,13 +263,17 @@ export async function restartVoice(
 export type ProgramName = 'whisper-server' | 'rvc';
 export const PROGRAMS: Record<ProgramName, string> = { 'whisper-server': 'whisper-server', rvc: 'RVC' };
 
-/** What the window last said of a program; `starting` while it is followed, `left` polls before giving up. */
+/**
+ * What the window last said of a program; `starting` while it is followed, `left` polls before giving up, `url`
+ * the address it was launched with, the one probed: the field may change meanwhile, at each key.
+ */
 export interface ProgramState {
   said: string;
   ok?: boolean;
   starting?: boolean;
   log?: string | undefined;
   left?: number;
+  url?: string;
 }
 
 /** The programs in use: whisper-server when it transcribes, RVC when it is on. */
@@ -335,7 +339,7 @@ export async function launchProgram(
     session.programs[name] = {
       said: OUTCOME[outcome] ?? outcome,
       ok: true,
-      ...(now ? { starting: true, log, left: POLLS } : {}),
+      ...(now ? { starting: true, log, left: POLLS, url: p.url } : {}),
     };
     return now;
   } catch (err) {
@@ -354,8 +358,6 @@ export async function startPrograms(session: Session, call: Call = invoke): Prom
 }
 
 const NAMES = Object.keys(PROGRAMS) as ProgramName[];
-/** Where a program answers, from the fields, in use or not. */
-const urlOf = (v: VoiceService, name: ProgramName) => (name === 'rvc' ? v.rvc.url : v.stt.url);
 
 /**
  * Follows the programs being launched until each answers at its address, ends, or the wait runs out, and says it.
@@ -380,7 +382,7 @@ export async function followPrograms(
         const label = PROGRAMS[name];
         let now: unknown;
         try {
-          now = await call('program_state', { name, url: urlOf(session.settings.voice.service, name) });
+          now = await call('program_state', { name, url: s.url });
         } catch (err) {
           // The window only refuses: this one is no longer followed, the others go on.
           session.programs[name] = { said: String(err) };

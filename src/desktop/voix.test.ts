@@ -366,6 +366,17 @@ describe('whisper-server and RVC', () => {
     return session;
   };
   const started = (log = 'C:\\logs\\rvc.log') => vi.fn(async () => ({ outcome: 'started', log }));
+  /**
+   * The follow's pauses, counted; past `most`, the pause throws, out of the follow: a program left followed fails
+   * the test instead of hanging it. A bound in `call` would not: the follow reads its error as a refusal.
+   */
+  const turns = (most = 5) => {
+    const at = { turn: 0 };
+    const sleep = async () => {
+      if (++at.turn > most) throw new Error(`still followed after ${most} turns`);
+    };
+    return { at, sleep };
+  };
 
   it('the page never names the program: only its arguments and the address of its field go to the window', async () => {
     const session = both();
@@ -518,24 +529,55 @@ describe('whisper-server and RVC', () => {
     }
   });
 
-  it('a refusal of program_state stops that program with Rust’s words, the other goes on', async () => {
+  it('a refusal of program_state stops that program with Rust’s words, the other goes on in the same turn', async () => {
     const session = both();
     await launchProgram(session, 'whisper-server', started('C:\\logs\\whisper-server.log'));
     await launchProgram(session, 'rvc', started('C:\\logs\\rvc.log'));
     const refusal = 'Adresse refusée : http://127.0.0.1:8080 (127.0.0.1, localhost ou [::1] seulement).';
     const states = ['starting', 'answering'];
+    const { at, sleep } = turns();
+    const probed: [unknown, number][] = [];
     const call = vi.fn(async (_cmd: string, a?: Record<string, unknown>) => {
+      probed.push([a?.name, at.turn]);
       if (a?.name === 'whisper-server') return Promise.reject(refusal);
       return states.shift();
     });
-    await followPrograms(session, call, noSleep, noBricks);
+    await followPrograms(session, call, sleep, noBricks);
     expect(session.programs['whisper-server']?.said).toBe(refusal);
     expect(session.programs['whisper-server']?.starting).toBeUndefined();
     expect(session.programs['whisper-server']?.ok).toBeUndefined();
     expect(session.programs.rvc).toMatchObject({ said: 'RVC répond.', ok: true });
     expect(call).toHaveBeenCalledWith('program_state', { name: 'rvc', url: 'http://localhost:18888' });
-    expect(call.mock.calls.filter(([, a]) => a?.name === 'whisper-server')).toHaveLength(1);
+    // RVC right after the refusal, in the same turn; the refused one never again.
+    expect(probed).toEqual([
+      ['whisper-server', 1],
+      ['rvc', 1],
+      ['rvc', 2],
+    ]);
     expect(JSON.stringify(call.mock.calls)).not.toContain('addr');
+  });
+
+  it('the address probed is the one it was launched with, whatever the field says meanwhile', async () => {
+    const session = both();
+    await launchProgram(session, 'rvc', started());
+    const { sleep } = turns();
+    // Saved at each key: an address half typed, which the window would refuse.
+    const typing = async () => {
+      await sleep();
+      session.settings.voice.service.rvc.url = 'http://127.0.0.1:';
+    };
+    const states = ['starting', 'answering'];
+    const call = vi.fn(async (_cmd: string, a?: Record<string, unknown>) =>
+      a?.url === 'http://localhost:18888'
+        ? states.shift()
+        : Promise.reject(`Adresse refusée : ${String(a?.url)}`),
+    );
+    await followPrograms(session, call, typing, noBricks);
+    expect(call.mock.calls).toEqual([
+      ['program_state', { name: 'rvc', url: 'http://localhost:18888' }],
+      ['program_state', { name: 'rvc', url: 'http://localhost:18888' }],
+    ]);
+    expect(session.programs.rvc).toMatchObject({ said: 'RVC répond.', ok: true });
   });
 
   it('a second follow joins the one under way', async () => {

@@ -354,6 +354,44 @@ describe('the voice theme, after a change', () => {
       expect(screen.queryByRole('textbox', { name: 'Arguments de whisper-server' })).toBeNull(),
     );
   });
+
+  it('refused while followed, then « Lancer » again: launched and followed anew, without reloading', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      service({ stt: { kind: 'whisper-server', url: 'http://127.0.0.1:8080' } });
+      const refusal = 'Adresse refusée : http://127.0.0.1:8080 (127.0.0.1, localhost ou [::1] seulement).';
+      let probes = 0;
+      invoke.mockImplementation(async (cmd: string) =>
+        cmd === 'program_start'
+          ? { outcome: 'started', log: 'C:/logs/whisper-server.log' }
+          : cmd === 'program_state'
+            ? probes++ === 0
+              ? Promise.reject(refusal)
+              : 'answering'
+            : null,
+      );
+      const session = kept();
+      session.programPaths = { 'whisper-server': 'D:/whisper/whisper-server.exe' };
+      render(Reglages, { session, close: () => {}, start: 'voix' });
+      const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).length;
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Lancer whisper-server' }));
+      await vi.waitFor(() => expect(session.following).toBe(true));
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.waitFor(() => expect(screen.getByText(refusal)).toBeInTheDocument());
+      expect(session.following).toBe(false);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Lancer whisper-server' }));
+      await vi.waitFor(() => expect(session.following).toBe(true));
+      expect(calls('program_start')).toBe(2);
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.waitFor(() => expect(screen.getByText('whisper-server répond.')).toBeInTheDocument());
+      expect(calls('program_state')).toBe(2);
+      expect(session.following).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('the body’s folder, chosen in the system’s dialog and kept by the window', () => {
