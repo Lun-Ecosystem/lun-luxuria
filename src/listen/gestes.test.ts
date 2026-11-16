@@ -4,11 +4,12 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ENDPOINT_DEFAULTS, levelToVoice } from './endpoint.ts';
 import { banc, dansLeBruit, ecouter, lireListe, NIVEAUX, voixDuBanc, type Ecoute } from './gestes.ts';
 import { FRAME_MS, noise, replay, writeWav } from './replay.ts';
 import { loadSilero, SileroVoice } from './vad.ts';
+import { STT_TIMEOUT_MS, type Heard } from '../conversation.ts';
 import type { Voix } from '../presence/chaine/sons.ts';
 import { DEFAULTS } from '../settings.ts';
 import { transcribe } from '../voice.ts';
@@ -317,6 +318,51 @@ describe('a failed transcription', () => {
     expect(echecs).toBeGreaterThan(0);
     expect(fin).toMatchObject({ fin: true, sons: 5, echecs, brique: 'faux', duree: expect.any(Number) });
   });
+
+  describe('slower than its guard, that gives a text all the same', () => {
+    beforeEach(() => void vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+    afterEach(() => void vi.useRealTimers());
+    const signals: (AbortSignal | null | undefined)[] = [];
+    const tard = STT_TIMEOUT_MS + 5_000;
+    const texte = (): Promise<Heard> =>
+      new Promise((ok) => setTimeout(() => ok({ text: 'Oui.', confidence: 0.8 }), tard));
+    // The voice service, as `transcribe` reaches it: it answers after the guard, unless its request is cut.
+    const service: typeof fetch = (_, init) =>
+      new Promise((ok, ko) => {
+        signals.push(init?.signal);
+        const t = setTimeout(() => ok(Response.json({ text: 'Oui.', confidence: 0.8 })), tard);
+        init?.signal?.addEventListener('abort', () => {
+          clearTimeout(t);
+          ko(new DOMException('coupée', 'AbortError'));
+        });
+      });
+
+    it.each<[string, (audio: Float32Array, signal?: AbortSignal) => Promise<Heard>]>([
+      ['deaf to its signal', (_, signal) => (signals.push(signal), texte())],
+      ['the real transcription', (audio, signal) => transcribe(audio, service, signal)],
+    ])(
+      '%s: its line is a failure, never a text received nor a reject, and its request is cut',
+      async (_, stt) => {
+        signals.length = 0;
+        const dir = dossier([bonne], ['oui-1.wav']);
+        const fini = expect(
+          banc(dir, [], 'faux', async () => (s) => ecouter(s, byLevel, stt)),
+        ).rejects.toThrow(/en échec/);
+        await vi.runAllTimersAsync();
+        await fini;
+        const [ligne] = jsonl(dir);
+        expect(ligne).toMatchObject({
+          id: 'oui',
+          echec: true,
+          transcriptions: [{ echec: 'abandonnée par la conversation' }],
+          envoye: [],
+        });
+        expect(ligne!['transcriptions']).not.toMatchObject([{ texte: expect.anything() }]);
+        expect(signals.length).toBeGreaterThan(0);
+        expect(signals.every((s) => s?.aborted)).toBe(true);
+      },
+    );
+  });
 });
 
 /**
@@ -380,7 +426,7 @@ describe.runIf(asked)('the bench of gestures', () => {
             return ecouter(
               samples,
               (frame, listening) => silero.voice(frame, listening),
-              (audio) => transcribe(audio, f),
+              (audio, signal) => transcribe(audio, f, signal),
             );
           };
         });

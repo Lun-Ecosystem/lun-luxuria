@@ -112,7 +112,8 @@ export interface Ecoute {
 export async function ecouter(
   samples: Float32Array,
   voice: (frame: Float32Array, listening: boolean) => number | Promise<number>,
-  stt: (audio: Float32Array) => Promise<Heard>,
+  /** `signal`: the conversation's, cut at its guard; the request goes with it. */
+  stt: (audio: Float32Array, signal?: AbortSignal) => Promise<Heard>,
 ): Promise<Ecoute> {
   let soundAt = 0;
   // Every turn of the sound, however long a witness is: the page keeps twenty, this bench reads them all.
@@ -120,7 +121,7 @@ export async function ecouter(
   const out: Ecoute = { ecoute: [], transcriptions: [], envoye: [], repris: [] };
   const faites: { t: Transcription; essai: TraceEvent | undefined }[] = [];
   const enRoute: Promise<unknown>[] = [];
-  const mesurer = async (audio: Float32Array) => {
+  const mesurer = async (audio: Float32Array, signal?: AbortSignal) => {
     // The try the conversation has just written: its verdict will say what the page did with this text.
     const dernier = trace.events.at(-1);
     const essai = dernier?.name === 'essai' ? dernier : undefined;
@@ -131,11 +132,13 @@ export async function ecouter(
         essai,
       });
     try {
-      const h = await stt(audio);
+      const h = await stt(audio, signal);
       fin({ texte: h.text, confiance: h.confidence });
       return h;
     } catch (err) {
-      fin({ echec: err instanceof Error ? err.message : String(err) });
+      // Cut at its guard, the request would say the service does not answer: the conversation gave up on it.
+      const raison = err instanceof Error ? err.message : String(err);
+      fin({ echec: signal?.aborted ? 'abandonnée par la conversation' : raison });
       throw err;
     }
   };
@@ -152,10 +155,8 @@ export async function ecouter(
       cut: async () => {},
       withdraw: async (id) => void out.repris.push(out.envoye[id - 1]!),
     },
-    // shortcut: after lun-luxuria#82, the conversation gives a `signal` cut at its 20 s guard; on the rebase, take it
-    // here and pass it to `stt`, and on to `transcribe`, so that a try given up on is not waited for.
-    stt: (audio) => {
-      const t = mesurer(audio);
+    stt: (audio, signal) => {
+      const t = mesurer(audio, signal);
       enRoute.push(t.catch(() => {}));
       return t;
     },
