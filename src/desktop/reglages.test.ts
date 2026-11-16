@@ -482,6 +482,8 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
     expect(screen.getByText('C:\\corps')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Oublier/ })).toBeInTheDocument();
     expect(asked('body_config')).toHaveLength(0);
+    // The guard of « Oublier » gives both buttons back, or no folder could be chosen again.
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: /^Choisir/ })).toBeEnabled());
   });
 
   it('« Oublier » asks the window to forget « corps », the path goes, the body is read again', async () => {
