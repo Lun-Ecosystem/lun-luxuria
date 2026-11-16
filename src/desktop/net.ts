@@ -19,11 +19,13 @@ export function routes(server: () => string, http: typeof fetch, native: typeof 
   return {
     server: ((input, init) => {
       const path = pathOf(input);
-      if (!path.startsWith('/')) return http(path, init);
+      // Rust refuses any redirection: the window follows none.
+      const bound = { ...init, maxRedirections: 0 };
+      if (!path.startsWith('/')) return http(path, bound);
       // The field only warns; here the pairing code and the token are stopped before they leave in clear.
       const refused = serverWarning(server());
       if (refused) return Promise.reject(new TypeError(refused));
-      return http(server().replace(/\/+$/, '') + path, init);
+      return http(server().replace(/\/+$/, '') + path, bound);
     }) as typeof fetch,
     voice: ((input, init) => {
       const path = pathOf(input);

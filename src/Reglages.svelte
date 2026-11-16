@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import AudioLines from '@lucide/svelte/icons/audio-lines';
   import Ear from '@lucide/svelte/icons/ear';
@@ -29,7 +29,19 @@
   import Fenetre from './desktop/Fenetre.svelte';
   import ServiceVoix from './desktop/ServiceVoix.svelte';
   import { quit } from './desktop/window.svelte.ts';
+  import {
+    CHECKING,
+    CONFIRMED,
+    confirmHost,
+    forgetHost,
+    hostCall,
+    OFF_MACHINE,
+    offMachine,
+    readHosts,
+    type HostButtons,
+  } from './desktop/hotes.ts';
   import { inWindow, serverWarning } from './desktop/net.ts';
+  import { unsafeAddress } from './local.ts';
   import { DEFAULTS, type Settings, type TalkMode } from './settings.ts';
   import type { Session } from './session.svelte.ts';
 
@@ -191,7 +203,61 @@
   ];
   const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
   const direct = $derived(session.latencies.map((l) => l.ms));
+
+  /** The host buttons: one call at a time, Rust's refusal said on its origin's row only. */
+  const access = $state<HostButtons>({ busy: '', said: {} });
+  /** What the page refuses already: the window is never asked to reach it. */
+  const serverRefused = $derived(serverWarning(s.server));
+  const modelRefused = $derived(unsafeAddress(s.model.url, s.model.key));
+  onMount(() => {
+    if (inWindow) void readHosts(session);
+  });
 </script>
+
+<!-- In the list of the window's theme, the focus goes on to the next line, or to the card's title. -->
+{#snippet forget(origin: string)}
+  <Button
+    variant="fantome"
+    size="petit"
+    aria-label="Oublier l’adresse confirmée {origin}"
+    loading={access.busy === origin}
+    onclick={(e) => {
+      const card = e.currentTarget.closest<HTMLElement>('.hotes');
+      const ask = () => forgetHost(session, origin);
+      void hostCall(access, origin, e.currentTarget, ask, card ?? undefined, card?.querySelector('h3'));
+    }}>Oublier</Button
+  >
+{/snippet}
+
+<!-- An address off this computer: the window reaches it once the person confirms it, in the system's box. Until
+then it blocks, and says so as an error: a folded block opens on it. One the page refuses already is never offered. -->
+{#snippet host(url: string, refused: string | undefined)}
+  {@const origin = inWindow && !refused ? offMachine(url) : null}
+  {#if origin}
+    {@const hosts = session.hosts}
+    {@const confirmed = hosts?.includes(origin)}
+    <SettingsRow
+      label="Accès"
+      hint={!hosts ? CHECKING : confirmed ? CONFIRMED : undefined}
+      error={access.said[origin] || (hosts && !confirmed ? OFF_MACHINE : null)}
+    >
+      {#if confirmed}
+        {@render forget(origin)}
+      {:else if hosts}
+        <Button
+          variant="secondaire"
+          size="petit"
+          aria-label="Confirmer l’adresse {origin}"
+          loading={access.busy === origin}
+          onclick={(e) => void hostCall(access, origin, e.currentTarget, () => confirmHost(session, url))}
+          >Confirmer…</Button
+        >
+      {/if}
+    </SettingsRow>
+    <!-- Closed side, but said: the person knows why the box may come back. -->
+    {#if session.hostsSaid}<SettingsRow label="Liste illisible" hint={session.hostsSaid} />{/if}
+  {/if}
+{/snippet}
 
 {#snippet toggle(label: string, hint: string | undefined, checked: boolean, on: (v: boolean) => void)}
   <SettingsRow {label} {hint}>
@@ -201,14 +267,16 @@
   </SettingsRow>
 {/snippet}
 
+<!-- `error`: what blocks, said in place of the hint; a folded block opens on it. -->
 {#snippet field(
   label: string,
   hint: string | undefined,
   value: string,
   suffix: string | undefined,
   on: (v: string) => void,
+  error: string | undefined = undefined,
 )}
-  <SettingsRow {label} {hint}>
+  <SettingsRow {label} {hint} {error}>
     <TextInput
       {value}
       {suffix}
@@ -330,11 +398,13 @@
           {#if inWindow && s.brain === 'linked'}
             {@render field(
               'Adresse du serveur',
-              serverWarning(s.server) ?? 'Changer efface l’appairage : un nouveau code sera demandé.',
+              'Changer efface l’appairage : un nouveau code sera demandé.',
               s.server,
               undefined,
               (v) => v.trim() && session.setServer(v.trim()),
+              serverRefused,
             )}
+            {@render host(s.server, serverRefused)}
           {/if}
         </SettingsCard>
 
@@ -346,7 +416,9 @@
               s.model.url,
               undefined,
               (v) => set((d) => (d.model.url = v.trim() || DEFAULTS.model.url)),
+              modelRefused,
             )}
+            {@render host(s.model.url, modelRefused)}
             {@render field('Nom du modèle', undefined, s.model.name, undefined, (v) =>
               set((d) => (d.model.name = v.trim())),
             )}
@@ -666,6 +738,27 @@
         </Avance>
       {:else if page.id === 'fenetre'}
         <Fenetre {session} {set} />
+        <!-- Every origin confirmed stays here, whatever the fields now say: each can be forgotten. -->
+        <SettingsCard
+          title="Adresses hors de ce poste"
+          description="Celles que la fenêtre peut joindre, confirmées dans la boîte du système."
+          class="hotes"
+        >
+          {#if session.hosts && session.hostsSaid}
+            <!-- An unread list decides as an empty one, on the closed side, but is never said « Aucune ». -->
+            <SettingsRow label="Liste illisible" hint={session.hostsSaid} />
+          {:else if session.hosts}
+            {#each session.hosts as origin (origin)}
+              <SettingsRow label={origin} error={access.said[origin] || null}>
+                {@render forget(origin)}
+              </SettingsRow>
+            {:else}
+              <SettingsRow label="Aucune" hint="La fenêtre ne joint que ce poste." />
+            {/each}
+          {:else}
+            <SettingsRow label="Adresses confirmées" hint={CHECKING} />
+          {/if}
+        </SettingsCard>
       {/if}
     </div>
   </div>

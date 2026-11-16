@@ -123,6 +123,13 @@ export class Session {
   programPaths = $state<Partial<Record<ProgramName, string>>>({});
   /** The folders the person chose in the system's dialog, as the window keeps them: shown, never sent back. */
   folders = $state<Partial<Record<FolderName, string>>>({});
+  /**
+   * The origins off this computer the person confirmed, as the window keeps them: Rust checks each request.
+   * Null until the window has answered: nothing is said blocked, nor confirmed, before.
+   */
+  hosts = $state<string[] | null>(null);
+  /** Why the window could not say which it keeps; the list is then none, on the closed side. */
+  hostsSaid = $state('');
   /** The action on the voice service under way, whatever screen started it: one at a time. */
   voiceBusy = $state<'check' | 'restart' | null>(null);
   /** One follow of the programs being launched, at most. */

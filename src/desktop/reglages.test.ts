@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { flushSync } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1153,5 +1154,458 @@ describe('neutral', () => {
         expect(screen.getAllByText('Identité')[0]).toBeInTheDocument();
         cleanup();
       }
+  });
+});
+
+describe('an address off this computer, confirmed in the settings', () => {
+  const SERVER = 'https://serveur.exemple:8443';
+  const MODEL = 'https://modele.exemple/v1';
+  const NOTICE = /Cette adresse est hors de ce poste : la fenêtre ne la joint qu.une fois confirmée\./;
+  const CONFIRMED = 'Confirmée pour la fenêtre.';
+  const confirmButton = () => screen.queryByRole('button', { name: /^Confirmer/ });
+  /** « Oublier » says what it forgets. */
+  const forget = (origin: string) => ({ name: `Oublier l’adresse confirmée ${origin}` });
+
+  /** Rust's side: the confirmed origins, what « Confirmer… » answers, and what « Oublier » forgets. */
+  function rust(confirmed: string[], answer: boolean | Error = true) {
+    const list = [...confirmed];
+    invoke.mockImplementation(async (cmd, args) => {
+      const a = (args ?? {}) as { url?: string; origin?: string };
+      if (cmd === 'net_hosts') return [...list];
+      if (cmd === 'net_host_confirm') {
+        // Tauri rejects with Rust's message, a string.
+        if (answer instanceof Error) throw answer.message;
+        if (answer) list.push(new URL(a.url!).origin);
+        return answer;
+      }
+      if (cmd === 'net_host_forget') {
+        list.splice(list.indexOf(a.origin!), 1);
+        return null;
+      }
+      return null;
+    });
+  }
+  /** Rust's net_hosts, held until the test answers: the window has not said yet what it keeps. */
+  function heldHosts() {
+    let answer!: (hosts: string[]) => void;
+    const held = new Promise<string[]>((resolve) => (answer = resolve));
+    invoke.mockImplementation(async (cmd) => (cmd === 'net_hosts' ? held : null));
+    return answer;
+  }
+  const asked = () =>
+    waitFor(() => expect(invoke.mock.calls.some(([cmd]) => cmd === 'net_hosts')).toBe(true));
+  /** A turn for the folded block to watch what it holds. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const CHECKING = 'Vérification…';
+  const confirmCalls = () => invoke.mock.calls.filter(([cmd]) => cmd === 'net_host_confirm');
+  const linked = (server = SERVER) => opened('agent', { brain: 'linked', server });
+  const alone = (url = MODEL) =>
+    opened('agent', { brain: 'alone', model: { url, name: 'un-modele', key: '' } });
+
+  it('the server: warns it is off this computer, and « Confirmer… » asks Rust with the field’s address', async () => {
+    rust([]);
+    linked();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^Confirmer/ }));
+    expect(invoke).toHaveBeenCalledWith('net_host_confirm', { url: SERVER });
+    expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+    expect(confirmButton()).toBeNull();
+    expect(screen.getByRole('button', forget(SERVER))).toBeInTheDocument();
+  });
+
+  it('the model: the same, with the model’s address as typed', async () => {
+    rust([]);
+    alone();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^Confirmer/ }));
+    expect(invoke).toHaveBeenCalledWith('net_host_confirm', { url: MODEL });
+    expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
+  });
+
+  it('the person says no in the system’s box: nothing is confirmed', async () => {
+    rust([], false);
+    linked();
+    await userEvent.click(await screen.findByRole('button', { name: /^Confirmer/ }));
+    await waitFor(() => expect(confirmCalls()).toHaveLength(1));
+    expect(screen.queryByText(CONFIRMED)).toBeNull();
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(confirmButton()).not.toBeNull();
+  });
+
+  it('Rust refuses: its message is on the screen, and nothing is confirmed', async () => {
+    rust([], new Error('Adresse illisible.'));
+    linked();
+    await userEvent.click(await screen.findByRole('button', { name: /^Confirmer/ }));
+    expect(await screen.findByText(/Adresse illisible\./)).toBeInTheDocument();
+    expect(screen.queryByText(CONFIRMED)).toBeNull();
+  });
+
+  it('already confirmed, by its origin: says so, offers « Oublier » and no « Confirmer… »', async () => {
+    rust(['https://modele.exemple']);
+    alone();
+    expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+    expect(confirmButton()).toBeNull();
+  });
+
+  it('« Oublier » forgets the origin, and the notice is back', async () => {
+    rust([SERVER]);
+    linked();
+    await userEvent.click(await screen.findByRole('button', forget(SERVER)));
+    expect(invoke).toHaveBeenCalledWith('net_host_forget', { origin: SERVER });
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    expect(screen.queryByText(CONFIRMED)).toBeNull();
+  });
+
+  it('the confirmed origins Rust holds are read from Rust, into the session', async () => {
+    rust([SERVER]);
+    const session = linked();
+    // Not known until Rust answers: neither confirmed nor refused.
+    expect(session.hosts).toBeNull();
+    await asked();
+    await waitFor(() => expect(session.hosts).toEqual([SERVER]));
+  });
+
+  it.each(['http://127.0.0.1:8788', 'http://localhost:8788', 'http://[::1]:8788'])(
+    'this computer, %s: nothing to confirm, nothing asked',
+    async (address) => {
+      rust([]);
+      // Once Rust has answered, when an address off this computer would show its notice.
+      const server = linked(address);
+      await waitFor(() => expect(server.hosts).toEqual([]));
+      expect(screen.queryByText(NOTICE)).toBeNull();
+      expect(screen.queryByText(CONFIRMED)).toBeNull();
+      expect(screen.queryByText(CHECKING)).toBeNull();
+      expect(confirmButton()).toBeNull();
+      cleanup();
+      const model = alone(address + '/v1');
+      await waitFor(() => expect(model.hosts).toEqual([]));
+      expect(screen.queryByText(NOTICE)).toBeNull();
+      expect(confirmButton()).toBeNull();
+      expect(confirmCalls()).toEqual([]);
+    },
+  );
+
+  it.each([
+    ['http://127.0.0.1@example.com:8788', 'http://example.com:8788'],
+    ['http://127.0.0.1.example:8788', 'http://127.0.0.1.example:8788'],
+    ['http://localhost.example:8788', 'http://localhost.example:8788'],
+  ])(
+    '%s only looks local: its host is read by the URL parser, and it is off this computer',
+    async (address, origin) => {
+      // The model, in http without a key: the page lets it go, so the window asks.
+      rust([]);
+      alone(address + '/v1');
+      expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /^Confirmer/ }));
+      expect(invoke).toHaveBeenCalledWith('net_host_confirm', { url: address + '/v1' });
+      // Confirmed by the origin Rust keeps, the parser's: never by the text that looked local.
+      expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
+      cleanup();
+      // The server, in https: the same reading.
+      const secure = address.replace('http:', 'https:');
+      rust([origin.replace('http:', 'https:')]);
+      linked(secure);
+      expect(await screen.findByText(CONFIRMED)).toBeInTheDocument();
+      cleanup();
+      rust([]);
+      linked(secure);
+      expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    ['the server in http, off this computer', 'http://serveur.exemple:8788', '', /partirait en clair/],
+    ['the model in http, with a key', 'http://modele.exemple/v1', 'une-cle', /La clé ne part pas en clair/],
+  ])(
+    '%s: the page refuses it already, so no « Confirmer… », its own warning only',
+    async (_, url, key, warning) => {
+      rust([]);
+      const session = url.includes('serveur')
+        ? linked(url)
+        : opened('agent', { brain: 'alone', model: { url, name: 'un-modele', key } });
+      await waitFor(() => expect(session.hosts).toEqual([]));
+      expect(screen.getByText(warning)).toBeInTheDocument();
+      expect(screen.queryByText(NOTICE)).toBeNull();
+      expect(confirmButton()).toBeNull();
+      expect(confirmCalls()).toEqual([]);
+    },
+  );
+
+  it.each([true, false])(
+    'the model in http with a key, in the window: %s: the page refuses it, the block opens on the alert',
+    async (window) => {
+      where.inWindow = window;
+      rust([]);
+      opened('agent', {
+        brain: 'alone',
+        model: { url: 'http://modele.exemple/v1', name: 'un-modele', key: 'k' },
+      });
+      await waitFor(() => expect(advanced()).toHaveAttribute('open'));
+      expect(within(advanced()).getByRole('alert')).toHaveTextContent(/La clé ne part pas en clair/);
+    },
+  );
+
+  it('the server in http off this computer: the page’s refusal is the row’s error, as on the arrival', () => {
+    rust([]);
+    linked('http://serveur.exemple:8788');
+    expect(screen.getByText(/partirait en clair/).closest('[role="alert"]')).not.toBeNull();
+  });
+
+  it('the list cannot be read: « Confirmer… » is still offered, the closed side, and it says why, in grey', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'net_hosts') throw 'hotes.json illisible';
+      return null;
+    });
+    linked();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    expect(confirmButton()).not.toBeNull();
+    const said = screen.getByText('Liste illisible');
+    expect(said.closest('[role="alert"]')).toBeNull();
+    expect(screen.getByText('hotes.json illisible').closest('[role="alert"]')).toBeNull();
+  });
+
+  it('a list read fine says nothing of it', async () => {
+    rust([]);
+    linked();
+    await screen.findByText(NOTICE);
+    expect(screen.queryByText(/Liste illisible/)).toBeNull();
+  });
+
+  it('« Confirmer… » names the address it confirms', async () => {
+    rust([]);
+    linked();
+    expect(await screen.findByRole('button', { name: `Confirmer l’adresse ${SERVER}` })).toBeInTheDocument();
+  });
+
+  it('two clicks on « Confirmer… », one call: the button waits for the box', async () => {
+    let answer!: (ok: boolean) => void;
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'net_hosts') return [];
+      if (cmd === 'net_host_confirm') return new Promise<boolean>((resolve) => (answer = resolve));
+      return null;
+    });
+    linked();
+    const button = await screen.findByRole('button', { name: /^Confirmer/ });
+    await userEvent.click(button);
+    await userEvent.click(button);
+    expect(confirmCalls()).toHaveLength(1);
+    answer(false);
+    await waitFor(() => expect(button).not.toHaveAttribute('aria-busy'));
+  });
+
+  it('two clicks on « Oublier », one call', async () => {
+    let done!: () => void;
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'net_hosts') return [SERVER];
+      if (cmd === 'net_host_forget') return new Promise<null>((resolve) => (done = () => resolve(null)));
+      return null;
+    });
+    linked();
+    const button = await screen.findByRole('button', forget(SERVER));
+    await userEvent.click(button);
+    await userEvent.click(button);
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'net_host_forget')).toHaveLength(1);
+    done();
+  });
+
+  it('Rust refuses to forget: its message is on the line, and the origin stays', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'net_hosts') return [SERVER];
+      if (cmd === 'net_host_forget') throw 'Une boîte est déjà ouverte.';
+      return null;
+    });
+    linked();
+    await userEvent.click(await screen.findByRole('button', forget(SERVER)));
+    expect(await screen.findByText('Une boîte est déjà ouverte.')).toBeInTheDocument();
+    expect(screen.getByRole('button', forget(SERVER))).toBeInTheDocument();
+    cleanup();
+    opened('fenetre');
+    await userEvent.click(await screen.findByRole('button', forget(SERVER)));
+    expect(await screen.findByText('Une boîte est déjà ouverte.')).toBeInTheDocument();
+    expect(screen.getByText(SERVER)).toBeInTheDocument();
+  });
+
+  it('the keyboard: after « Confirmer… » the focus is on the « Oublier » that replaces it, and back', async () => {
+    rust([]);
+    linked();
+    (await screen.findByRole('button', { name: /^Confirmer/ })).focus();
+    await userEvent.keyboard('{Enter}');
+    await screen.findByText(CONFIRMED);
+    await waitFor(() => expect(screen.getByRole('button', forget(SERVER))).toHaveFocus());
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Confirmer/ })).toHaveFocus());
+  });
+
+  it('the model’s address unconfirmed opens the folded block: it never hides what blocks', async () => {
+    rust([]);
+    alone();
+    await waitFor(() => expect(advanced()).toHaveAttribute('open'));
+    expect(within(advanced()).getByText(NOTICE)).toBeInTheDocument();
+  });
+
+  it('the notice is what blocks: it is said as an error, as Rust’s refusal is', async () => {
+    rust([]);
+    linked();
+    expect((await screen.findByText(NOTICE)).closest('[role="alert"]')).not.toBeNull();
+  });
+
+  it('net_hosts not answered yet, the address already confirmed: no alert, the block stays folded', async () => {
+    heldHosts();
+    alone();
+    await asked();
+    await settle();
+    expect(within(advanced()).getByText(CHECKING)).toBeInTheDocument();
+    expect(within(advanced()).queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+    expect(confirmButton()).toBeNull();
+    expect(advanced()).not.toHaveAttribute('open');
+  });
+
+  it('net_hosts answers with its origin: « Confirmée pour la fenêtre. », and never an alert', async () => {
+    const answer = heldHosts();
+    alone();
+    await asked();
+    await settle();
+    answer(['https://modele.exemple']);
+    expect(await within(advanced()).findByText(CONFIRMED)).toBeInTheDocument();
+    await settle();
+    expect(within(advanced()).queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(CHECKING)).toBeNull();
+    // The folded block never closes by itself: still folded, nothing blocked on the way.
+    expect(advanced()).not.toHaveAttribute('open');
+  });
+
+  it('net_hosts fails: none confirmed, the closed side', async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'net_hosts') throw 'hotes.json illisible';
+      return null;
+    });
+    const session = linked();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    expect(session.hosts).toEqual([]);
+  });
+
+  describe('the window’s theme lists the confirmed origins', () => {
+    const card = () => screen.getByRole('heading', { name: 'Adresses hors de ce poste' }).closest('section')!;
+
+    it('net_hosts fails: « Liste illisible », with the refusal, in grey, never « Aucune »', async () => {
+      invoke.mockImplementation(async (cmd) => {
+        if (cmd === 'net_hosts') throw 'hotes.json illisible';
+        return null;
+      });
+      const session = opened('fenetre');
+      expect(await within(card()).findByText('Liste illisible')).toBeInTheDocument();
+      expect(within(card()).getByText('hotes.json illisible')).toBeInTheDocument();
+      expect(within(card()).queryByText(/Aucune/)).toBeNull();
+      expect(within(card()).queryByRole('alert')).toBeNull();
+      // To decide what blocks, none: the closed side.
+      expect(session.hosts).toEqual([]);
+    });
+
+    it('one call for the whole screen: two different « Oublier » while one waits, one call', async () => {
+      let done!: () => void;
+      invoke.mockImplementation(async (cmd) => {
+        if (cmd === 'net_hosts') return [SERVER, 'https://modele.exemple'];
+        if (cmd === 'net_host_forget') return new Promise<null>((resolve) => (done = () => resolve(null)));
+        return null;
+      });
+      opened('fenetre');
+      await userEvent.click(await screen.findByRole('button', forget(SERVER)));
+      await userEvent.click(screen.getByRole('button', forget('https://modele.exemple')));
+      expect(invoke.mock.calls.filter(([cmd]) => cmd === 'net_host_forget')).toEqual([
+        ['net_host_forget', { origin: SERVER }],
+      ]);
+      done();
+    });
+
+    it('an origin Rust repeats, or what is not one, is listed once, or not at all', async () => {
+      invoke.mockImplementation(async (cmd) =>
+        cmd === 'net_hosts' ? [SERVER, SERVER, 7, null, 'https://modele.exemple'] : null,
+      );
+      const session = opened('fenetre');
+      await waitFor(() => expect(session.hosts).toEqual([SERVER, 'https://modele.exemple']));
+      expect(within(card()).getAllByRole('button', { name: /^Oublier/ })).toHaveLength(2);
+    });
+
+    it('the keyboard: forgetting a line moves the focus to the next « Oublier », then to the card’s title', async () => {
+      rust([SERVER, 'https://modele.exemple']);
+      opened('fenetre');
+      (await screen.findByRole('button', forget(SERVER))).focus();
+      await userEvent.keyboard('{Enter}');
+      await waitFor(() => expect(screen.getByRole('button', forget('https://modele.exemple'))).toHaveFocus());
+      await userEvent.keyboard('{Enter}');
+      await waitFor(() =>
+        expect(screen.getByRole('heading', { name: 'Adresses hors de ce poste' })).toHaveFocus(),
+      );
+      expect(within(card()).getByText(/Aucune/)).toBeInTheDocument();
+    });
+
+    it('one confirmed, then replaced in the field: still listed, and « Oublier » there forgets it', async () => {
+      rust([]);
+      const session = linked();
+      await userEvent.click(await screen.findByRole('button', { name: /^Confirmer/ }));
+      await screen.findByText(CONFIRMED);
+      session.setServer('https://autre.exemple');
+      cleanup();
+      render(Reglages, { session, close: () => {}, start: 'fenetre' });
+      const card = screen.getByRole('heading', { name: 'Adresses hors de ce poste' }).closest('section')!;
+      expect(await within(card).findByText(SERVER)).toBeInTheDocument();
+      await userEvent.click(within(card).getByRole('button', forget(SERVER)));
+      expect(invoke).toHaveBeenCalledWith('net_host_forget', { origin: SERVER });
+      expect(await within(card).findByText(/Aucune/)).toBeInTheDocument();
+      expect(within(card).queryByText(SERVER)).toBeNull();
+    });
+
+    it('each origin has its own « Oublier »', async () => {
+      rust([SERVER, 'https://modele.exemple']);
+      opened('fenetre', { brain: 'linked', server: 'http://127.0.0.1:8788' });
+      expect(await screen.findByRole('button', forget(SERVER))).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', forget('https://modele.exemple')));
+      expect(invoke).toHaveBeenCalledWith('net_host_forget', { origin: 'https://modele.exemple' });
+      await waitFor(() => expect(screen.queryByRole('button', forget('https://modele.exemple'))).toBeNull());
+      expect(screen.getByRole('button', forget(SERVER))).toBeInTheDocument();
+    });
+
+    it('none confirmed: a line says so', async () => {
+      rust([]);
+      opened('fenetre');
+      const card = screen.getByRole('heading', { name: 'Adresses hors de ce poste' }).closest('section')!;
+      expect(await within(card).findByText(/Aucune/)).toBeInTheDocument();
+      expect(within(card).queryByRole('button', { name: /^Oublier/ })).toBeNull();
+    });
+
+    it('while Rust has not answered: a grey line that checks, never « Aucune »', async () => {
+      const answer = heldHosts();
+      opened('fenetre');
+      const card = screen.getByRole('heading', { name: 'Adresses hors de ce poste' }).closest('section')!;
+      await asked();
+      expect(within(card).getByText(CHECKING)).toBeInTheDocument();
+      expect(within(card).queryByText(/Aucune/)).toBeNull();
+      expect(within(card).queryByRole('alert')).toBeNull();
+      answer([]);
+      expect(await within(card).findByText(/Aucune/)).toBeInTheDocument();
+      expect(within(card).queryByText(CHECKING)).toBeNull();
+    });
+  });
+
+  it('showing the notice asks nothing of the person: only the click does', async () => {
+    rust([]);
+    linked();
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    expect(confirmCalls()).toEqual([]);
+  });
+
+  it('in a browser tab, nothing is shown, and nothing asked of the window', () => {
+    where.inWindow = false;
+    rust([]);
+    alone();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+    expect(confirmButton()).toBeNull();
+    cleanup();
+    linked();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+    expect(invoke.mock.calls.filter(([cmd]) => String(cmd).startsWith('net_host'))).toEqual([]);
   });
 });
