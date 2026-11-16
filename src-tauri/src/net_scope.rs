@@ -20,16 +20,19 @@ use tauri::{
 
 const DENIED: &str = "url not allowed on the configured scope";
 
-/// The app and its temporary root; the folder goes when the value does.
-pub(crate) struct TestApp {
-    pub(crate) app: tauri::App<MockRuntime>,
-    pub(crate) root: PathBuf,
+/// The temporary root of an app; the folder goes when the guard does, panic or not.
+pub(crate) struct TempRoot(pub(crate) PathBuf);
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
-impl Drop for TestApp {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
+/// The app and its temporary root (fields drop in order: the app, then the folder).
+pub(crate) struct TestApp {
+    pub(crate) app: tauri::App<MockRuntime>,
+    pub(crate) root: TempRoot,
 }
 
 /// A capability for one window, with `http:default` and the given scope entries.
@@ -52,10 +55,11 @@ pub(crate) fn test_app() -> TestApp {
         N.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&root).unwrap();
+    let root = TempRoot(root);
 
     let mut ctx = tauri::generate_context!();
     ctx.config_mut().app.app_directories_override =
-        Some(AppDirectoriesOverride::Root(root.clone()));
+        Some(AppDirectoriesOverride::Root(root.0.clone()));
     let app = mock_builder()
         .plugin(tauri_plugin_http::init())
         .build(ctx)
@@ -136,13 +140,24 @@ fn assert_denied(t: &TestApp, label: &str, urls: &[&str]) {
 }
 
 #[test]
-fn the_plugin_keeps_its_cookie_file_in_the_temporary_root() {
+fn every_directory_of_the_app_is_under_the_temporary_root() {
     let t = test_app();
-    let cookies = t.root.join("caches").join(".cookies");
-    assert!(
-        cookies.exists(),
-        "the plugin should have created {cookies:?}"
-    );
+    let p = t.app.path();
+    let dirs = [
+        p.app_cache_dir(),
+        p.app_config_dir(),
+        p.app_data_dir(),
+        p.app_local_data_dir(),
+        p.app_log_dir(),
+    ];
+    for dir in dirs {
+        let dir = dir.unwrap();
+        assert!(
+            dir.starts_with(&t.root.0),
+            "{dir:?} is outside {:?}",
+            t.root.0
+        );
+    }
 }
 
 #[test]
@@ -244,12 +259,19 @@ fn a_redirect_out_of_the_scope_is_refused() {
     let (served, was_served) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         if let Ok((mut s, _)) = listener.accept() {
-            let _ = served.send(());
+            // The whole request is read before answering: closing with unread data resets the connection.
+            let mut request = Vec::new();
             let mut buf = [0u8; 1024];
-            let _ = s.read(&mut buf);
+            while !request.ends_with(b"\r\n\r\n") {
+                match s.read(&mut buf) {
+                    Ok(n) if n > 0 => request.extend_from_slice(&buf[..n]),
+                    _ => break,
+                }
+            }
             let _ = s.write_all(
                 b"HTTP/1.1 302 Found\r\nLocation: http://192.0.2.1/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
             );
+            let _ = served.send(());
         }
     });
     let rid = fetch(&t, "essai", &format!("http://127.0.0.1:{port}/")).unwrap();
