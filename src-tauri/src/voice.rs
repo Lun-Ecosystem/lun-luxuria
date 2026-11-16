@@ -46,8 +46,17 @@ pub fn checked_args(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/** The flags the screen fills, word for word: argparse reads an abbreviation (`--orig` for `--origin`). */
-const SERVICE_FLAGS: [&str; 5] = ["--stt", "--tts", "--rvc", "--rvc-gain", "--lang"];
+/**
+ * The flags the screen fills, word for word (argparse reads an abbreviation, `--orig` for `--origin`), with the name
+ * the screen gives their field.
+ */
+const SERVICE_FLAGS: [(&str, &str); 5] = [
+    ("--stt", "Transcription"),
+    ("--tts", "Voix"),
+    ("--rvc", "RVC"),
+    ("--rvc-gain", "Gain de RVC"),
+    ("--lang", "Langue"),
+];
 
 /**
  * The service's arguments: the general limits, then `SERVICE_FLAGS` only, each with its value (`--flag=value` reads
@@ -61,23 +70,24 @@ pub fn checked_service_args(args: &[String]) -> Result<(), String> {
             Some((flag, value)) => (flag, Some(value)),
             None => (arg.as_str(), None),
         };
-        if !SERVICE_FLAGS.contains(&flag) {
+        let Some(&(_, field)) = SERVICE_FLAGS.iter().find(|(f, _)| *f == flag) else {
             return Err(format!("Autres arguments : {flag} refusé."));
-        }
+        };
+        // As argparse reads it: a next word that starts with a dash is another flag, unless it is a number.
+        // Each rule below refuses a value that starts with a dash.
         let value = inline
-            .or_else(|| rest.next().map(String::as_str))
-            .ok_or_else(|| format!("{flag} : valeur manquante."))?;
-        if value.starts_with('-') {
-            return Err(format!(
-                "{flag} : {value} refusé (une valeur ne commence pas par -)."
-            ));
-        }
-        checked_service_value(flag, value)?;
+            .or_else(|| {
+                rest.next()
+                    .map(String::as_str)
+                    .filter(|v| !v.starts_with('-') || v.parse::<f64>().is_ok())
+            })
+            .ok_or_else(|| format!("{field} : valeur manquante après {flag}."))?;
+        checked_service_value(flag, field, value)?;
     }
     Ok(())
 }
 
-fn checked_service_value(flag: &str, value: &str) -> Result<(), String> {
+fn checked_service_value(flag: &str, field: &str, value: &str) -> Result<(), String> {
     // As the service reads it: `kind:rest`, split at the first `:`.
     let (kind, rest) = value.split_once(':').unwrap_or((value, ""));
     let near = |field: &str, url: &str| match crate::loopback::addr(url) {
@@ -119,15 +129,16 @@ fn checked_service_value(flag: &str, value: &str) -> Result<(), String> {
                 "Voix : {value} refusé (piper:<fichier .onnx> ou aucun)."
             )),
         },
-        // The page's own bound (`ServiceVoix.svelte`); a range holds neither infinity nor NaN.
+        // The page's own bound (`ServiceVoix.svelte`); a range holds neither infinity nor NaN. `-0` is in it.
         "--rvc-gain"
-            if value
-                .parse::<f64>()
-                .is_ok_and(|g| (0.0..=10.0).contains(&g)) =>
+            if !value.starts_with('-')
+                && value
+                    .parse::<f64>()
+                    .is_ok_and(|g| (0.0..=10.0).contains(&g)) =>
         {
             Ok(())
         }
-        "--rvc-gain" => Err(format!("{flag} : {value} refusé (un nombre de 0 à 10).")),
+        "--rvc-gain" => Err(format!("{field} : {value} refusé (un nombre de 0 à 10).")),
         "--lang"
             if (2..=3).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_lowercase()) =>
         {
@@ -135,7 +146,7 @@ fn checked_service_value(flag: &str, value: &str) -> Result<(), String> {
         }
         // `--lang`, the last of `SERVICE_FLAGS`: a flag added there without its rule is refused.
         _ => Err(format!(
-            "{flag} : {value} refusé (deux ou trois lettres minuscules)."
+            "{field} : {value} refusé (deux ou trois lettres minuscules)."
         )),
     }
 }
@@ -614,7 +625,7 @@ mod service_args {
         // Out of the page's bound, 0 to 10 (`ServiceVoix.svelte`).
         refused(
             &["--rvc", "http://[::1]:5000", "--rvc-gain", "-2"],
-            "--rvc-gain",
+            "Gain de RVC",
             "-2",
         );
     }
@@ -623,8 +634,10 @@ mod service_args {
     fn a_gain_is_between_zero_and_ten() {
         ok(&["--rvc-gain", "0"]);
         ok(&["--rvc-gain", "10"]);
-        refused(&["--rvc-gain", "10.5"], "--rvc-gain", "10.5");
-        refused(&["--rvc-gain", "1e3"], "--rvc-gain", "1e3");
+        refused(&["--rvc-gain", "10.5"], "Gain de RVC", "10.5");
+        refused(&["--rvc-gain", "1e3"], "Gain de RVC", "1e3");
+        // In the range as a number, but a value never starts with a dash.
+        refused(&["--rvc-gain=-0"], "Gain de RVC", "-0");
     }
 
     #[cfg(windows)]
@@ -733,13 +746,14 @@ mod service_args {
 
     #[test]
     fn a_flag_without_a_value_is_refused() {
-        refused(&["--stt"], "--stt", "--stt");
-        refused(&["--stt", "faster:small", "--lang"], "--lang", "--lang");
+        refused(&["--stt"], "Transcription", "--stt");
+        refused(&["--rvc"], "RVC", "--rvc");
+        refused(&["--stt", "faster:small", "--lang"], "Langue", "--lang");
     }
 
     #[test]
     fn a_value_that_starts_with_a_dash_is_refused() {
-        refused(&["--stt", "--tts", "aucun"], "--stt", "--stt");
+        refused(&["--stt", "--tts", "aucun"], "Transcription", "--stt");
     }
 
     // Transcription.
@@ -808,9 +822,9 @@ mod service_args {
 
     #[test]
     fn a_gain_that_is_not_finite_is_refused() {
-        refused(&["--rvc-gain", "inf"], "--rvc-gain", "inf");
-        refused(&["--rvc-gain", "NaN"], "--rvc-gain", "NaN");
-        refused(&["--rvc-gain", "loud"], "--rvc-gain", "loud");
+        refused(&["--rvc-gain", "inf"], "Gain de RVC", "inf");
+        refused(&["--rvc-gain", "NaN"], "Gain de RVC", "NaN");
+        refused(&["--rvc-gain", "loud"], "Gain de RVC", "loud");
     }
 
     // Voice.
@@ -834,6 +848,24 @@ mod service_args {
     #[test]
     fn a_relative_voice_is_refused() {
         refused(&["--tts", "piper:v.onnx"], "Voix", "v.onnx");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_device_path_to_a_voice_file_that_exists_is_refused() {
+        let file = voice_file("appareil", "voix.onnx");
+        // The file exists: only the drive letter rule refuses these.
+        ok(&["--tts", &format!("piper:{file}")]);
+        refused(
+            &["--tts", &format!("piper:\\\\?\\{file}")],
+            "Voix",
+            "voix.onnx",
+        );
+        refused(
+            &["--tts", &format!("piper:\\\\.\\{file}")],
+            "Voix",
+            "voix.onnx",
+        );
     }
 
     #[cfg(windows)]
@@ -874,10 +906,10 @@ mod service_args {
 
     #[test]
     fn a_language_is_two_or_three_lowercase_letters() {
-        refused(&["--lang", "FR"], "--lang", "FR");
-        refused(&["--lang", "f"], "--lang", "f");
-        refused(&["--lang", "french"], "--lang", "french");
-        refused(&["--lang", "f1"], "--lang", "f1");
+        refused(&["--lang", "FR"], "Langue", "FR");
+        refused(&["--lang", "f"], "Langue", "f");
+        refused(&["--lang", "french"], "Langue", "french");
+        refused(&["--lang", "f1"], "Langue", "f1");
     }
 
     // Each occurrence is checked: argparse keeps the last one.
