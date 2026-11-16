@@ -4,6 +4,8 @@
 mod body;
 mod idle;
 mod job;
+#[cfg(test)]
+mod net_scope;
 mod programs;
 mod tray;
 mod voice;
