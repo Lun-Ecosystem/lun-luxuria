@@ -1,6 +1,17 @@
 // @vitest-environment node
-import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ENDPOINT_DEFAULTS, levelToVoice } from './endpoint.ts';
 import { decide } from './filter.ts';
@@ -168,14 +179,31 @@ interface Fiche {
   phrases?: number;
   textes?: string[];
 }
-const wavs = (dir: string): string[] =>
+// Not `gestes/`: its takes are named by the ids of its list, which `releve.md` would copy.
+const wavs = (dir: string, top = true): string[] =>
   readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
-    return statSync(path).isDirectory() ? wavs(path) : name.endsWith('.wav') ? [path] : [];
+    if (top && name === 'gestes') return [];
+    return statSync(path).isDirectory() ? wavs(path, false) : name.endsWith('.wav') ? [path] : [];
   });
 const json = (path: string): Fiche =>
   existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Fiche) : {};
 const ms = (n: number) => `${(n / 1000).toFixed(2)} s`;
+
+describe('the folder of the bench', () => {
+  it('leaves out the bench of gestures, whose takes are named by its list', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'banc-'));
+    try {
+      for (const f of ['a.wav', 'sous/b.wav', 'gestes/prises/oui-1.wav', 'gestes/temoins/c.wav']) {
+        mkdirSync(dirname(join(dir, f)), { recursive: true });
+        writeFileSync(join(dir, f), writeWav([new Float32Array(16)]));
+      }
+      expect(wavs(dir).map((f) => relative(dir, f).replaceAll('\\', '/'))).toEqual(['a.wav', 'sous/b.wav']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 function row(how: string, heard: Heard, fiche: Fiche): string {
   const sentences = heard.sentences.map((s) => `${ms(s.from)} à ${ms(s.to)}`).join(' ; ') || 'aucune';
