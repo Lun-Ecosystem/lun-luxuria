@@ -24,7 +24,8 @@
   import Avance from './Avance.svelte';
   import { PRESETS, presetOf, withPreset, type Preset } from './listen/presets.ts';
   import Switch from './lib/ui/Switch.svelte';
-  import DossierCorps from './desktop/DossierCorps.svelte';
+  import { reloadBody } from './desktop/corps.svelte.ts';
+  import DossierFenetre from './desktop/DossierFenetre.svelte';
   import Fenetre from './desktop/Fenetre.svelte';
   import ServiceVoix from './desktop/ServiceVoix.svelte';
   import { quit } from './desktop/window.svelte.ts';
@@ -373,7 +374,25 @@
         {/if}
       {:else if page.id === 'corps'}
         {#if inWindow}
-          <DossierCorps {session} {set} />
+          <!-- The body comes from the folder the window keeps: its corps.json decides the level and the images. -->
+          <SettingsCard title="Son corps" description="Sur ce poste seulement.">
+            <DossierFenetre
+              {session}
+              {set}
+              name="corps"
+              of="du corps"
+              none="Aucun : le souffle. Choisis le dossier qui contient son corps.json."
+              after={() => void reloadBody(session)}
+            />
+            <SettingsRow
+              label="Maintenant"
+              hint={session.bodySaid || 'Son corps.json décide du niveau et des images.'}
+            >
+              <Button variant="secondaire" size="petit" onclick={() => void reloadBody(session)}
+                >Relire</Button
+              >
+            </SettingsRow>
+          </SettingsCard>
         {:else}
           <SettingsCard title="Son corps" description="Le souffle, ou des images à leurs adresses.">
             <SettingsRow label="Corps">

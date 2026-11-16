@@ -59,11 +59,12 @@ export interface Settings {
 
 /**
  * The voice service by named fields: its transcription (a local model, or a whisper-server at its address), its
- * voice (a Piper file), RVC at its address. `args`: anything else, one per line as typed.
+ * voice (a Piper file), RVC at its address. `args`: anything else, one per line as typed. Its folder is the window's:
+ * `formerFolder` is the one an older page kept here, only shown so it can be chosen again, never sent.
  */
 export interface VoiceService {
   launch: boolean;
-  folder: string;
+  formerFolder: string;
   stt: { kind: 'faster' | 'whisper-server'; model: string; url: string; program: Program };
   piper: string;
   rvc: { on: boolean; url: string; gain: number; program: Program };
@@ -104,7 +105,7 @@ export const DEFAULTS: Settings = {
     noiseSuppression: true,
     service: {
       launch: false,
-      folder: '',
+      formerFolder: '',
       stt: {
         kind: 'faster',
         model: 'small',
@@ -164,26 +165,32 @@ function fromArgs(saved: Record<string, unknown>): Record<string, unknown> {
     else if (flag === '--tts' && value.startsWith('piper:')) service.piper = value.slice(6);
     else if (flag === '--rvc' && value !== '' && !value.startsWith('--'))
       service.rvc = { ...service.rvc, on: true, url: value };
-    else if (flag === '--rvc-gain' && Number.isFinite(Number(value))) service.rvc.gain = Number(value);
+    // Bounded as the screen bounds it: Rust refuses to launch with the rest.
+    else if (flag === '--rvc-gain' && Number.isFinite(Number(value)))
+      service.rvc.gain = Math.min(10, Math.max(0, Number(value)));
     else {
       rest.push(flag);
       continue;
     }
     i++;
   }
-  return { ...service, launch: saved.launch, folder: saved.folder, args: rest };
+  return { ...service, launch: saved.launch, formerFolder: saved.folder, args: rest };
+}
+
+/** Before 11/2026, the page kept a folder: a reminder now, unless one is already waiting. */
+function remind(group: unknown): void {
+  if (isObject(group) && (typeof group.formerFolder !== 'string' || group.formerFolder === ''))
+    group.formerFolder = group.folder;
 }
 
 export function readSettings(raw: string | null): Settings {
   try {
     const saved: unknown = raw ? JSON.parse(raw) : {};
-    const service = isObject(saved) && isObject(saved.voice) ? saved.voice.service : undefined;
-    if (isObject(service) && Array.isArray(service.args) && !('stt' in service))
-      (saved as { voice: Record<string, unknown> }).voice.service = fromArgs(service);
-    // Before 11/2026, the page kept the body's folder: a reminder now, unless one is already waiting.
-    const body = isObject(saved) && isObject(saved.body) ? saved.body : undefined;
-    if (body && (typeof body.formerFolder !== 'string' || body.formerFolder === ''))
-      body.formerFolder = body.folder;
+    const voice = isObject(saved) && isObject(saved.voice) ? saved.voice : undefined;
+    if (voice && isObject(voice.service) && Array.isArray(voice.service.args) && !('stt' in voice.service))
+      voice.service = fromArgs(voice.service);
+    remind(voice?.service);
+    remind(isObject(saved) ? saved.body : undefined);
     const settings = merged(DEFAULTS, saved);
     // Only the type is checked by the merge: an unknown transcription comes back to the local one.
     const stt = settings.voice.service.stt;

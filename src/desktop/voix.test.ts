@@ -208,7 +208,7 @@ describe('the service’s folder, kept by the window', () => {
   it('voice_start and voice_restart get { args } alone, never a dir or any folder', async () => {
     const session = withService(true);
     former(session);
-    const call = vi.fn(async (cmd: string) =>
+    const call = vi.fn<(cmd: string, a?: Record<string, unknown>) => Promise<unknown>>(async (cmd) =>
       cmd === 'voice_running'
         ? { folder: 'D:\\voix', args: serviceArgs(session.settings.voice.service) }
         : 'C:\\logs\\voix.log',

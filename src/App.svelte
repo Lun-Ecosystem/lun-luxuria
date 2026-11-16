@@ -31,7 +31,7 @@
   }
   /** In the window, nothing missing at launch: a short wait for the voice, then the scene. */
   const entersByItself = inWindow && enterFollows(session);
-  let settingsOpen = $state<'agent' | 'voix' | null>(null);
+  let settingsOpen = $state<'agent' | 'corps' | 'voix' | null>(null);
 </script>
 
 <div class="monde" data-monde="luxuria">

@@ -115,6 +115,8 @@ export class Session {
   bricks = $state<Bricks | null>(null);
   /** The arguments of the voice service the window started; null: not started here, or not known. */
   voiceArgs = $state<string[] | null>(null);
+  /** The folder the window started it from; null: not started here, or not known. */
+  voiceFolder = $state<string | null>(null);
   /** whisper-server and RVC as the window last launched or followed them. */
   programs = $state<Partial<Record<ProgramName, ProgramState>>>({});
   /** The `.exe` the person picked for each, as the window keeps it: shown, never sent back. */

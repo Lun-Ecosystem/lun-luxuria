@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Session } from '../session.svelte.ts';
 import type { Program, VoiceService } from '../settings.ts';
 import type { Call } from './corps.svelte.ts';
-import { readFolders } from './dossiers.ts';
+import { formerWaiting, readFolders } from './dossiers.ts';
 
 const READY_WAIT_MS = 180_000; // the models load before the service answers
 const POLL_MS = 2000;
@@ -26,9 +26,13 @@ export function serviceArgs(s: VoiceService): string[] {
   ];
 }
 
-/** What the service cannot start without, said as such; null when nothing is. */
-export function missing(s: VoiceService): string | null {
-  if (!s.folder.trim()) return 'Il manque le dossier du service, celui qui contient service.py.';
+/** What the service cannot start without, said as such; null when nothing is. Its folder is the one the window keeps. */
+export function missing(session: Session): string | null {
+  const s = session.settings.voice.service;
+  const former = formerWaiting(session, 'voix');
+  if (former)
+    return `Le dossier du service se choisit de nouveau, dans les réglages avancés de la voix : ${former}.`;
+  if (!session.folders.voix) return 'Il manque le dossier du service, celui qui contient service.py.';
   if (!s.piper.trim() && !s.args.includes('--tts')) return 'Il manque le fichier de la voix (.onnx).';
   if (s.stt.kind === 'whisper-server' && !s.stt.url.trim()) return 'Il manque l’adresse de whisper-server.';
   if (s.rvc.on && !s.rvc.url.trim()) return 'Il manque l’adresse de RVC.';
@@ -65,10 +69,24 @@ export function readBricks(f: typeof fetch): () => Promise<Bricks | null> {
 type Sleep = (ms: number) => Promise<void>;
 const wait: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** The arguments of the service the window started; null: not started here or gone; undefined: not known. */
-async function runningArgs(call: Call): Promise<string[] | null | undefined> {
-  const args = await Promise.resolve(call('voice_running', {})).catch(() => undefined);
-  return Array.isArray(args) ? (args as string[]) : args === null ? null : undefined;
+interface Running {
+  folder: string;
+  args: string[];
+}
+const isRunning = (r: unknown): r is Running =>
+  typeof (r as Running | null)?.folder === 'string' && Array.isArray((r as Running).args);
+
+/** The folder and arguments of the service the window started; null: not started here or gone; undefined: not known. */
+async function running(call: Call): Promise<Running | null | undefined> {
+  const run: unknown = await Promise.resolve(call('voice_running', {})).catch(() => undefined);
+  return isRunning(run) ? run : run === null ? null : undefined;
+}
+
+/** What the window started the service with, kept by the page; nothing when it did not, or cannot say. */
+async function readRunning(session: Session, call: Call): Promise<void> {
+  const run = await running(call);
+  session.voiceArgs = run?.args ?? null;
+  session.voiceFolder = run?.folder ?? null;
 }
 
 /** What the page says of the service once it answers, or once it gave up. */
@@ -77,7 +95,7 @@ function reporter(session: Session, call: Call, bricks: () => Promise<Bricks | n
     up: async () => {
       session.voiceStatus = 'up';
       session.voiceSaid = 'Le service voix répond.';
-      session.voiceArgs = (await runningArgs(call)) ?? null;
+      await readRunning(session, call);
       session.bricks = await bricks();
     },
     down: async (said: string) => {
@@ -85,7 +103,7 @@ function reporter(session: Session, call: Call, bricks: () => Promise<Bricks | n
       session.voiceSaid = said;
       session.bricks = null;
       // Still the window's, though silent, it can be restarted; gone, it cannot.
-      session.voiceArgs = (await runningArgs(call)) ?? null;
+      await readRunning(session, call);
     },
   };
 }
@@ -104,7 +122,7 @@ async function answer(
   for (let poll = 0; poll < POLLS; poll++) {
     await sleep(POLL_MS);
     if (await ping()) return up();
-    if ((await runningArgs(call)) === null)
+    if ((await running(call)) === null)
       return down(`Le service voix s’est arrêté au démarrage. Journal : ${log}`);
   }
   await down(`Le service voix ne répond toujours pas. Journal : ${log}`);
@@ -146,11 +164,12 @@ export function startVoice(
       return said.down(
         'Le service voix ne répond pas. Lance-le, ou active « Lancer le service voix avec l’appli ».',
       );
-    const lack = missing(service);
+    const lack = missing(session);
     if (lack) return said.down(`Le service voix ne répond pas. ${lack}`);
     let log: string;
     try {
-      log = (await call('voice_start', { dir: service.folder, args: serviceArgs(service) })) as string;
+      // The window starts it from the folder it keeps: the page sends the arguments alone.
+      log = (await call('voice_start', { args: serviceArgs(service) })) as string;
     } catch (err) {
       return said.down(String(err));
     }
@@ -190,12 +209,17 @@ export function runningWith(session: Session): {
 
 /**
  * Whether the fields differ from what the running service uses: `restart` when the window started it (it
- * restarts it), `manual` when it was started by hand and says another transcription or RVC than the fields.
+ * restarts it), its folder or its arguments changed since; `manual` when it was started by hand and says another
+ * transcription or RVC than the fields.
  */
 export function changes(session: Session): 'none' | 'restart' | 'manual' {
   if (session.voiceStatus !== 'up') return 'none';
   const v = session.settings.voice.service;
-  if (session.voiceArgs) return same(session.voiceArgs, serviceArgs(v)) ? 'none' : 'restart';
+  if (session.voiceArgs) {
+    // A folder the window did not say is no change.
+    const moved = session.voiceFolder !== null && session.voiceFolder !== session.folders.voix;
+    return moved || !same(session.voiceArgs, serviceArgs(v)) ? 'restart' : 'none';
+  }
   const run = runningWith(session);
   if (run.stt === undefined) return 'none';
   return run.stt !== v.stt.kind || run.rvc !== v.rvc.on ? 'manual' : 'none';
@@ -214,8 +238,7 @@ export async function restartVoice(
 ): Promise<boolean> {
   let done = false;
   const ran = await alone(session, 'restart', async () => {
-    const service = session.settings.voice.service;
-    const lack = missing(service);
+    const lack = missing(session);
     if (lack) {
       session.voiceSaid = lack;
       return;
@@ -223,7 +246,7 @@ export async function restartVoice(
     const said = reporter(session, call, bricks);
     let log: string;
     try {
-      log = (await call('voice_restart', { dir: service.folder, args: serviceArgs(service) })) as string;
+      log = (await call('voice_restart', { args: serviceArgs(session.settings.voice.service) })) as string;
     } catch (err) {
       session.voiceSaid = String(err);
       // Refused before stopping anything, as a rule; what answers now says the rest.

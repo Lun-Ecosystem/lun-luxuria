@@ -13,6 +13,7 @@
   import type { Tone } from '../lib/ui/types.ts';
   import type { Session } from '../session.svelte.ts';
   import type { Program, Settings } from '../settings.ts';
+  import DossierFenetre from './DossierFenetre.svelte';
   import { inWindow } from './net.ts';
   import {
     argsOf,
@@ -44,7 +45,7 @@
   }: { session: Session; set: (change: (draft: Settings) => void) => void; part: 'courant' | 'avance' } =
     $props();
   const v = $derived(session.settings.voice.service);
-  const lack = $derived(v.launch ? missing(v) : null);
+  const lack = $derived(v.launch ? missing(session) : null);
   const busy = $derived(session.voiceBusy);
   // Already answering, it can always be checked again.
   const blocked = $derived(lack !== null && session.voiceStatus !== 'up');
@@ -250,14 +251,13 @@
       {/snippet}
     </SettingsRow>
     {#if v.launch}
-      <SettingsRow label="Dossier du service" hint="Celui qui contient service.py.">
-        <TextInput
-          value={v.folder}
-          size="petit"
-          aria-label="Dossier du service"
-          oninput={typed((d, x) => (d.voice.service.folder = x))}
-        />
-      </SettingsRow>
+      <DossierFenetre
+        {session}
+        {set}
+        name="voix"
+        of="du service"
+        none="Aucun : choisis le dossier qui contient service.py."
+      />
     {/if}
   </SettingsCard>
 

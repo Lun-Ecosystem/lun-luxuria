@@ -1,15 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Session } from '../session.svelte.ts';
+import type { Settings } from '../settings.ts';
 import type { Call } from './corps.svelte.ts';
 
 /** The folders the window keeps, by name: the person chooses them in the system's dialog, the page never names one. */
 export type FolderName = 'corps' | 'voix';
 
+/** Where the settings keep the folder an older page saved under this name. */
+export const formerOf = (s: Settings, name: FolderName): { formerFolder: string } =>
+  name === 'corps' ? s.body : s.voice.service;
+
 /** The folder an older page saved, while the window keeps none under this name: to choose again. Empty otherwise. */
 export function formerWaiting(session: Session, name: FolderName): string {
-  if (session.folders[name]) return '';
-  // shortcut: the service's folder is still the page's own, so nothing of it waits; its reminder comes when the window keeps it too.
-  return name === 'corps' ? session.settings.body.formerFolder : '';
+  return session.folders[name] ? '' : formerOf(session.settings, name).formerFolder;
 }
 
 /** The folders as the window keeps them. */

@@ -681,11 +681,11 @@ describe('the service’s folder, chosen in the system’s dialog and kept by th
   it('refused with no folder kept: beside what tells to choose, not in its place', async () => {
     window_({ folder_pick: new Error('Une boîte est déjà ouverte.') });
     open();
+    // The rows that wait for the folder say it too, as alerts of their own: the folder's row is read alone.
+    const row = within(screen.getByText('Dossier du service').parentElement!);
     await fireEvent.click(choose());
-    await vi.waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent('Une boîte est déjà ouverte.'),
-    );
-    expect(screen.getByText(/service\.py/)).toBeInTheDocument();
+    await vi.waitFor(() => expect(row.getByRole('alert')).toHaveTextContent('Une boîte est déjà ouverte.'));
+    expect(row.getByText(/service\.py/)).toBeInTheDocument();
   });
 
   it('« Oublier » refused: announced, the path stays, and both buttons come back', async () => {
@@ -730,11 +730,13 @@ describe('the service’s folder, chosen in the system’s dialog and kept by th
     await vi.waitFor(() => expect(asked('folder_forget')).toHaveLength(1));
   });
 
-  // jsdom applies no stylesheet of a component: the rule is read in the source, and must reach the element.
+  // jsdom applies no stylesheet of a component: the rule is read in the source of the folder's row, and must reach the element.
+  // From the repository's root: Vite rewrites `new URL('./…', import.meta.url)` to the page's address.
   const wraps = (el: Element) => {
-    const css = readFileSync(new URL('./ServiceVoix.svelte', import.meta.url), 'utf8').match(
-      /<style[^>]*>([\s\S]*)<\/style>/,
-    )?.[1];
+    const css = readFileSync('src/desktop/DossierFenetre.svelte', 'utf8')
+      .match(/<style[^>]*>([\s\S]*)<\/style>/)?.[1]
+      // A comment before a rule would be read with its selector, which the DOM then refuses.
+      ?.replace(/\/\*[\s\S]*?\*\//g, '');
     return [...(css ?? '').matchAll(/([^{}]+)\{([^}]*)\}/g)].some(
       ([, selectors, body]) =>
         /overflow-wrap:\s*anywhere/.test(body ?? '') &&

@@ -5,7 +5,17 @@ import Scene from './Scene.svelte';
 import { Session } from './session.svelte.ts';
 import type { Settings } from './settings.ts';
 
+// A browser tab, as jsdom is, unless a test says the window.
+const where = vi.hoisted(() => ({ inWindow: false }));
+vi.mock('./desktop/net.ts', async (real) => ({
+  ...(await real<typeof import('./desktop/net.ts')>()),
+  get inWindow() {
+    return where.inWindow;
+  },
+}));
+
 beforeEach(() => {
+  where.inWindow = false;
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn());
   // jsdom has no scrollTo; the open thread scrolls to its last message.
@@ -59,19 +69,53 @@ describe('a voice that does not answer', () => {
 
 describe('the folders an older page kept', () => {
   const LINE = /Les dossiers se choisissent de nouveau, dans les réglages\./;
+  // Only the window chooses a folder.
+  beforeEach(() => void (where.inWindow = true));
   const formerBody = (session: Session) =>
     session.saveSettings({
       ...session.settings,
       body: { ...session.settings.body, formerFolder: 'C:/ancien/corps' },
     } as Settings);
-  const formerService = (session: Session) =>
+  // The service's folder waits only while the window launches it.
+  const formerService = (session: Session, launch = true) =>
     session.saveSettings({
       ...session.settings,
       voice: {
         ...session.settings.voice,
-        service: { ...session.settings.voice.service, formerFolder: 'D:/ancien/voix' },
+        service: { ...session.settings.voice.service, launch, formerFolder: 'D:/ancien/voix' },
       },
     } as Settings);
+
+  it('in a browser tab: no line, no folder is chosen there', () => {
+    where.inWindow = false;
+    const session = new Session();
+    formerBody(session);
+    formerService(session);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('the service’s old folder, its launch switched off: no line', () => {
+    const session = new Session();
+    formerService(session, false);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('the button opens the theme of the first folder that waits: the body’s, then the service’s', async () => {
+    const session = new Session();
+    formerBody(session);
+    formerService(session);
+    const openSettings = vi.fn();
+    render(Scene, { session, openSettings });
+    const button = () => within(screen.getByText(LINE)).getByRole('button');
+    await fireEvent.click(button());
+    expect(openSettings).toHaveBeenLastCalledWith('corps');
+    session.folders.corps = 'C:/corps';
+    flushSync();
+    await fireEvent.click(button());
+    expect(openSettings).toHaveBeenLastCalledWith('voix');
+  });
 
   it('nothing waits: no line', () => {
     render(Scene, { session: new Session(), openSettings: () => {} });
