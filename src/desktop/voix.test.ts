@@ -228,6 +228,13 @@ describe('the service’s folder, kept by the window', () => {
     expect(session.voiceSaid).toMatch(/Il manque le dossier du service/);
   });
 
+  it('missing: none kept, it sends to the folder to choose, below, not to « Lancer ou vérifier »', () => {
+    const session = withService(true, '');
+    expect(missing(session)).toBe(
+      'Il manque le dossier du service, celui qui contient service.py : choisis-le plus bas, dans les réglages avancés.',
+    );
+  });
+
   it('missing: with an old folder waiting, the notice of the plan, word for word', () => {
     const session = withService(true, '');
     former(session);

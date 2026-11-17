@@ -32,7 +32,8 @@ export function missing(session: Session): string | null {
   const former = formerWaiting(session, 'voix');
   if (former)
     return `Le dossier du service se choisit de nouveau, dans les réglages avancés de la voix : ${former}.`;
-  if (!session.folders.voix) return 'Il manque le dossier du service, celui qui contient service.py.';
+  if (!session.folders.voix)
+    return 'Il manque le dossier du service, celui qui contient service.py : choisis-le plus bas, dans les réglages avancés.';
   if (!s.piper.trim() && !s.args.includes('--tts')) return 'Il manque le fichier de la voix (.onnx).';
   if (s.stt.kind === 'whisper-server' && !s.stt.url.trim()) return 'Il manque l’adresse de whisper-server.';
   if (s.rvc.on && !s.rvc.url.trim()) return 'Il manque l’adresse de RVC.';
