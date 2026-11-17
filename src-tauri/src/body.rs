@@ -1,5 +1,5 @@
-//! The body's folder: `corps.json` and the images it names, read inside that folder and nowhere else. The page
-//! gets bytes, never a path it could widen: no general access to the disk.
+//! The body's folder, chosen by the person (`folders.rs`): `corps.json` and the images it names, read inside that
+//! folder and nowhere else. The page gets bytes, never a path it could widen: no general access to the disk.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -72,14 +72,34 @@ pub fn image(folder: &Path, name: &str) -> Result<Vec<u8>, String> {
     read_capped(&file, IMAGE_MAX, name)
 }
 
-#[tauri::command]
-pub fn body_config(folder: String) -> Result<String, String> {
-    config(Path::new(&folder))
+/** A folder by its full path, with `corps.json`, kept as given. */
+pub fn checked_dir(dir: &str) -> Result<PathBuf, String> {
+    crate::folders::holding(dir, CONFIG, "Dossier du corps introuvable.")
+}
+
+/** The folder kept in `file` (`dossiers.json`), checked again: it may have changed on the disk since. */
+fn kept_folder(file: &Path) -> Result<PathBuf, String> {
+    let dir = crate::folders::kept(file, "corps")
+        .ok_or_else(|| "Aucun dossier du corps choisi.".to_string())?;
+    checked_dir(&dir)
+}
+
+pub fn config_kept(file: &Path) -> Result<String, String> {
+    config(&kept_folder(file)?)
+}
+
+pub fn image_kept(file: &Path, name: &str) -> Result<Vec<u8>, String> {
+    image(&kept_folder(file)?, name)
 }
 
 #[tauri::command]
-pub fn body_image(folder: String, name: String) -> Result<tauri::ipc::Response, String> {
-    image(Path::new(&folder), &name).map(tauri::ipc::Response::new)
+pub fn body_config(app: tauri::AppHandle) -> Result<String, String> {
+    config_kept(&crate::folders::file(&app)?)
+}
+
+#[tauri::command]
+pub fn body_image(app: tauri::AppHandle, name: String) -> Result<tauri::ipc::Response, String> {
+    image_kept(&crate::folders::file(&app)?, &name).map(tauri::ipc::Response::new)
 }
 
 #[cfg(test)]

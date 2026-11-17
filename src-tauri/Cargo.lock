@@ -2177,6 +2177,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-http",
  "tauri-plugin-single-instance",
+ "tauri-runtime",
  "windows-sys 0.61.2",
 ]
 
