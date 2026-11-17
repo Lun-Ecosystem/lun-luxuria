@@ -97,5 +97,12 @@
     "motif": "    if (this.#gone.has(id)) return null;\n",
     "par": "",
     "maillon": "voix"
+  },
+  "debut-oublie": {
+    "quoi": "start ne pose plus #talking",
+    "fichier": "src/conversation.ts",
+    "motif": "      case 'start':\n        this.#talking = true;\n",
+    "par": "      case 'start':\n",
+    "maillon": "suspension"
   }
 }

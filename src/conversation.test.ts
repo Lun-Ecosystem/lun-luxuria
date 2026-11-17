@@ -591,6 +591,93 @@ describe('cutting it off', () => {
     expect(t.calls).toEqual(['cut 110 ""']);
   });
 
+  /** Each transcription waits for `give`, numbered from 0 in the order of the sentences that ended. */
+  function verdicts() {
+    const waiting: ((text: string) => void)[] = [];
+    const stt = (): Promise<Heard> =>
+      new Promise((ok) => waiting.push((text) => ok({ text, confidence: 0.9 })));
+    return { stt, give: (i: number, text: string) => waiting[i]!(text) };
+  }
+  const ASIDE = 'Sous-titres par Amara.org';
+
+  /** Her reply 110 is on its way; sentences A then B both end before either has a verdict. */
+  async function twoEnded() {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    v.give(0, 'Bonjour toi');
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(3000));
+    return { ...v, t };
+  }
+
+  it('a reply held back waits for every sentence that ended: the later one for her forgets it', async () => {
+    const { t, give } = await twoEnded();
+    give(1, ASIDE);
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    expect(t.calls).toEqual([]);
+    give(2, 'Bonjour toi');
+    await tick();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(t.sounds).toHaveLength(0);
+  });
+
+  it('the later one asks nothing too: it comes out once, after the last verdict', async () => {
+    const { t, give } = await twoEnded();
+    give(1, ASIDE);
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    give(2, ASIDE);
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual([]);
+    expect(t.trace.events.filter((e) => e.name === 'relachee')).toHaveLength(1);
+  });
+
+  it('the sound that held it back was its own sentence: the next sentence still holds a reply back', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    // Held while its own sentence is still transcribed: it had no reply to hold.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    v.give(0, ASIDE);
+    await tick();
+    // The next sentence asks (its reply is 110: the first send), and a third voice must hold it back in its turn.
+    t.convo.onEndpoint({ type: 'held' });
+    v.give(1, 'Bonjour toi');
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    t.convo.onEndpoint(end(5000));
+    v.give(2, ASIDE);
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual([]);
+  });
+
+  it('a verdict after the next sentence began does not resume her over it', async () => {
+    const t = await suspended({}, ASIDE);
+    t.convo.onEndpoint(ended);
+    t.convo.onEndpoint({ type: 'start' });
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual(['sound stop']);
+    // That sentence was only a noise: now nothing is said, and she goes on.
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+  });
+
   it('a reply already heard is never taken back afterwards', async () => {
     const t = setup(NO_TRY);
     t.convo.onEndpoint(end(1000));
