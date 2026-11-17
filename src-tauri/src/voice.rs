@@ -45,7 +45,7 @@ const INVISIBLE: &str = "caractère invisible ou de contrôle refusé.";
  * A control character, or one that shows as nothing or reorders text: a box would not show what starts.
  * shortcut: a list, not the Unicode categories (no dependency for them); revisit when an invisible character passes.
  */
-fn hidden(c: char) -> bool {
+pub fn hidden(c: char) -> bool {
     c.is_control()
         || matches!(c, '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}'..='\u{1160}'
             | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}'
@@ -127,6 +127,7 @@ fn checked_service_value(flag: &str, field: &str, value: &str) -> Result<(), Str
     let (kind, rest) = value.split_once(':').unwrap_or((value, ""));
     let near = |field: &str, url: &str| match crate::loopback::addr(url) {
         Some(_) => Ok(()),
+        None if url.trim().is_empty() => Err(format!("{field} : adresse vide.")),
         None => Err(format!(
             "{field} : adresse refusée : {url} (127.0.0.1, localhost ou [::1] seulement)."
         )),
@@ -802,6 +803,20 @@ mod service_args {
                 Err("Langue : caractère invisible ou de contrôle refusé.".to_string()),
                 "{c:?}"
             );
+        }
+    }
+
+    #[test]
+    fn an_empty_address_names_its_field() {
+        let cases: [(&[&str], &str); 4] = [
+            (&["--stt", "whisper-server:"], "Transcription"),
+            (&["--stt=whisper-server:  "], "Transcription"),
+            (&["--rvc", ""], "RVC"),
+            (&["--rvc=  "], "RVC"),
+        ];
+        for (args, field) in cases {
+            let err = checked_service_args(&strings(args));
+            assert_eq!(err, Err(format!("{field} : adresse vide.")), "{args:?}");
         }
     }
 

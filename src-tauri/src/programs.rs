@@ -7,7 +7,9 @@
 //! stopped, at exit or when its arguments change.
 
 use crate::one_box::{self, OneBox};
-use crate::voice::{checked_args, early_exit, ended, hold, kill_tree, open_log, spawn_logged};
+use crate::voice::{
+    checked_args, early_exit, ended, hidden, hold, kill_tree, open_log, spawn_logged,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
@@ -27,6 +29,7 @@ const PATHS: &str = "programmes.json";
 /** The arguments the person confirmed, by name: an absent key was never confirmed, an empty list was, empty. */
 const ARGS: &str = "arguments.json";
 const NO_EXE: &str = "Choisis d’abord son programme.";
+const HIDDEN_EXE: &str = "Programme : caractère invisible ou de contrôle dans son chemin, refusé.";
 
 /** Around each read then write of a config file: `program_forget` runs beside the async commands. */
 pub static FILES: Mutex<()> = Mutex::new(());
@@ -61,8 +64,15 @@ pub fn label(name: &str) -> &str {
     if name == "rvc" { "RVC" } else { name }
 }
 
-/** An existing `.exe`, by its full path; kept as written, so that its folder is a plain one for the program. */
+/**
+ * An existing `.exe`, by its full path; kept as written, so that its folder is a plain one for the program. Checked
+ * where it is picked and again where it starts, since the box shows it: nothing in it hidden, a file written by hand's
+ * included.
+ */
 pub fn checked_exe(path: &str) -> Result<PathBuf, String> {
+    if path.chars().any(hidden) {
+        return Err(HIDDEN_EXE.to_string());
+    }
     let exe = PathBuf::from(path.trim());
     let is_exe = exe
         .extension()
@@ -166,6 +176,10 @@ pub fn confirm_args(
 ) -> Result<bool, String> {
     let name = checked_name(name)?;
     let exe = read_paths(paths_file).remove(name).ok_or(NO_EXE)?;
+    // Shown in the box: what `checked_exe` refuses at the start is refused here, before it.
+    if exe.chars().any(hidden) {
+        return Err(HIDDEN_EXE.to_string());
+    }
     checked_args(args)?;
     if read_arguments(args_file)
         .get(name)
@@ -487,6 +501,19 @@ mod tests {
             checked_exe("Z:\\pas\\la.exe")
                 .unwrap_err()
                 .contains("introuvable")
+        );
+    }
+
+    #[test]
+    fn an_exe_whose_path_hides_a_character_is_refused() {
+        let root = crate::net_scope::TempRoot(dir("exe-cache"));
+        // A real exe, shown as « rvcexe.jpg »: U+202E turns what follows it around.
+        let exe = root.0.join("rvc\u{202E}gpj.exe");
+        fs::write(&exe, "").unwrap();
+        let refused = checked_exe(exe.to_str().unwrap()).unwrap_err();
+        assert_eq!(
+            refused,
+            "Programme : caractère invisible ou de contrôle dans son chemin, refusé."
         );
     }
 
@@ -990,6 +1017,29 @@ mod tests {
                 seen.borrow()[0].1,
                 format!("{}1. «»\n2. « a »\n3. «b»", head(&s))
             );
+        }
+
+        #[test]
+        fn a_kept_path_that_hides_a_character_opens_no_box_and_starts_nothing() {
+            const HIDDEN: &str =
+                "Programme : caractère invisible ou de contrôle dans son chemin, refusé.";
+            let s = setup("args-chemin-cache", false);
+            // A real exe, kept as a `programmes.json` written by hand would hold it.
+            let exe = s.root.0.join("rvc\u{202E}gpj.exe");
+            fs::write(&exe, "").unwrap();
+            save_entry(&s.paths, "rvc", Some(&exe)).unwrap();
+            confirmed(&s, &["-p"]);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let yes = MessageDialogResult::Custom("Confirmer".into());
+            let asked = run(&s, &one, "rvc", &v(&["-q"]), yes, &seen);
+            assert_eq!(asked, Err(HIDDEN.to_string()));
+            assert!(seen.borrow().is_empty());
+            let programs = Programs::default();
+            let log = s.root.0.join("log").join("rvc.log");
+            let started = start_confirmed(&programs, "rvc", &s.paths, &s.args, LOOP, &log);
+            assert_eq!(started, Err(HIDDEN.to_string()));
+            assert!(programs.0.lock().unwrap().is_empty());
+            assert!(!log.exists(), "no log: nothing was opened");
         }
 
         #[test]
