@@ -80,8 +80,8 @@
   "fragment-refuse": {
     "quoi": "fragment refusé laissé en vie",
     "fichier": "src/conversation.ts",
-    "motif": "    if (attempt.failed) {\n",
-    "par": "    if (attempt.failed && !attempt.failed) {\n",
+    "motif": "    if (attempt.failed !== undefined) this.#told(attempt, attempt.failed);\n",
+    "par": "    if (attempt.failed !== undefined && !attempt.failed) this.#told(attempt, attempt.failed);\n",
     "maillon": "retenue"
   },
   "taire-a-vide": {
@@ -125,5 +125,19 @@
     "motif": "const resumeMs = this.#d.settings().bargeIn.resumeMs;",
     "par": "const resumeMs = 0;",
     "maillon": "suspension"
+  },
+  "shown": {
+    "quoi": "file vidée qui dit toujours silent, même sans rien montré",
+    "fichier": "src/speech/speaker.ts",
+    "motif": "if (this.#turns.length === 0 && this.#shown) this.#on({ type: 'silent' });",
+    "par": "if (this.#turns.length === 0) this.#on({ type: 'silent' });",
+    "maillon": "voix"
+  },
+  "memoire-ignoree": {
+    "quoi": "mémoire des tours finis ignorée : un tour fini se recrée",
+    "fichier": "src/speech/speaker.ts",
+    "motif": "return this.#gone.has(id) || this.#ended.has(id);",
+    "par": "return this.#gone.has(id);",
+    "maillon": "voix"
   }
 }
