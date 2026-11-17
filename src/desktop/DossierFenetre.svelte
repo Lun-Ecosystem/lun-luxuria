@@ -29,7 +29,7 @@
     after?: () => void;
   } = $props();
   const path = $derived(session.folders[name]);
-  // Kept by an older page: shown until the window keeps a folder, never sent.
+  // Kept by an older page: shown until the window keeps a folder or « Oublier » sets it aside, never sent.
   const former = $derived(formerWaiting(session, name));
   /** The window's refusal, announced on the folder's row until the next try. */
   let refused = $state('');
@@ -58,9 +58,14 @@
     working = 'forget';
     refused = '';
     try {
-      const done = await forgetFolder(session, name);
-      if (done !== true) return void (refused = done);
-      after?.();
+      // A kept folder is forgotten by the window; an old path alone, by the page: nothing to ask the window.
+      if (path) {
+        const done = await forgetFolder(session, name);
+        if (done !== true) return void (refused = done);
+        after?.();
+      }
+      // The old path goes too, or its notice would come back here and on the scene.
+      if (formerOf(session.settings, name).formerFolder) set((d) => (formerOf(d, name).formerFolder = ''));
       // « Oublier » went with the folder: the focus goes to « Choisir… », once it is enabled again.
       working = null;
       await tick();
@@ -99,6 +104,13 @@
         onclick={forget}>Oublier</Button
       >
     {:else if former}
+      <Button
+        variant="fantome"
+        size="petit"
+        aria-label="Oublier l’ancien dossier {of}"
+        disabled={working === 'choose'}
+        onclick={forget}>Oublier</Button
+      >
       <Button variant="fantome" size="petit" aria-label="Copier l’ancien dossier {of}" onclick={copy}
         >Copier</Button
       >

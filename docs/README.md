@@ -90,7 +90,8 @@ Les champs du service voix, de whisper-server et de RVC sont dans Réglages › 
 - **Les dossiers d'avant** : un dossier qu'une version d'avant gardait dans les réglages de la page n'est jamais
   envoyé. Tant qu'aucun n'est choisi à sa place, sa ligne dit de le choisir de nouveau dans la boîte, avec l'ancien
   chemin et « Copier », et la scène dit « Les dossiers se choisissent de nouveau, dans les réglages. ». Le premier
-  choix réussi l'efface.
+  choix réussi l'efface ; « Oublier » aussi, sans rien choisir ni demander à la fenêtre, et l'oubli d'un dossier
+  gardé l'efface avec lui.
 - **Les arguments du service**, bornés par Rust (`checked_service_args`, `src-tauri/src/voice.rs`) : `--stt`, `--tts`,
   `--rvc`, `--rvc-gain` et `--lang` seuls, chacun avec sa valeur (`--drapeau=valeur` vaut `--drapeau valeur`).
   `--stt faster:<nom>`, un nom sans chemin ni dépôt, ou `--stt whisper-server:<adresse>` ; `--rvc <adresse>` ; une

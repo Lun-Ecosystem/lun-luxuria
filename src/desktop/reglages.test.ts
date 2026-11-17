@@ -37,6 +37,7 @@ vi.mock('@tauri-apps/api/core', async (real) => ({
 }));
 
 const { default: Reglages } = await import('../Reglages.svelte');
+const { default: Scene } = await import('../Scene.svelte');
 const { toasts, dismissAll } = await import('../lib/ui/toasts.svelte.ts');
 const { Session } = await import('../session.svelte.ts');
 const { readProgramPaths } = await import('./voix.ts');
@@ -1072,6 +1073,41 @@ describe('the body’s folder, chosen in the system’s dialog and kept by the w
       await vi.waitFor(() => expect(screen.getByText('C:\\autre')).toBeInTheDocument());
       expect(screen.queryByText(/Le dossier se choisit maintenant/)).toBeNull();
     });
+
+    it('« Oublier » sets it aside without choosing: the window is not called, and it is gone from what is saved', async () => {
+      window_();
+      const session = open(former);
+      await fireEvent.click(screen.getByRole('button', { name: 'Oublier l’ancien dossier du corps' }));
+      await vi.waitFor(() => expect(screen.queryByText(/Le dossier se choisit maintenant/)).toBeNull());
+      expect(screen.queryByText('C:\\corps')).toBeNull();
+      expect(invoke).not.toHaveBeenCalledWith('folder_forget', expect.anything());
+      expect(invoke).not.toHaveBeenCalledWith('folder_pick', expect.anything());
+      expect(session.settings.body.formerFolder).toBe('');
+      expect(JSON.parse(localStorage.getItem('luxuria.settings') ?? '{}').body.formerFolder).toBe('');
+      // Its buttons went with it: the focus goes to « Choisir… ».
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: /^Choisir/ })).toHaveFocus());
+    });
+
+    it('the scene’s line goes with it, without reloading', async () => {
+      window_();
+      const session = open(former);
+      render(Scene, { session, openSettings: () => {} });
+      const line = /Les dossiers se choisissent de nouveau/;
+      expect(screen.getByText(line)).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Oublier l’ancien dossier du corps' }));
+      await vi.waitFor(() => expect(screen.queryByText(line)).toBeNull());
+    });
+
+    it('« Oublier » a kept folder empties it too: its notice does not come back in its place', async () => {
+      window_();
+      const session = open(former);
+      session.folders.corps = 'C:\\autre';
+      await fireEvent.click(await screen.findByRole('button', { name: 'Oublier le dossier du corps' }));
+      await vi.waitFor(() => expect(session.folders.corps).toBeUndefined());
+      expect(invoke).toHaveBeenCalledWith('folder_forget', { name: 'corps' });
+      expect(session.settings.body.formerFolder).toBe('');
+      expect(screen.queryByText(/Le dossier se choisit maintenant/)).toBeNull();
+    });
   });
 });
 
@@ -1282,6 +1318,20 @@ describe('the service’s folder, chosen in the system’s dialog and kept by th
       open(former, 'D:\\voix');
       expect(screen.queryByText(/Choisis de nouveau celui-ci/)).toBeNull();
       expect(screen.queryByRole('button', { name: /^Copier/ })).toBeNull();
+    });
+
+    it('« Oublier » sets it aside without choosing, and the window is not called', async () => {
+      window_();
+      const session = open(former);
+      await fireEvent.click(screen.getByRole('button', { name: 'Oublier l’ancien dossier du service' }));
+      await vi.waitFor(() => expect(screen.queryByText('D:\\ancien\\voix')).toBeNull());
+      expect(invoke).not.toHaveBeenCalledWith('folder_forget', expect.anything());
+      expect(session.settings.voice.service.formerFolder).toBe('');
+      expect(JSON.parse(localStorage.getItem('luxuria.settings') ?? '{}').voice.service.formerFolder).toBe(
+        '',
+      );
+      // What told to choose it anew is said instead.
+      expect(screen.getAllByText(/Il manque le dossier du service/).length).toBeGreaterThan(0);
     });
   });
 });
