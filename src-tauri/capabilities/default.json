@@ -4,7 +4,7 @@
   "description": "What the page may ask of the window, one permission at a time",
   "windows": ["main"],
   "permissions": [
-    "core:default",
+    "core:event:allow-listen",
     {
       "identifier": "http:default",
       "allow": [

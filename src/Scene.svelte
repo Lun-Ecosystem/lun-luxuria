@@ -10,12 +10,15 @@
   import { tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { Mouth, STATE_LABELS, type BodyState } from './body/body.ts';
+  import { formerWaiting } from './desktop/dossiers.ts';
   import { inWindow } from './desktop/net.ts';
+  import { PROGRAMS, unconfirmed } from './desktop/voix.ts';
   import Fil from './Fil.svelte';
   import { Badge, Button, IconButton, Kbd, type Tone } from './lib/ui/index.ts';
   import type { Session } from './session.svelte.ts';
 
-  let { session, openSettings }: { session: Session; openSettings: (theme?: 'voix') => void } = $props();
+  let { session, openSettings }: { session: Session; openSettings: (theme?: 'corps' | 'voix') => void } =
+    $props();
   const mouth = new Mouth();
   const open = $derived(mouth.next(session.level));
   const small = $derived(session.layout === 'small');
@@ -53,6 +56,16 @@
     return s.filter[session.layout] ? 'name' : 'open';
   });
   const showInstruction = $derived(!session.spoke && !session.threadOpen);
+  // In the window, the theme of the first folder an older page kept and still waiting: the service's, if it launches.
+  const waits = $derived.by(() => {
+    if (!inWindow) return null;
+    if (formerWaiting(session, 'corps')) return 'corps';
+    return s.voice.service.launch && formerWaiting(session, 'voix') ? 'voix' : null;
+  });
+  // In the window, the programs its start left down, by name; in the small mode, after the folders: one line at a time.
+  const toConfirm = $derived(
+    inWindow && !(small && waits) ? unconfirmed(session).map((n) => PROGRAMS[n]) : [],
+  );
   let controls: HTMLDivElement;
   /** The instruction's button goes with what it did: the focus goes to the same control, at the top. */
   async function thenFocus(act: () => void, label: string) {
@@ -135,6 +148,18 @@
       </span>
     {:else if session.voiceStatus === 'starting'}
       <span class="etiquette" role="status">Sa voix démarre : les modèles se chargent.</span>
+    {/if}
+    {#if waits}
+      <span class="echec" role="status">
+        Les dossiers se choisissent de nouveau, dans les réglages.
+        <button class="reprise" onclick={() => openSettings(waits)}>Choisir les dossiers</button>
+      </span>
+    {/if}
+    {#if toConfirm.length}
+      <span class="echec" role="status">
+        Les arguments de {toConfirm.join(' et de ')} sont à confirmer.
+        <button class="reprise" onclick={() => openSettings('voix')}>Confirmer les arguments</button>
+      </span>
     {/if}
   </div>
 

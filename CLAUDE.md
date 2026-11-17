@@ -29,18 +29,29 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
   et l'écran ne parle ni de core ni de ce à quoi il peut être relié (`src/noCore.test.ts`).
 - Une page Vite, servie au navigateur ou dans la fenêtre Tauri 2 (`src-tauri/`, Windows). Ce qui n'existe que dans la
   fenêtre vit dans `src/desktop/` et ne s'active que si `inWindow` ; la page dans le navigateur reste entière.
-- Côté Rust, le moins possible : lire le dossier du corps, lancer le service voix (programme fixe, jamais de shell) et,
-  à la demande, whisper-server et RVC (un .exe existant, arrêté avec l'appli), dessiner l'icône de la barre selon l'état
-  que dit la page, lire depuis quand la session n'a reçu ni touche ni souris (l'absence). Chaque permission de
-  `src-tauri/capabilities/` est nommée ; aucune `:default` de plus sans raison.
-- L'IPC de la fenêtre n'est pas bornée. Ce qui la défend : aucun sink HTML dans la page ; la CSP de `tauri.conf.json` ;
-  la lecture du corps bornée au dossier, à des noms simples d'images et à une taille ; les programmes choisis dans la
-  boîte de dialogue du système et gardés côté Rust, lancés sans shell. Ce que la page décide encore
-  ([lun-luxuria#78](https://github.com/Lun-Ecosystem/lun-luxuria/issues/78), `critique`) : le dossier du corps et
-  celui du service voix ; les arguments du service et des programmes ; l'adresse que sonde un programme ; plugin-http,
-  ouvert à tout hôte, à un proxy venu de la page et aux redirections.
-- Le réseau dans la fenêtre : serveur et modèle par plugin-http, service voix par la page (CORS de `voix/service.py`).
-  La CSP de `tauri.conf.json` suit tout nouvel appel ; `blob:` y sert au worklet du micro et aux images du corps.
+- Côté Rust, le moins possible : lire le corps, lancer le service voix (programme fixe, jamais de shell) et, à la
+  demande, whisper-server et RVC (un .exe existant, arrêté avec l'appli), dessiner l'icône de la barre selon l'état que
+  dit la page, lire depuis quand la session n'a reçu ni touche ni souris (l'absence). Chaque permission de
+  `src-tauri/capabilities/` est nommée, sauf `http:default`, derrière le filtre ; du cœur de Tauri (`core:*`), aucune
+  sans un appel de la page : `core:event:allow-listen` et ses commandes de fenêtre (`core_permissions.rs` les liste).
+- Ce qui borne l'IPC ([lun-luxuria#78](https://github.com/Lun-Ecosystem/lun-luxuria/issues/78) ; le détail dans
+  `docs/README.md`). Aucune commande ne prend un dossier de la page : chacun se choisit dans la boîte du système et
+  reste côté Rust. Rust borne les arguments du service (`checked_service_args`) : cinq drapeaux, leurs adresses sur la
+  boucle locale (`loopback.rs`), la voix un `.onnx` de ce poste, `--origin` refusé. C'est Rust qui sonde l'adresse d'un
+  programme, que le champ lui donne, sur la boucle locale seulement ; il le lance avec l'exe gardé et les arguments
+  confirmés par la personne. Aucun sink HTML dans la page ; le corps se lit dans son dossier, par noms simples.
+- Aucune permission `dialog:` pour la page : les boîtes s'ouvrent côté Rust, une à la fois (`one_box.rs`). Celle des
+  arguments donne l'exe gardé, puis chaque argument numéroté et entre « » ; Entrée et Échap refusent. Un caractère de
+  contrôle ou invisible est refusé dans un argument et dans le chemin de l'exe ; un autre exe choisi fait tomber la
+  confirmation. `dossiers.json`, `programmes.json`, `arguments.json` et `hotes.json` s'écrivent sous un seul verrou.
+- Le réseau dans la fenêtre : serveur et modèle par plugin-http, chaque `fetch` vérifié par `net_guard.rs` (ni proxy ni
+  redirection, vers la boucle locale ou une origine confirmée), service voix par la page (CORS de `voix/service.py`). La
+  CSP de `tauri.conf.json` suit tout nouvel appel ; `blob:` y sert au worklet du micro et aux images du corps.
+- Ce qui reste ouvert : une page compromise lance le service dans le dossier choisi, et les programmes avec leurs
+  arguments confirmés ; elle fait lire au service tout `.onnx` du poste comme voix, un lecteur réseau ou un lien vers un
+  partage compris, et lit les images du corps ; elle joint les origines confirmées, par toute méthode et tout chemin, et
+  une origine est un nom : son DNS peut mener au réseau local. La portée de `default.json` admet tout hôte, derrière
+  `NetGuard` : à chaque mise à jour de tauri, vérifier que le trait `Plugin` a toujours dix méthodes, toutes transmises.
 - L'audio ne quitte jamais le PC : seuls du texte et des signaux en sortent.
 - Le corps ne parle qu'à `Brain` (`src/brain.ts`) : ce qui marche seul marche relié, et l'inverse.
 - Tout mécanisme de perception a son interrupteur dans `settings.ts` et sur l'écran Réglages, et ne dépend d'aucun autre.

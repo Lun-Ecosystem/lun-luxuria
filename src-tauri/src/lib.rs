@@ -2,8 +2,16 @@
 //! what a browser tab cannot: a window of its own, global keys, requests without CORS.
 
 mod body;
+#[cfg(test)]
+mod core_permissions;
+mod folders;
 mod idle;
 mod job;
+mod loopback;
+mod net_guard;
+#[cfg(test)]
+mod net_scope;
+mod one_box;
 mod programs;
 mod tray;
 mod voice;
@@ -19,8 +27,10 @@ pub fn run() {
                 let _ = w.show();
             }
         }))
-        .plugin(tauri_plugin_http::init())
-        // Used from Rust only: the person picks the programs the app may launch (programs.rs).
+        // The HTTP plugin behind the window's network filter, under its name `http` (net_guard.rs).
+        .plugin(net_guard::NetGuard::new())
+        // Used from Rust only: the person picks the programs the app may launch (programs.rs) and its folders
+        // (folders.rs).
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // Starting with Windows is the person's switch on the settings screen; nothing is set here.
@@ -28,16 +38,25 @@ pub fn run() {
         .setup(|app| Ok(tray::setup(app.handle())?))
         .manage(voice::Launched::default())
         .manage(programs::Programs::default())
+        .manage(one_box::OneBox::default())
         .invoke_handler(tauri::generate_handler![
             body::body_config,
             body::body_image,
+            folders::folder_pick,
+            folders::folder_paths,
+            folders::folder_forget,
             idle::idle_ms,
+            net_guard::net_hosts,
+            net_guard::net_host_confirm,
+            net_guard::net_host_forget,
             voice::voice_start,
             voice::voice_restart,
             voice::voice_running,
             programs::program_paths,
             programs::program_pick,
             programs::program_forget,
+            programs::program_arguments,
+            programs::program_args,
             programs::program_start,
             programs::program_state,
             tray::tray_state

@@ -4,6 +4,8 @@ import { BREATH, loadBody, readBodyFile, type Call } from './corps.svelte.ts';
 const folderWith =
   (files: Record<string, string | Error>): Call =>
   async (command, args) => {
+    // The window keeps the folder: the page never names one.
+    if ('folder' in args) throw new Error(`${command} a reçu un dossier de la page`);
     const name = command === 'body_config' ? 'corps.json' : (args.name as string);
     const found = files[name];
     if (found === undefined) throw `Fichier introuvable : ${name}`;
@@ -37,19 +39,44 @@ describe('loadBody', () => {
       'r.png': 'R',
       'p.png': 'P',
     });
-    expect(await loadBody('D:\\corps', call, toUrl)).toEqual({
+    expect(await loadBody(call, toUrl)).toEqual({
       view: { level: 'images', rest: 'blob:R', talking: 'blob:P', crop: { zoom: 2, x: 50, y: 30 } },
       said: 'Les images du dossier.',
     });
   });
 
-  it('no folder, no corps.json, a missing or refused rest image: the breath, and why', async () => {
-    expect((await loadBody('  ', folderWith({}), toUrl)).view).toEqual(BREATH);
-    const none = await loadBody('D:\\corps', folderWith({}), toUrl);
+  it('never sends a folder: body_config takes nothing, body_image only a name', async () => {
+    const seen: [string, Record<string, unknown>][] = [];
+    const inner = folderWith({
+      'corps.json': '{"repos":"r.png","parole":"p.png"}',
+      'r.png': 'R',
+      'p.png': 'P',
+    });
+    const call: Call = (command, args) => {
+      seen.push([command, args]);
+      return inner(command, args);
+    };
+    await loadBody(call, toUrl);
+    expect(seen).toEqual([
+      ['body_config', {}],
+      ['body_image', { name: 'r.png' }],
+      ['body_image', { name: 'p.png' }],
+    ]);
+  });
+
+  it('no folder kept by the window: Rust says so, the breath, and why', async () => {
+    const r = await loadBody(async () => {
+      throw 'Aucun dossier du corps choisi.';
+    }, toUrl);
+    expect(r.view).toEqual(BREATH);
+    expect(r.said).toBe('Aucun dossier du corps choisi. Le souffle en attendant.');
+  });
+
+  it('no corps.json, a refused rest image: the breath, and why', async () => {
+    const none = await loadBody(folderWith({}), toUrl);
     expect(none.view).toEqual(BREATH);
     expect(none.said).toMatch(/corps\.json/);
     const refused = await loadBody(
-      'D:\\corps',
       folderWith({
         'corps.json': '{"repos":"r.png"}',
         'r.png': new Error('Fichier hors du dossier : r.png'),
@@ -62,7 +89,6 @@ describe('loadBody', () => {
 
   it('a missing talking image keeps the rest image, the mouth still', async () => {
     const r = await loadBody(
-      'D:\\corps',
       folderWith({ 'corps.json': '{"repos":"r.png","parole":"p.png"}', 'r.png': 'R' }),
       toUrl,
     );
@@ -71,7 +97,7 @@ describe('loadBody', () => {
   });
 
   it('the file says the breath: the breath', async () => {
-    const r = await loadBody('D:\\corps', folderWith({ 'corps.json': '{"niveau":"souffle"}' }), toUrl);
+    const r = await loadBody(folderWith({ 'corps.json': '{"niveau":"souffle"}' }), toUrl);
     expect(r.view).toEqual(BREATH);
   });
 });

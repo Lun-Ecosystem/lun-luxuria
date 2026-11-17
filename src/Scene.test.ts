@@ -1,11 +1,22 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { confirmArgs, forgetProgram, readProgramPaths } from './desktop/voix.ts';
 import Scene from './Scene.svelte';
 import { Session } from './session.svelte.ts';
 import type { Settings } from './settings.ts';
 
+// A browser tab, as jsdom is, unless a test says the window.
+const where = vi.hoisted(() => ({ inWindow: false }));
+vi.mock('./desktop/net.ts', async (real) => ({
+  ...(await real<typeof import('./desktop/net.ts')>()),
+  get inWindow() {
+    return where.inWindow;
+  },
+}));
+
 beforeEach(() => {
+  where.inWindow = false;
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn());
   // jsdom has no scrollTo; the open thread scrolls to its last message.
@@ -54,6 +65,281 @@ describe('a voice that does not answer', () => {
     session.voiceStatus = 'down';
     flushSync();
     expect(screen.getByText(/Sa voix ne répond pas/).textContent).not.toMatch(/\bil\b/);
+  });
+});
+
+describe('the folders an older page kept', () => {
+  const LINE = /Les dossiers se choisissent de nouveau, dans les réglages\./;
+  // Only the window chooses a folder.
+  beforeEach(() => void (where.inWindow = true));
+  const formerBody = (session: Session) =>
+    session.saveSettings({
+      ...session.settings,
+      body: { ...session.settings.body, formerFolder: 'C:/ancien/corps' },
+    } as Settings);
+  // The service's folder waits only while the window launches it.
+  const formerService = (session: Session, launch = true) =>
+    session.saveSettings({
+      ...session.settings,
+      voice: {
+        ...session.settings.voice,
+        service: { ...session.settings.voice.service, launch, formerFolder: 'D:/ancien/voix' },
+      },
+    } as Settings);
+
+  it('in a browser tab: no line, no folder is chosen there', () => {
+    where.inWindow = false;
+    const session = new Session();
+    formerBody(session);
+    formerService(session);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('the service’s old folder, its launch switched off: no line', () => {
+    const session = new Session();
+    formerService(session, false);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('the button opens the theme of the first folder that waits: the body’s, then the service’s', async () => {
+    const session = new Session();
+    formerBody(session);
+    formerService(session);
+    const openSettings = vi.fn();
+    render(Scene, { session, openSettings });
+    const button = () => within(screen.getByText(LINE)).getByRole('button');
+    await fireEvent.click(button());
+    expect(openSettings).toHaveBeenLastCalledWith('corps');
+    session.folders.corps = 'C:/corps';
+    flushSync();
+    await fireEvent.click(button());
+    expect(openSettings).toHaveBeenLastCalledWith('voix');
+  });
+
+  it('nothing waits: no line', () => {
+    render(Scene, { session: new Session(), openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('an old folder of the body waits: the line, and a button that opens the settings', async () => {
+    const session = new Session();
+    formerBody(session);
+    const openSettings = vi.fn();
+    render(Scene, { session, openSettings });
+    const line = screen.getByText(LINE);
+    await fireEvent.click(within(line.parentElement!).getByRole('button'));
+    expect(openSettings).toHaveBeenCalledOnce();
+  });
+
+  it('an old folder of the service waits: the same line', () => {
+    const session = new Session();
+    formerService(session);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+  });
+
+  it('it says no path: the person finds them in the settings', () => {
+    const session = new Session();
+    formerBody(session);
+    formerService(session);
+    const { container } = render(Scene, { session, openSettings: () => {} });
+    expect(container.textContent).not.toMatch(/ancien/);
+  });
+
+  it('it stays until the last folder is chosen, and goes then', () => {
+    const session = new Session();
+    formerBody(session);
+    formerService(session);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+    session.folders.corps = 'C:/corps';
+    flushSync();
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+    session.folders.voix = 'D:/voix';
+    flushSync();
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('it comes back with the old folder when the window forgets the new one', () => {
+    const session = new Session();
+    formerBody(session);
+    session.folders.corps = 'C:/corps';
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+    delete session.folders.corps;
+    flushSync();
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+  });
+});
+
+describe('the arguments of the programs never confirmed', () => {
+  // The button leads to the settings, and the folded block opens there: the line says no more.
+  const ONE = 'Les arguments de whisper-server sont à confirmer.';
+  const LINE = /sont à confirmer/;
+  const FOLDERS = /Les dossiers se choisissent de nouveau, dans les réglages\./;
+  // Only the window launches a program.
+  beforeEach(() => void (where.inWindow = true));
+  /** whisper-server transcribes, RVC is on if asked, each launched with the app unless said, both exes picked. */
+  const programs = (
+    session: Session,
+    { launch = true, rvc = false, kind = 'whisper-server' as 'faster' | 'whisper-server' } = {},
+  ) => {
+    const v = session.settings.voice.service;
+    session.saveSettings({
+      ...session.settings,
+      voice: {
+        ...session.settings.voice,
+        service: {
+          ...v,
+          stt: { ...v.stt, kind, program: { args: [], launch } },
+          rvc: { ...v.rvc, on: rvc, program: { args: [], launch } },
+        },
+      },
+    } as Settings);
+    session.programPaths = { 'whisper-server': 'C:/w/whisper-server.exe', rvc: 'C:/rvc/rvc.exe' };
+  };
+  const confirmed = async () => true;
+
+  it('its exe picked, launched with the app, its arguments never confirmed: the line names it', async () => {
+    const session = new Session();
+    programs(session);
+    const openSettings = vi.fn();
+    render(Scene, { session, openSettings });
+    const line = screen.getByText(ONE);
+    expect(line).toHaveAttribute('role', 'status');
+    await fireEvent.click(within(line).getByRole('button', { name: 'Confirmer les arguments' }));
+    expect(openSettings).toHaveBeenCalledWith('voix');
+  });
+
+  it('not launched with the app, no exe, or a program not in use: no line', () => {
+    const off = new Session();
+    programs(off, { launch: false });
+    render(Scene, { session: off, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+    cleanup();
+
+    const none = new Session();
+    programs(none);
+    none.programPaths = {};
+    render(Scene, { session: none, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+    cleanup();
+
+    const unused = new Session();
+    programs(unused, { kind: 'faster' });
+    render(Scene, { session: unused, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('arguments confirmed, even none: no line', () => {
+    const session = new Session();
+    programs(session);
+    session.programArgs = { 'whisper-server': [] };
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+    session.programArgs = { 'whisper-server': ['-m', 'small.bin'] };
+    flushSync();
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('goes once they are confirmed, or once the exe is forgotten, without a reload', async () => {
+    const session = new Session();
+    programs(session);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.getByText(ONE)).toBeInTheDocument();
+    expect(await confirmArgs(session, 'whisper-server', [], confirmed)).toBe(true);
+    flushSync();
+    expect(screen.queryByText(LINE)).toBeNull();
+
+    const other = new Session();
+    programs(other);
+    cleanup();
+    render(Scene, { session: other, openSettings: () => {} });
+    expect(screen.getByText(ONE)).toBeInTheDocument();
+    expect(await forgetProgram(other, 'whisper-server', async () => ({}))).toBe(true);
+    flushSync();
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('one line for both programs, naming each; then the one still waiting', async () => {
+    const session = new Session();
+    programs(session, { rvc: true });
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.getAllByText(LINE)).toHaveLength(1);
+    expect(
+      screen.getByText('Les arguments de whisper-server et de RVC sont à confirmer.'),
+    ).toBeInTheDocument();
+    await confirmArgs(session, 'whisper-server', ['-m', 'small.bin'], confirmed);
+    flushSync();
+    expect(screen.getByText('Les arguments de RVC sont à confirmer.')).toBeInTheDocument();
+  });
+
+  it('« Lancer … avec l’appli » switched off: the line goes, without a reload', () => {
+    const session = new Session();
+    programs(session);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.getByText(ONE)).toBeInTheDocument();
+    programs(session, { launch: false });
+    flushSync();
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('at the window’s start: nothing while the arguments are read, then the line only if they really miss', async () => {
+    for (const [kept, shown] of [
+      [{ 'whisper-server': [] }, false],
+      [{}, true],
+    ] as const) {
+      const session = new Session();
+      programs(session);
+      session.programPaths = {};
+      render(Scene, { session, openSettings: () => {} });
+      const at: { answer?: (v: unknown) => void } = {};
+      const call = vi.fn((cmd: string) =>
+        cmd === 'program_paths'
+          ? Promise.resolve({ 'whisper-server': 'C:/w/whisper-server.exe' })
+          : new Promise((r) => (at.answer = r)),
+      );
+      const reading = readProgramPaths(session, call);
+      await vi.waitFor(() => expect(at.answer).toBeDefined());
+      flushSync();
+      expect(screen.queryByText(LINE)).toBeNull();
+      at.answer!(kept);
+      await reading;
+      flushSync();
+      expect(screen.queryByText(LINE) !== null).toBe(shown);
+      cleanup();
+    }
+  });
+
+  it('in a browser tab: no line, no program is launched there', () => {
+    where.inWindow = false;
+    const session = new Session();
+    programs(session, { rvc: true });
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('beside the folders’ line on the scene; in the small mode, after it, one line at a time', () => {
+    const session = new Session();
+    programs(session);
+    session.saveSettings({
+      ...session.settings,
+      body: { ...session.settings.body, formerFolder: 'C:/ancien/corps' },
+    } as Settings);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.getByText(FOLDERS)).toBeInTheDocument();
+    expect(screen.getByText(ONE)).toBeInTheDocument();
+
+    session.setLayout('small');
+    flushSync();
+    expect(screen.getByText(FOLDERS)).toBeInTheDocument();
+    expect(screen.queryByText(LINE)).toBeNull();
+    session.folders.corps = 'C:/corps';
+    flushSync();
+    expect(screen.queryByText(FOLDERS)).toBeNull();
+    expect(screen.getByText(ONE)).toBeInTheDocument();
   });
 });
 

@@ -26,6 +26,11 @@
       "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
+  "plugins": {
+    "http": {
+      "scopeRedirects": true
+    }
+  },
   "bundle": {
     "active": false,
     "targets": "all",

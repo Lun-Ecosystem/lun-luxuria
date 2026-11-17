@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Session } from '../session.svelte.ts';
 import type { Program, VoiceService } from '../settings.ts';
 import type { Call } from './corps.svelte.ts';
+import { formerWaiting, readFolders } from './dossiers.ts';
 
 const READY_WAIT_MS = 180_000; // the models load before the service answers
 const POLL_MS = 2000;
@@ -25,9 +26,14 @@ export function serviceArgs(s: VoiceService): string[] {
   ];
 }
 
-/** What the service cannot start without, said as such; null when nothing is. */
-export function missing(s: VoiceService): string | null {
-  if (!s.folder.trim()) return 'Il manque le dossier du service, celui qui contient service.py.';
+/** What the service cannot start without, said as such; null when nothing is. Its folder is the one the window keeps. */
+export function missing(session: Session): string | null {
+  const s = session.settings.voice.service;
+  const former = formerWaiting(session, 'voix');
+  if (former)
+    return `Le dossier du service se choisit de nouveau, dans les réglages avancés de la voix : ${former}.`;
+  if (!session.folders.voix)
+    return 'Il manque le dossier du service, celui qui contient service.py : choisis-le plus bas, dans les réglages avancés.';
   if (!s.piper.trim() && !s.args.includes('--tts')) return 'Il manque le fichier de la voix (.onnx).';
   if (s.stt.kind === 'whisper-server' && !s.stt.url.trim()) return 'Il manque l’adresse de whisper-server.';
   if (s.rvc.on && !s.rvc.url.trim()) return 'Il manque l’adresse de RVC.';
@@ -64,10 +70,24 @@ export function readBricks(f: typeof fetch): () => Promise<Bricks | null> {
 type Sleep = (ms: number) => Promise<void>;
 const wait: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** The arguments of the service the window started; null: not started here or gone; undefined: not known. */
-async function runningArgs(call: Call): Promise<string[] | null | undefined> {
-  const args = await Promise.resolve(call('voice_running', {})).catch(() => undefined);
-  return Array.isArray(args) ? (args as string[]) : args === null ? null : undefined;
+interface Running {
+  folder: string;
+  args: string[];
+}
+const isRunning = (r: unknown): r is Running =>
+  typeof (r as Running | null)?.folder === 'string' && Array.isArray((r as Running).args);
+
+/** The folder and arguments of the service the window started; null: not started here or gone; undefined: not known. */
+async function running(call: Call): Promise<Running | null | undefined> {
+  const run: unknown = await Promise.resolve(call('voice_running', {})).catch(() => undefined);
+  return isRunning(run) ? run : run === null ? null : undefined;
+}
+
+/** What the window started the service with, kept by the page; nothing when it did not, or cannot say. */
+async function readRunning(session: Session, call: Call): Promise<void> {
+  const run = await running(call);
+  session.voiceArgs = run?.args ?? null;
+  session.voiceFolder = run?.folder ?? null;
 }
 
 /** What the page says of the service once it answers, or once it gave up. */
@@ -76,7 +96,7 @@ function reporter(session: Session, call: Call, bricks: () => Promise<Bricks | n
     up: async () => {
       session.voiceStatus = 'up';
       session.voiceSaid = 'Le service voix répond.';
-      session.voiceArgs = (await runningArgs(call)) ?? null;
+      await readRunning(session, call);
       session.bricks = await bricks();
     },
     down: async (said: string) => {
@@ -84,7 +104,7 @@ function reporter(session: Session, call: Call, bricks: () => Promise<Bricks | n
       session.voiceSaid = said;
       session.bricks = null;
       // Still the window's, though silent, it can be restarted; gone, it cannot.
-      session.voiceArgs = (await runningArgs(call)) ?? null;
+      await readRunning(session, call);
     },
   };
 }
@@ -103,7 +123,7 @@ async function answer(
   for (let poll = 0; poll < POLLS; poll++) {
     await sleep(POLL_MS);
     if (await ping()) return up();
-    if ((await runningArgs(call)) === null)
+    if ((await running(call)) === null)
       return down(`Le service voix s’est arrêté au démarrage. Journal : ${log}`);
   }
   await down(`Le service voix ne répond toujours pas. Journal : ${log}`);
@@ -143,13 +163,14 @@ export function startVoice(
     const service = session.settings.voice.service;
     if (!service.launch)
       return said.down(
-        'Le service voix ne répond pas. Lance-le, ou active « Lancer le service voix avec l’appli ».',
+        'Le service voix ne répond pas. Lance-le, ou active « Lancer le service voix avec l’appli », plus bas, dans les réglages avancés.',
       );
-    const lack = missing(service);
+    const lack = missing(session);
     if (lack) return said.down(`Le service voix ne répond pas. ${lack}`);
     let log: string;
     try {
-      log = (await call('voice_start', { dir: service.folder, args: serviceArgs(service) })) as string;
+      // The window starts it from the folder it keeps: the page sends the arguments alone.
+      log = (await call('voice_start', { args: serviceArgs(service) })) as string;
     } catch (err) {
       return said.down(String(err));
     }
@@ -157,7 +178,7 @@ export function startVoice(
   });
 }
 
-const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+export const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 const after = (args: string[], flag: string) => {
   const i = args.indexOf(flag);
   return i < 0 ? undefined : args[i + 1];
@@ -189,12 +210,17 @@ export function runningWith(session: Session): {
 
 /**
  * Whether the fields differ from what the running service uses: `restart` when the window started it (it
- * restarts it), `manual` when it was started by hand and says another transcription or RVC than the fields.
+ * restarts it), its folder or its arguments changed since; `manual` when it was started by hand and says another
+ * transcription or RVC than the fields.
  */
 export function changes(session: Session): 'none' | 'restart' | 'manual' {
   if (session.voiceStatus !== 'up') return 'none';
   const v = session.settings.voice.service;
-  if (session.voiceArgs) return same(session.voiceArgs, serviceArgs(v)) ? 'none' : 'restart';
+  if (session.voiceArgs) {
+    // A folder the window did not say is no change.
+    const moved = session.voiceFolder !== null && session.voiceFolder !== session.folders.voix;
+    return moved || !same(session.voiceArgs, serviceArgs(v)) ? 'restart' : 'none';
+  }
   const run = runningWith(session);
   if (run.stt === undefined) return 'none';
   return run.stt !== v.stt.kind || run.rvc !== v.rvc.on ? 'manual' : 'none';
@@ -213,8 +239,7 @@ export async function restartVoice(
 ): Promise<boolean> {
   let done = false;
   const ran = await alone(session, 'restart', async () => {
-    const service = session.settings.voice.service;
-    const lack = missing(service);
+    const lack = missing(session);
     if (lack) {
       session.voiceSaid = lack;
       return;
@@ -222,7 +247,7 @@ export async function restartVoice(
     const said = reporter(session, call, bricks);
     let log: string;
     try {
-      log = (await call('voice_restart', { dir: service.folder, args: serviceArgs(service) })) as string;
+      log = (await call('voice_restart', { args: serviceArgs(session.settings.voice.service) })) as string;
     } catch (err) {
       session.voiceSaid = String(err);
       // Refused before stopping anything, as a rule; what answers now says the rest.
@@ -239,23 +264,17 @@ export async function restartVoice(
 export type ProgramName = 'whisper-server' | 'rvc';
 export const PROGRAMS: Record<ProgramName, string> = { 'whisper-server': 'whisper-server', rvc: 'RVC' };
 
-/** What the window last said of a program; `starting` while it is followed, `left` polls before giving up. */
+/**
+ * What the window last said of a program; `starting` while it is followed, `left` polls before giving up, `url`
+ * the address it was launched with, the one probed: the field may change meanwhile, at each key.
+ */
 export interface ProgramState {
   said: string;
   ok?: boolean;
   starting?: boolean;
   log?: string | undefined;
   left?: number;
-}
-
-/** `host:port` of an address, with the scheme's port when none is written; null when it is not one. */
-export function addrOf(url: string): string | null {
-  try {
-    const u = new URL(url);
-    return `${u.hostname}:${u.port || (u.protocol === 'https:' ? '443' : '80')}`;
-  } catch {
-    return null;
-  }
+  url?: string;
 }
 
 /** The programs in use: whisper-server when it transcribes, RVC when it is on. */
@@ -265,28 +284,78 @@ function inUse(v: VoiceService): { name: ProgramName; url: string; program: Prog
   return [...(v.stt.kind === 'whisper-server' ? [stt] : []), ...(v.rvc.on ? [rvc] : [])];
 }
 
-/** The `.exe` the person picked, as the window keeps them. */
-export async function readProgramPaths(session: Session, call: Call = invoke): Promise<void> {
-  const paths = await Promise.resolve(call('program_paths', {})).catch(() => null);
-  session.programPaths = paths && typeof paths === 'object' ? (paths as Session['programPaths']) : {};
+/** The arguments the person confirmed, as the window keeps them; unreadable, none is confirmed. */
+async function readProgramArgs(call: Call): Promise<Session['programArgs']> {
+  const args = await Promise.resolve(call('program_arguments', {})).catch(() => null);
+  return args && typeof args === 'object' ? (args as Session['programArgs']) : {};
 }
 
-/** The system's dialog, opened by the window: only the person chooses what it may launch. */
-export async function pickProgram(session: Session, name: ProgramName, call: Call = invoke): Promise<void> {
+/**
+ * The `.exe` the person picked, and the arguments confirmed for each, as the window keeps them. Both set together,
+ * once both answered: an exe beside arguments not read yet would say them unconfirmed, or another's confirmed.
+ */
+export async function readProgramPaths(session: Session, call: Call = invoke): Promise<void> {
+  const paths = await Promise.resolve(call('program_paths', {})).catch(() => null);
+  const args = await readProgramArgs(call);
+  session.programPaths = paths && typeof paths === 'object' ? (paths as Session['programPaths']) : {};
+  session.programArgs = args;
+}
+
+/**
+ * The system's dialog, opened by the window: only the person chooses what it may launch. True: picked; false:
+ * cancelled; a string: the refusal, said beside the exe. It is no state of the program: one starting stays followed.
+ */
+export async function pickProgram(
+  session: Session,
+  name: ProgramName,
+  call: Call = invoke,
+): Promise<boolean | string> {
   try {
     const path = await call('program_pick', { name });
-    if (typeof path === 'string') session.programPaths[name] = path;
+    if (typeof path !== 'string') return false;
+    // Another exe for this name drops its confirmation, on the window's side: both change together.
+    const args = await readProgramArgs(call);
+    session.programPaths[name] = path;
+    session.programArgs = args;
+    return true;
   } catch (err) {
-    session.programs[name] = { said: String(err) };
+    return String(err);
   }
 }
 
-export async function forgetProgram(session: Session, name: ProgramName, call: Call = invoke): Promise<void> {
+/** True once the window forgot the exe, and its arguments with it; a string: the refusal, as for a pick. */
+export async function forgetProgram(
+  session: Session,
+  name: ProgramName,
+  call: Call = invoke,
+): Promise<true | string> {
   try {
     await call('program_forget', { name });
+    const args = await readProgramArgs(call);
     delete session.programPaths[name];
+    session.programArgs = args;
+    return true;
   } catch (err) {
-    session.programs[name] = { said: String(err) };
+    return String(err);
+  }
+}
+
+/**
+ * The draft, shown by the window in the system's dialog: it launches only what the person confirmed there. True
+ * once confirmed; false: the person did not confirm them in the dialog; a string: the window's refusal.
+ */
+export async function confirmArgs(
+  session: Session,
+  name: ProgramName,
+  args: string[],
+  call: Call = invoke,
+): Promise<boolean | string> {
+  try {
+    if ((await call('program_args', { name, args })) !== true) return false;
+    session.programArgs[name] = [...args];
+    return true;
+  } catch (err) {
+    return String(err);
   }
 }
 
@@ -304,19 +373,15 @@ export async function launchProgram(
   call: Call = invoke,
 ): Promise<boolean> {
   const p = inUse(session.settings.voice.service).find((x) => x.name === name);
-  const addr = p && addrOf(p.url);
-  if (!p || !addr || !session.programPaths[name]) {
+  if (!p || !session.programPaths[name]) {
     session.programs[name] = {
-      said: !p
-        ? 'Pas utilisé dans ces réglages.'
-        : !addr
-          ? 'Son adresse n’est pas valide.'
-          : 'Choisis d’abord son programme.',
+      said: !p ? 'Pas utilisé dans ces réglages.' : 'Choisis d’abord son programme.',
     };
     return false;
   }
   try {
-    const { outcome, log } = (await call('program_start', { name, args: p.program.args, addr })) as {
+    // The field as typed, even empty: the window decides which address it probes, and runs the arguments confirmed.
+    const { outcome, log } = (await call('program_start', { name, url: p.url })) as {
       outcome: string;
       log: string;
     };
@@ -325,7 +390,7 @@ export async function launchProgram(
     session.programs[name] = {
       said: OUTCOME[outcome] ?? outcome,
       ok: true,
-      ...(now ? { starting: true, log, left: POLLS } : {}),
+      ...(now ? { starting: true, log, left: POLLS, url: p.url } : {}),
     };
     return now;
   } catch (err) {
@@ -334,18 +399,35 @@ export async function launchProgram(
   }
 }
 
-/** At the window's start: each program in use, picked and asked to launch. */
+/** Each program in use, picked and asked to launch with the app. */
+const asked = (session: Session) =>
+  inUse(session.settings.voice.service).filter((p) => p.program.launch && session.programPaths[p.name]);
+
+/** Those the app's start leaves down, their arguments never confirmed: the scene says so. */
+export const unconfirmed = (session: Session): ProgramName[] =>
+  asked(session)
+    .filter((p) => session.programArgs[p.name] === undefined)
+    .map((p) => p.name);
+
+/**
+ * At the window's start: each program in use, picked and asked to launch. One whose arguments were never confirmed
+ * stays down: no dialog opens by itself, in the middle of a turn.
+ */
 export async function startPrograms(session: Session, call: Call = invoke): Promise<boolean> {
-  const asked = inUse(session.settings.voice.service).filter(
-    (p) => p.program.launch && session.programPaths[p.name],
+  const waiting = unconfirmed(session);
+  const started = await Promise.all(
+    asked(session).map(async (p) => {
+      if (!waiting.includes(p.name)) return launchProgram(session, p.name, call);
+      session.programs[p.name] = {
+        said: 'Ses arguments sont à confirmer, dans les réglages avancés de la voix.',
+      };
+      return false;
+    }),
   );
-  const started = await Promise.all(asked.map((p) => launchProgram(session, p.name, call)));
   return started.some(Boolean);
 }
 
 const NAMES = Object.keys(PROGRAMS) as ProgramName[];
-/** Where a program answers, from the fields, in use or not. */
-const urlOf = (v: VoiceService, name: ProgramName) => (name === 'rvc' ? v.rvc.url : v.stt.url);
 
 /**
  * Follows the programs being launched until each answers at its address, ends, or the wait runs out, and says it.
@@ -368,8 +450,14 @@ export async function followPrograms(
       for (const name of waiting()) {
         const s = session.programs[name]!;
         const label = PROGRAMS[name];
-        const addr = addrOf(urlOf(session.settings.voice.service, name)) ?? '';
-        const now = await Promise.resolve(call('program_state', { name, addr })).catch(() => 'starting');
+        let now: unknown;
+        try {
+          now = await call('program_state', { name, url: s.url });
+        } catch (err) {
+          // The window only refuses: this one is no longer followed, the others go on.
+          session.programs[name] = { said: String(err) };
+          continue;
+        }
         const left = (s.left ?? 0) - 1;
         if (now === 'answering') session.programs[name] = { said: `${label} répond.`, ok: true, log: s.log };
         else if (now !== 'starting')
@@ -397,6 +485,7 @@ export async function startAll(
   bricks: () => Promise<Bricks | null> = readBricks(session.voiceFetch),
 ): Promise<void> {
   await readProgramPaths(session, call);
+  await readFolders(session, call);
   const started = await startPrograms(session, call);
   const follow = started ? followPrograms(session, call, sleep, bricks) : Promise.resolve();
   await startVoice(session, ping, call, sleep, bricks);

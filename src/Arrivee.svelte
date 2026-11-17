@@ -1,7 +1,18 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { Button, CodeInput, Field, TextInput } from './lib/ui/index.ts';
   import { missingToEnter } from './arrival.ts';
+  import {
+    CHECKING,
+    CONFIRMED,
+    confirmHost,
+    forgetHost,
+    hostCall,
+    OFF_MACHINE,
+    offMachine,
+    readHosts,
+    type HostButtons,
+  } from './desktop/hotes.ts';
   import { inWindow, serverWarning } from './desktop/net.ts';
   import { unsafeAddress } from './local.ts';
   import type { Session } from './session.svelte.ts';
@@ -53,7 +64,56 @@
     }
     await session.enter();
   }
+
+  /** The host buttons: one call at a time, Rust's refusal said in its address's field only. */
+  const access = $state<HostButtons>({ busy: '', said: {} });
+  /** What the page refuses already: said as the field's error, and the window is never asked to reach it. */
+  const serverRefused = $derived(serverWarning(s.server));
+  const modelRefused = $derived(urlMissing ? undefined : unsafeAddress(s.model.url, s.model.key));
+  onMount(() => {
+    if (inWindow) void readHosts(session);
+  });
+  /** An address off this computer blocks until confirmed: the field's error says it, after its own. */
+  function hostError(url: string): string | undefined {
+    const origin = inWindow ? offMachine(url) : null;
+    if (!origin || !session.hosts) return undefined;
+    return access.said[origin] || (session.hosts.includes(origin) ? undefined : OFF_MACHINE);
+  }
 </script>
+
+<!-- Under an address off this computer: « Confirmer… » opens the system's box, from the window. One the page refuses
+already is never offered. -->
+{#snippet host(url: string, refused: string | undefined)}
+  {@const origin = inWindow && !refused ? offMachine(url) : null}
+  {#if origin}
+    <div class="hote">
+      {#if !session.hosts}
+        <p class="aide">{CHECKING}</p>
+      {:else if session.hosts.includes(origin)}
+        <p class="aide">{CONFIRMED}</p>
+        <Button
+          variant="fantome"
+          size="petit"
+          aria-label="Oublier l’adresse confirmée {origin}"
+          loading={access.busy === origin}
+          onclick={(e) => void hostCall(access, origin, e.currentTarget, () => forgetHost(session, origin))}
+          >Oublier</Button
+        >
+      {:else}
+        <Button
+          variant="secondaire"
+          size="petit"
+          aria-label="Confirmer l’adresse {origin}"
+          loading={access.busy === origin}
+          onclick={(e) => void hostCall(access, origin, e.currentTarget, () => confirmHost(session, url))}
+          >Confirmer…</Button
+        >
+        <!-- Closed side, but said: the person knows why the box may come back. -->
+        {#if session.hostsSaid}<p class="aide">Liste illisible : {session.hostsSaid}</p>{/if}
+      {/if}
+    </div>
+  {/if}
+{/snippet}
 
 <main class="seuil">
   <div class="colonne">
@@ -90,11 +150,12 @@
             <Field
               label="Adresse du modèle"
               hint="Compatible OpenAI, souvent terminée par /v1."
-              error={urlMissing ? undefined : unsafeAddress(s.model.url, s.model.key)}
+              error={urlMissing ? undefined : (modelRefused ?? hostError(s.model.url))}
             >
               <TextInput value={s.model.url} oninput={(e) => set((d) => (d.model.url = typed(e).trim()))} />
             </Field>
             {#if urlMissing}<p class="manque" id="{uid}-missing">{missing}</p>{/if}
+            {@render host(s.model.url, modelRefused)}
           </div>
           <div class="bloc">
             <Field label="Nom du modèle">
@@ -117,19 +178,22 @@
           </Field>
         {:else}
           {#if inWindow}
-            <Field
-              label="Adresse du serveur"
-              hint="Sur ce poste, l’adresse par défaut convient. Pour un autre poste, son adresse en https."
-              error={serverWarning(s.server)}
-            >
-              <TextInput
-                value={s.server}
-                onchange={(e) => {
-                  const url = typed(e).trim();
-                  if (url) session.setServer(url);
-                }}
-              />
-            </Field>
+            <div class="bloc">
+              <Field
+                label="Adresse du serveur"
+                hint="Sur ce poste, l’adresse par défaut convient. Pour un autre poste, son adresse en https."
+                error={serverRefused ?? hostError(s.server)}
+              >
+                <TextInput
+                  value={s.server}
+                  onchange={(e) => {
+                    const url = typed(e).trim();
+                    if (url) session.setServer(url);
+                  }}
+                />
+              </Field>
+              {@render host(s.server, serverRefused)}
+            </div>
           {/if}
           {#if needsCode}
             <div class="bloc">
@@ -288,6 +352,13 @@
   .manque {
     font-size: 12.5px;
     color: var(--attention);
+  }
+  .hote {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
   }
   .pied {
     display: flex;

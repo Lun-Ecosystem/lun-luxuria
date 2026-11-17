@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import {
     Badge,
     Button,
@@ -13,11 +14,13 @@
   import type { Tone } from '../lib/ui/types.ts';
   import type { Session } from '../session.svelte.ts';
   import type { Program, Settings } from '../settings.ts';
+  import DossierFenetre from './DossierFenetre.svelte';
   import { inWindow } from './net.ts';
   import {
     argsOf,
     changes,
     checkVoice,
+    confirmArgs,
     followPrograms,
     forgetProgram,
     launchProgram,
@@ -27,7 +30,9 @@
     PROGRAMS,
     restartVoice,
     runningWith,
+    same,
     startVoice,
+    unconfirmed,
     type ProgramName,
   } from './voix.ts';
 
@@ -44,7 +49,7 @@
   }: { session: Session; set: (change: (draft: Settings) => void) => void; part: 'courant' | 'avance' } =
     $props();
   const v = $derived(session.settings.voice.service);
-  const lack = $derived(v.launch ? missing(v) : null);
+  const lack = $derived(v.launch ? missing(session) : null);
   const busy = $derived(session.voiceBusy);
   // Already answering, it can always be checked again.
   const blocked = $derived(lack !== null && session.voiceStatus !== 'up');
@@ -91,12 +96,17 @@
   );
   const piperWaits = $derived(run.piper !== undefined && run.piper !== v.piper);
   const WAITS = 'attend la relance du service.';
-  /** What to do when a program does not answer: launch it from here when it is picked, else by hand. */
+  /**
+   * What to do when a program does not answer: launch it from here when it is picked, once its arguments were
+   * confirmed (the window refuses before), else by hand.
+   */
   const absent = (name: ProgramName, url: string) =>
     `${PROGRAMS[name]} ne répond pas à ${url}. ` +
-    (session.programPaths[name]
-      ? `Lance-le avec « Lancer ${PROGRAMS[name]} ».`
-      : 'Lance-le, puis « Lancer ou vérifier ».');
+    (!session.programPaths[name]
+      ? 'Lance-le, puis « Lancer ou vérifier ».'
+      : session.programArgs[name] === undefined
+        ? 'Confirme d’abord ses arguments, plus bas.'
+        : `Lance-le avec « Lancer ${PROGRAMS[name]} ».`);
 
   /** Saved as typed, so a click on the button right after counts; a number or a fallback waits for the field to be left. */
   const typed = (on: (d: Settings, value: string) => void) => (e: Event) => {
@@ -113,9 +123,49 @@
   const restart = () => act(() => restartVoice(session, pingVoice(session.voiceFetch)));
   const waiting = $derived(changes(session));
 
+  type Gesture = 'choose' | 'confirm' | 'forget';
+  // One call at a time on a program's buttons, « Lancer » included: two clicks before its dialog shows would open a
+  // second, refused one.
+  let working = $state<Partial<Record<ProgramName, Gesture>>>({});
+  /**
+   * What a program's last gesture had to say, until the next, beside its button's row; never its state, which a
+   * launch under way keeps. `refusal`: the window's; otherwise the person's own answer in the dialog.
+   */
+  let said = $state<Partial<Record<ProgramName, { on: Gesture; text: string; refusal: boolean }>>>({});
+  const waits = (name: ProgramName, on: Gesture) => working[name] !== undefined && working[name] !== on;
+
+  /** What the gesture answered, undefined when another was under way; a refusal is kept, every button comes back. */
+  async function gesture(name: ProgramName, on: Gesture, job: () => Promise<boolean | string>) {
+    if (working[name]) return undefined;
+    working[name] = on;
+    delete said[name];
+    try {
+      const done = await job();
+      if (typeof done === 'string') said[name] = { on, text: done, refusal: true };
+      return done;
+    } finally {
+      delete working[name];
+    }
+  }
+  /** The clicked button went: the focus goes to what replaces it, once enabled again, rather than to the page. */
+  async function focus(label: string) {
+    await tick();
+    document.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.focus();
+  }
+  const choose = (name: ProgramName) => void gesture(name, 'choose', () => pickProgram(session, name));
+  async function forget(name: ProgramName) {
+    if ((await gesture(name, 'forget', () => forgetProgram(session, name))) === true)
+      await focus(`Choisir le programme de ${PROGRAMS[name]}`);
+  }
+  async function confirm(name: ProgramName, args: string[]) {
+    const done = await gesture(name, 'confirm', () => confirmArgs(session, name, args));
+    if (done === false) said[name] = { on: 'confirm', text: 'Arguments non confirmés.', refusal: false };
+    else if (done === true) await focus(`Arguments de ${PROGRAMS[name]}`);
+  }
+
   let launching = $state<ProgramName | null>(null);
   async function launch(name: ProgramName) {
-    if (launching) return;
+    if (launching || working[name]) return;
     launching = name;
     try {
       if (await launchProgram(session, name)) void followPrograms(session);
@@ -132,24 +182,33 @@
 {#snippet program(name: ProgramName, p: Program, edit: (d: Settings) => Program)}
   {@const label = PROGRAMS[name]}
   {@const path = session.programPaths[name]}
-  <SettingsRow
-    label="Son programme"
-    hint={path ?? 'Aucun : tu le lances toi-même. Choisis son .exe pour que l’appli le lance.'}
-  >
+  {@const confirmed = session.programArgs[name]}
+  {@const s = said[name]}
+  <!-- The refusal goes beside the exe or what tells to choose it, never in their place. -->
+  {#snippet exe()}
+    {#if path}<span class="garde">{path}</span>{:else}Aucun : tu le lances toi-même. Choisis son .exe pour que
+      l’appli le lance.{/if}
+    {#if s && s.on !== 'confirm'}<span class="refus" role="alert">{s.text}</span>{/if}
+  {/snippet}
+  <SettingsRow label="Son programme" hint={exe}>
     <span class="gestes">
       {#if path}
         <Button
           variant="fantome"
           size="petit"
           aria-label="Oublier le programme de {label}"
-          onclick={() => void forgetProgram(session, name)}>Oublier</Button
+          disabled={waits(name, 'forget')}
+          loading={working[name] === 'forget'}
+          onclick={() => void forget(name)}>Oublier</Button
         >
       {/if}
       <Button
         variant="secondaire"
         size="petit"
         aria-label="Choisir le programme de {label}"
-        onclick={() => void pickProgram(session, name)}>Choisir…</Button
+        disabled={waits(name, 'choose')}
+        loading={working[name] === 'choose'}
+        onclick={() => choose(name)}>Choisir…</Button
       >
     </span>
   </SettingsRow>
@@ -162,8 +221,34 @@
         oninput={(e) => {
           const lines = argsOf((e.currentTarget as HTMLTextAreaElement).value);
           set((d) => (edit(d).args = lines));
+          // What « Confirmer… » said was of another draft.
+          if (said[name]?.on === 'confirm') delete said[name];
         }}
       />
+    </SettingsRow>
+    <!-- Each argument as the window's dialog shows it: between « », nothing added. -->
+    <!-- What the app's start leaves down blocks: the folded block opens on it, without an alert for a fixed text. -->
+    {#snippet confirmation()}
+      <span class="confirmes" data-bloque={unconfirmed(session).includes(name) ? '' : undefined}
+        >{confirmed
+          ? `Confirmés : ${confirmed.map((a) => `«${a}»`).join(' ') || 'aucun argument'}`
+          : 'Pas encore confirmés : l’appli ne le lance qu’avec des arguments confirmés.'}</span
+      >
+      {#if s?.on === 'confirm' && s.refusal}<span class="refus" role="alert">{s.text}</span>{/if}
+      <!-- Always there, so the person's own answer is announced when it comes. -->
+      <span class="dit" role="status">{s?.on === 'confirm' && !s.refusal ? s.text : ''}</span>
+    {/snippet}
+    <SettingsRow label="Confirmation" hint={confirmation}>
+      {#if !confirmed || !same(confirmed, p.args)}
+        <Button
+          variant="secondaire"
+          size="petit"
+          aria-label="Confirmer les arguments de {label}"
+          disabled={waits(name, 'confirm')}
+          loading={working[name] === 'confirm'}
+          onclick={() => void confirm(name, p.args)}>Confirmer…</Button
+        >
+      {/if}
     </SettingsRow>
     <SettingsRow label="Lancer {label} avec l’appli" hint="Seulement si rien ne répond déjà à son adresse.">
       {#snippet children({ labelId })}
@@ -178,7 +263,7 @@
       <Button
         variant="secondaire"
         size="petit"
-        disabled={launching !== null && launching !== name}
+        disabled={(launching !== null && launching !== name) || working[name] !== undefined}
         loading={launching === name}
         onclick={() => void launch(name)}>Lancer {label}</Button
       >
@@ -250,14 +335,14 @@
       {/snippet}
     </SettingsRow>
     {#if v.launch}
-      <SettingsRow label="Dossier du service" hint="Celui qui contient service.py.">
-        <TextInput
-          value={v.folder}
-          size="petit"
-          aria-label="Dossier du service"
-          oninput={typed((d, x) => (d.voice.service.folder = x))}
-        />
-      </SettingsRow>
+      <DossierFenetre
+        {session}
+        {set}
+        name="voix"
+        of="du service"
+        none="Aucun : choisis le dossier qui contient service.py."
+        needed
+      />
     {/if}
   </SettingsCard>
 
@@ -391,5 +476,20 @@
   .gestes {
     display: inline-flex;
     gap: 8px;
+  }
+  /* The kit's tone for the window's refusal, on its own line under the exe or what was confirmed. */
+  .refus {
+    display: block;
+    color: var(--danger);
+  }
+  /* The person's own answer in the dialog: no fault, the hint's tone. */
+  .dit {
+    display: block;
+  }
+  /* A Windows path has no space to break at: it wraps anywhere rather than pass under the buttons. */
+  .garde,
+  .confirmes,
+  .refus {
+    overflow-wrap: anywhere;
   }
 </style>

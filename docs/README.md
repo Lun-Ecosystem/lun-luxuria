@@ -3,8 +3,10 @@
 ## Lancer
 
 1. La voix : `uv run voix/service.py --stt faster:small --tts piper:<voix.onnx> [--rvc <url>]`. Autres briques :
-   `--stt whisper-server:<url>` (whisper.cpp par Vulkan), `--tts kokoro:<modèle.onnx>:<voix.bin>`. `--lang` règle la
-   langue transcrite (`fr` par défaut). Dans un onglet, c'est la seule façon de le lancer : l'écran renvoie ici.
+   `--stt whisper-server:<url>` (whisper.cpp par Vulkan), `--tts kokoro:<modèle.onnx>:<voix.bin>`. kokoro demande
+   `kokoro_onnx`, absent des dépendances du script que `uv run` installe : la fenêtre refuse de le lancer. `--lang`
+   règle la langue transcrite (`fr` par défaut). Dans un onglet, c'est la seule façon de le lancer : l'écran renvoie
+   ici.
    - **Sans synthèse** : `--tts aucun`, ou sans `--tts`. `/tts` répond 503 et `/ping` dit `"tts": "aucun"` ; la
      chaîne du banc s'en sert quand sa voix est servie par le joueur.
    - **Confiance** : avec faster-whisper, l'exponentielle de la moyenne d'`avg_logprob`, qui compte aussi horodatages
@@ -58,26 +60,65 @@ annoncé : l'écoute et la sourdine restent ce qu'elles sont.
 
 Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des Réglages) :
 
-- **Le réseau** : le serveur et le modèle sont joints par le côté Rust, sans CORS. L'adresse du serveur se règle à
-  l'écran ; la changer oublie le jeton, il faut appairer de nouveau. Le service voix reste joint par la page : ses
-  origines comptent `http://tauri.localhost`.
+- **Le réseau** : le serveur et le modèle sont joints par le côté Rust (plugin-http, sans cookies), sans CORS, derrière
+  un filtre (`src-tauri/src/net_guard.rs`) : chaque requête part sans proxy et sans suivre de redirection, en http ou
+  https, vers 127.0.0.1, localhost ou [::1], ou vers une origine (`schéma://hôte`, avec son port s'il n'est pas celui du schéma) que la personne a confirmée.
+  Sous l'adresse du serveur et celle du modèle, à l'arrivée et dans les Réglages, une adresse hors de ce poste offre
+  « Confirmer… », qui ouvre la boîte du système « Une adresse hors de ce poste ». Confirmée, l'origine est gardée côté
+  Rust dans `hotes.json`, au dossier de configuration de l'appli, relu à chaque requête ; Réglages › Fenêtre,
+  « Adresses hors de ce poste », les liste, chacune avec « Oublier ». Aucune boîte ne s'ouvre au moment d'une
+  requête : une requête refusée rend le message du filtre. L'adresse du serveur se règle à l'écran ; la changer oublie
+  le jeton, il faut appairer de nouveau. Le service voix reste joint par la page : ses origines comptent
+  `http://tauri.localhost`.
 - **Le corps** : un dossier avec `corps.json` (`{"niveau":"images","repos":"repos.png","parole":"parole.png",
-  "vignette":{"zoom":2,"x":50,"y":30}}`). Seuls ses fichiers images directs sont lus (png, jpg, webp, gif, 10 Mo au plus).
-  Une image manquante rend le souffle, et l'écran dit pourquoi ; « Relire » recharge le dossier.
+  "vignette":{"zoom":2,"x":50,"y":30}}`), choisi par « Choisir… » dans la boîte de dialogue des dossiers du système et
+  gardé côté Rust dans `dossiers.json`, au dossier de configuration de l'appli : la page ne nomme jamais de dossier. Un
+  dossier sans `corps.json` est refusé, et le choix d'avant reste. Seuls ses fichiers images directs sont lus (png,
+  jpg, webp, gif, 10 Mo au plus). Une image manquante rend le souffle, et l'écran dit pourquoi ; « Relire » recharge
+  le dossier, « Oublier » rend le souffle.
+
 Les champs du service voix, de whisper-server et de RVC sont dans Réglages › Voix, sous « Réglages avancés » ; son
 état et « Lancer ou vérifier » restent devant.
 
-- **Le service voix** : s'il ne répond pas, l'appli peut le lancer elle-même (`uv run service.py` dans le dossier
-  choisi, ses arguments tirés des champs), sans console. Sa sortie va dans `voix.log`, vidé à chaque lancement, au
-  dossier des journaux de l'appli (`%LOCALAPPDATA%\io.github.lun-ecosystem.luxuria\logs`). Un champ changé ne touche
-  pas au service qui tourne : l'écran dit ce qu'il utilise et ce qui attend, et « Relancer le service » l'arrête puis le
-  relance avec les champs. L'appli ne relance et n'arrête que celui qu'elle a lancé, et l'arrête avec elle.
+- **Le service voix** : s'il ne répond pas, l'appli peut le lancer elle-même (`uv run service.py`, ses arguments tirés
+  des champs), sans console, dans le dossier choisi comme celui du corps et gardé dans `dossiers.json`. Ce dossier doit
+  contenir `service.py`, vérifié au choix et à chaque lancement. Sa sortie va dans `voix.log`, vidé à chaque lancement,
+  au dossier des journaux de l'appli (`%LOCALAPPDATA%\io.github.lun-ecosystem.luxuria\logs`). Un champ changé, ou un
+  autre dossier, ne touche pas au service qui tourne : l'écran dit ce qu'il utilise et ce qui attend, et « Relancer le
+  service » l'arrête puis le relance avec les champs. L'appli ne relance et n'arrête que celui qu'elle a lancé, et
+  l'arrête avec elle.
+- **Les dossiers d'avant** : un dossier qu'une version d'avant gardait dans les réglages de la page n'est jamais
+  envoyé. Tant qu'aucun n'est choisi à sa place, sa ligne dit de le choisir de nouveau dans la boîte, avec l'ancien
+  chemin et « Copier », et la scène dit « Les dossiers se choisissent de nouveau, dans les réglages. ». Le premier
+  choix réussi l'efface ; « Oublier » aussi, sans rien choisir ni demander à la fenêtre, et l'oubli d'un dossier
+  gardé l'efface avec lui.
+- **Les arguments du service**, bornés par Rust (`checked_service_args`, `src-tauri/src/voice.rs`) : `--stt`, `--tts`,
+  `--rvc`, `--rvc-gain` et `--lang` seuls, chacun avec sa valeur (`--drapeau=valeur` vaut `--drapeau valeur`).
+  `--stt faster:<nom>`, un nom sans chemin ni dépôt, ou `--stt whisper-server:<adresse>` ; `--rvc <adresse>` ; une
+  adresse en http ou https, sur 127.0.0.1, localhost ou [::1], un port au plus, sans chemin (`loopback.rs`).
+  `--tts piper:<fichier>`, un `.onnx` de ce poste par son chemin complet, à lettre de lecteur, ou `--tts aucun` ;
+  kokoro est refusé. `--rvc-gain` de 0 à 10 ; `--lang` en deux ou trois lettres minuscules. Tout autre argument,
+  `--origin` et `--port` compris, ou un caractère invisible ou de contrôle, refuse le lancement entier : le message
+  nomme le champ, et le service qui tourne reste.
 - **whisper-server et RVC** : l'appli peut les lancer, au démarrage (un interrupteur chacun) ou à la main (« Lancer… »).
   Le `.exe` se choisit dans la boîte de dialogue du système et reste côté Rust (`programmes.json`, au dossier de
-  configuration de l'appli) : la page ne nomme jamais de chemin. Il part dans son dossier, sans shell ni console, avec
-  ses arguments un par ligne, et seulement si rien ne répond déjà à son adresse. Sa sortie va dans `whisper-server.log`
-  ou `rvc.log`, vidés à chaque lancement. Rattaché à un job Windows, il s'arrête avec l'appli, même si elle plante,
-  avec ce qu'il a ouvert lui-même : une fenêtre, ou un navigateur qui n'était pas déjà ouvert.
+  configuration de l'appli) : la page ne nomme jamais de chemin. Ses arguments, un par ligne, ne sont qu'un brouillon de
+  la page : « Confirmer… » les montre dans une boîte du système, « Les arguments de <programme> », l'exe gardé en tête,
+  puis chaque argument sur sa ligne, numéroté et entre « », ou « Aucun argument. ». « Annuler » vient en premier, le
+  bouton d'Entrée, puis « Confirmer », puis « Fermer », la réponse d'Échap : seul « Confirmer » confirme. Confirmés, ils
+  sont gardés côté Rust dans `arguments.json` ; un autre exe choisi les fait tomber, « Oublier » aussi. Un caractère
+  invisible ou de contrôle est refusé dans un argument comme dans le chemin de l'exe. L'appli ne lance que l'exe gardé,
+  avec ses arguments confirmés : au démarrage, un programme jamais confirmé ne part pas, la scène et les réglages
+  avancés de la voix, ouverts d'eux-mêmes, disent de les confirmer, et aucune boîte ne s'ouvre seule. Il part dans son
+  dossier, sans shell ni console, et seulement si rien ne répond déjà
+  à son adresse : c'est Rust qui la sonde, celle du champ, sur 127.0.0.1, localhost ou [::1] seulement, une autre
+  refusée. Sa sortie va dans `whisper-server.log` ou `rvc.log`, vidés à chaque lancement. Rattaché à un job Windows, il
+  s'arrête avec l'appli, même si elle plante, avec ce qu'il a ouvert lui-même : une fenêtre, ou un navigateur qui
+  n'était pas déjà ouvert.
+- **Les boîtes du système** (dossiers, programmes, arguments, adresses) s'ouvrent côté Rust, modales à la fenêtre, une
+  à la fois : une autre demandée pendant ce temps est refusée, « Une boîte est déjà ouverte. ». La page n'a aucune
+  permission `dialog:`. `dossiers.json`, `programmes.json`, `arguments.json` et `hotes.json` s'écrivent sous un seul
+  verrou.
 - **L'icône près de l'horloge** : elle dit l'un de trois états, disponible (l'icône), en sourdine (grise), injoignable
   (grise et pâle), avec l'état en infobulle. Un clic ramène la fenêtre ; son menu l'affiche, met ou lève la sourdine, et
   quitte comme la fermeture (la présence finit de la même façon).
@@ -132,7 +173,8 @@ Sortant :
 ## Le service voix
 
 Il n'écoute que sur 127.0.0.1, et n'accepte que les pages de l'application : une autre origine ou un autre `Host` reçoit
-un 403, car n'importe quel site ouvert dans le navigateur peut joindre 127.0.0.1. `--origin <url>` en ajoute une.
+un 403, car n'importe quel site ouvert dans le navigateur peut joindre 127.0.0.1. `--origin <url>` en ajoute une, au
+service lancé à la main : la fenêtre refuse `--origin`.
 
 `GET /micro` lit dans le registre de Windows les applis qui tiennent le micro : une entrée ouverte compte si elle date
 de moins de 12 h. Une entrée laissée ouverte par un plantage compte donc encore jusqu'à 12 h, et un appel de plus de
@@ -196,7 +238,10 @@ Remove-Item Env:GESTES_STT
 - Les réglages de `tauri dev` et ceux de l'exe ne sont pas les mêmes (origines différentes) : à refaire une fois.
 - Sans bord, la fenêtre se ferme par Alt+F4 ; la présence part alors comme à la fermeture d'un onglet.
 - La clé du modèle reste dans le stockage de la page : le trousseau du système viendra plus tard.
-- La page désigne elle-même le dossier du corps et celui du service voix, et le réseau de la fenêtre va à toute
-  adresse (le serveur et le modèle sont libres). Une page compromise lirait donc les images d'un dossier qui a un
-  `corps.json` et joindrait le réseau local sans CORS. Le durcissement serait un choix de dossier par dialogue natif,
-  gardé côté Rust.
+- Une page compromise lance encore le service dans le dossier choisi, et les programmes avec leurs arguments confirmés ;
+  elle fait lire au service tout `.onnx` du poste comme voix, un lecteur réseau ou un lien vers un partage sous une
+  lettre de lecteur compris ; elle lit les images du dossier du corps choisi ; elle joint les origines confirmées, par
+  toute méthode et tout chemin, et une origine est un nom, que son DNS peut faire pointer vers le réseau local.
+- `localhost` est admis par son nom, dans le filtre de la fenêtre comme dans les adresses du service : le système le
+  résout, et une ligne du fichier `hosts` (droits d'administrateur) pourrait l'envoyer ailleurs. La sonde des programmes, elle,
+  ne garde que les adresses de la boucle locale.

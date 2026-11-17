@@ -26,7 +26,8 @@ Son nom, son ton et le modèle qui le fait répondre se règlent dans l'applicat
 ## Ce qu'il te faut
 
 - Node `^22.13.0 || >=24` et [uv](https://docs.astral.sh/uv/) pour le service voix.
-- Une voix, au choix : Piper ou Kokoro, et son modèle.
+- Une voix, au choix : Piper ou Kokoro, et son modèle. La fenêtre ne lance que Piper ; Kokoro attend une
+  dépendance que le script n'installe pas ([docs/README.md](docs/README.md)).
 - Un modèle compatible OpenAI, ou un serveur auquel se relier.
 
 ## Démarrer en local
@@ -45,7 +46,7 @@ Détails dans [`docs/README.md`](docs/README.md).
 |---|---|
 | Tu n'entends rien | Dans un onglet, aucun son ne part sans un clic : passer par « Entrer ». La fenêtre n'en a pas besoin. |
 | Le modèle ne répond pas depuis la page | Il doit accepter les appels du navigateur. Ollama accepte 127.0.0.1, un autre peut demander de régler ses origines (CORS). |
-| Le service voix répond 403 | Il n'accepte que les pages de l'application : ajouter l'adresse avec `--origin <url>`. |
+| Le service voix répond 403 | Il n'accepte que les pages de l'application : lancé à la main, ajouter l'adresse avec `--origin <url>`. La fenêtre refuse `--origin`. |
 | Rien ne passe au micro | Le micro reste coupé tant que son bouton ne l'a pas ouvert. |
 | La fenêtre ne demande plus le micro après un « Bloquer » | Fermer l'appli et supprimer `EBWebView\Default\Preferences` dans `%LOCALAPPDATA%\io.github.lun-ecosystem.luxuria` : elle redemande, les réglages restent. |
 | L'arrivée revient et redemande le code | Le serveur ne connaît plus le jeton : un nouveau code d'appairage le remplace. |
