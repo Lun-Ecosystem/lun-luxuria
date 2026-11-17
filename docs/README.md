@@ -138,6 +138,13 @@ Si ce n'était pas pour elle (une toux, une phrase pour quelqu'un d'autre), elle
 retenait sort : seulement quand toutes les phrases finies ont leur verdict et qu'aucune n'est en cours. Un bruit qui
 commence une phrase retarde la reprise jusqu'à sa fin, le silence de fin, 0,7 s par défaut.
 
+Sa voix ne reprend pas aussitôt : elle attend « Attente avant de reprendre » (Réglages › Écoute, réglages avancés),
+0,3 s par défaut, de 0 à 1 s, 0 pour reprendre aussitôt. Une phrase qui commence dans ce temps la garde muette ; un
+nouveau bruit relance l'attente. La réponse retenue, elle, sort sans attendre. Le micro qui s'arrête la fait reprendre
+tout de suite, et le bouton qui la coupe annule l'attente. Sa limite : l'attente déplace la falaise à environ 1 s après
+le bruit, elle ne la supprime pas. Une parole qui commence après l'attente est encore couverte jusqu'à sa tenue
+(lun-luxuria#63).
+
 Le filtre ne regarde qu'une phrase transcrite localement : refusée, elle ne part jamais.
 
 « Autour de toi » (Réglages › Écoute) a trois préréglages : « Pièce calme », « Normal », les valeurs par défaut, et

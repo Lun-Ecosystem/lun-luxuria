@@ -645,6 +645,13 @@ then it blocks, and says so as an error: a folded block opens on it. One the pag
             's',
             (v) => set((d) => (d.bargeIn.holdMs = ms(v, 32, 3000, d.bargeIn.holdMs))),
           )}
+          {@render field(
+            'Attente avant de reprendre',
+            'Après un bruit, si on reparle dans ce temps, elle ne reprend pas.',
+            secs(s.bargeIn.resumeMs),
+            's',
+            (v) => set((d) => (d.bargeIn.resumeMs = ms(v, 0, 1000, d.bargeIn.resumeMs))),
+          )}
           {@render paired(
             'Applis qui prennent le micro',
             'Une appli en appel met l’écoute en pause ; un serveur relié ne reçoit que « occupé ». ' +

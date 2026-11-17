@@ -212,4 +212,12 @@ describe('the wait before she resumes her voice', () => {
     expect(readSettings(JSON.stringify({ bargeIn: { resumeMs: 0 } })).bargeIn.resumeMs).toBe(0);
     expect(readSettings(JSON.stringify({ bargeIn: { resumeMs: 800 } })).bargeIn.resumeMs).toBe(800);
   });
+
+  it('is kept between 0 and 1 s, as the screen keeps it: a value written by hand does not make her wait 5 s', () => {
+    const read = (raw: string) => readSettings(raw).bargeIn.resumeMs;
+    expect(read(JSON.stringify({ bargeIn: { resumeMs: 5000 } }))).toBe(1000);
+    expect(read(JSON.stringify({ bargeIn: { resumeMs: -200 } }))).toBe(0);
+    expect(read('{"bargeIn":{"resumeMs":1e400}}')).toBe(1000);
+    expect(read('{"bargeIn":{"resumeMs":-1e400}}')).toBe(0);
+  });
 });
