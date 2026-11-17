@@ -244,9 +244,10 @@ export interface AttenduDelai extends AttenduCommun {
 /**
  * The time she speaks over the person, read in the player's log: the sum, over every `parole` of `personne` (not a
  * noise, not her echo) and every sentence she plays (`joue` to its `arrete`), of their overlap.
+ * `reponses_ensemble`: the sum, over every pair of sentences of two different replies, of their overlap.
  */
 export interface AttenduMesure extends AttenduCommun {
-  mesure: 'chevauchement';
+  mesure: 'chevauchement' | 'reponses_ensemble';
   entre: [number, number];
 }
 
