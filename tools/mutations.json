@@ -99,7 +99,7 @@
     "maillon": "voix"
   },
   "deux-sons": {
-    "quoi": "file qui passe à la réponse suivante sans attendre le son",
+    "quoi": "une réponse tenue pour finie dès que sa dernière phrase commence, quand une autre attend",
     "fichier": "src/speech/speaker.ts",
     "motif": "if (this.#playing || this.#waiting || this.#reading) return;",
     "par": "if ((this.#playing && this.#playing.turn === this.#turns[0] && (this.#turns.length < 2 || this.#turns[0]!.next < this.#turns[0]!.pieces.length)) || this.#waiting || this.#reading) return;",

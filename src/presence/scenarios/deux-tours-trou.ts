@@ -1,15 +1,19 @@
-// Moitié serveur, hors de ce niveau : la file d'une page seulement. Le défaut entendu le 10/11 était sans doute celui-ci
-// (lun-luxuria#48) : `speaking` était faux dans le trou entre deux phrases d'une même réponse, pendant la synthèse de
-// la suivante ; une phrase dite dans ce trou ne coupait rien, et la réponse 2 se rangeait derrière la réponse 1.
+// Moitié serveur, hors de ce niveau : la file d'une page seulement. La cause de ce que CrOliX a entendu le 10/11
+// (lun-luxuria#48) n'est pas prouvée ; la lecture la plus probable de l'enquête est deux réponses à la suite, parce
+// qu'avant lun-luxuria#51 `speaking` était faux dans le trou entre deux phrases d'une même réponse, pendant la
+// synthèse de la suivante : une parole dite là ne coupait rien. Ce scénario garde cette correction : la parole 2
+// commence dans le trou, la réponse 1 est suspendue à sa tenue, coupée, et ne sonne plus. Sous la mutation
+// `speaking-sans-trou` (l'ancien `speaking`), la suspension n'a pas lieu à la tenue : la phrase 2 de la réponse 1
+// sonne par-dessus la personne, puis elle est coupée au verdict.
 //
 // Les réglages sont ceux par défaut (coupure allumée, mode `now`). La synthèse met 1200 ms par phrase (la même pour
 // toutes, les fausses briques n'en règlent pas une seule) : la phrase 1, courte, finit de sonner bien avant que la
-// phrase 2 soit prête, d'où un trou ; la parole 2 commence dedans.
+// phrase 2 soit prête, d'où un trou ; la parole 2 commence dedans, ancrée sur le premier son de la réponse 1.
 //
 // Le calcul (trames de 32 ms, tenue 400) :
 // - parole 1, 320 → 1600, envoyée à 1878 ; la réponse 1 a ses trois phrases reçues à 2278 (+300 +300).
-// - phrase 1 : synthèse 2278 → 3478, sonne 3478 → 4078 (10 car. × 60). Phrase 2 : synthèse 3478 → 4678.
-// - trou : 4078 → 4678. Parole 2 à 4096 : tenue à 4480, avant le son de la phrase 2.
+// - phrase 1 : synthèse 2278 → 3478, sonne 3478 → 4018 (« Bien sûr. », 9 car. × 60). Phrase 2 : synthèse 3478 → 4678.
+// - trou : 4018 → 4678 (660 ms). Parole 2 à 3478 + 618 = 4096 : tenue à 4480, avant le son de la phrase 2.
 import type { Scenario } from '../scenario.ts';
 
 export default {
@@ -18,21 +22,11 @@ export default {
     'une phrase dite dans le trou entre deux phrases de sa réponse : elle la coupe, la réponse 2 passe seule ;',
   apport:
     "une parole qui commence entre deux phrases d'une réponse retient cette réponse, que la file en soit à la synthèse de la suivante",
-  mecanismes: [
-    'ecoute',
-    'essai',
-    'transcription',
-    'filtre',
-    'retenue',
-    'suspension',
-    'coupure',
-    'serveur',
-    'voix',
-  ],
+  mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'suspension', 'coupure', 'serveur', 'voix'],
   voix: { syntheseMs: 1200 },
   personne: [
     { a: 320, dit: 'Tu peux me rappeler le film de ce soir', duree: 1280 },
-    { a: 4096, dit: 'Et aussi la météo de demain', duree: 1280 },
+    { apres: { joue: 1, ms: 618 }, dit: 'Et aussi la météo de demain', duree: 1280 },
   ],
   modele: {
     reponses: [
@@ -84,6 +78,17 @@ export default {
       evenement: 'suspendue',
       ou: { reponse: 1 },
       depuis: { parole: 2, bord: 'debut' },
+    },
+    {
+      id: 'suspendue-a-la-tenue',
+      niveau: 'exact',
+      mecanisme: 'suspension',
+      dit: 'la réponse 1 est suspendue à la tenue de la parole 2, pas plus tard',
+      evenement: 'suspendue',
+      ou: { reponse: 1 },
+      depuis: { parole: 2, bord: 'debut' },
+      // tenue à 384 ms du début, une trame de marge
+      entre: [384, 416],
     },
     {
       id: 'coupee',

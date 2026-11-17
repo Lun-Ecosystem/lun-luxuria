@@ -1,5 +1,6 @@
-// Moitié serveur, hors de ce niveau : la file d'une page seulement. Ce que CrOliX a entendu le 10/11 (deux réponses
-// qui sonnent ensemble) n'est pas prouvé par ce scénario : sa cause reste inconnue.
+// Moitié serveur, hors de ce niveau : la file d'une page seulement. La cause de ce que CrOliX a entendu le 10/11
+// (lun-luxuria#48) n'est pas prouvée ; ce scénario garde la file : deux réponses ne sonnent jamais ensemble. La
+// correction de `speaking` (lun-luxuria#51) est gardée par `deux-tours-trou`.
 //
 // La coupure est coupée (`bargeIn.on` à faux) : la parole 2 ne suspend pas la réponse 1, qui sonne jusqu'au bout.
 // Ce qui est éprouvé : la réponse 1 est finie (sa dernière phrase reçue) et cette phrase sonne encore quand la
@@ -29,11 +30,11 @@ export default {
   },
   attendus: [
     {
-      id: 'phrase-1-recue',
+      id: 'reponse-1-finie',
       niveau: 'tous',
       mecanisme: 'serveur',
-      dit: 'la réponse 1 est finie : sa phrase est reçue',
-      evenement: 'phrase_recue',
+      dit: 'la réponse 1 est finie : sa fin est reçue',
+      evenement: 'fin_recue',
       ou: { reponse: 1 },
     },
     {
@@ -43,7 +44,7 @@ export default {
       dit: 'la réponse 2 arrive bien après la réponse 1, et avant la fin de son son',
       evenement: 'phrase_recue',
       ou: { reponse: 2 },
-      depuis: { attendu: 'phrase-1-recue' },
+      depuis: { attendu: 'reponse-1-finie' },
       entre: [3000, 5500],
     },
     {

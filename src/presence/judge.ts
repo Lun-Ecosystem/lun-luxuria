@@ -405,7 +405,7 @@ const mesures = {
       for (const s of sons(banc, fin)) ms += Math.max(0, Math.min(b, s.a) - Math.max(a, s.de));
     return ms;
   },
-  /** The time two sentences of different replies play together. */
+  /** The time two sentences of different replies play together: a sum over pairs, with three replies it may exceed real time. */
   reponses_ensemble(banc: readonly BancEvent[], fin: number): number {
     const tous = sons(banc, fin);
     let ms = 0;
