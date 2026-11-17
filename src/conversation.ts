@@ -247,6 +247,7 @@ export class Conversation {
         this.#attempt = null;
         return;
       case 'start':
+        this.#talking = true;
         this.#sentence = { from: this.#d.now(), tries: 0 };
         return;
     }
@@ -293,21 +294,29 @@ export class Conversation {
     this.#write('retenue', this.#ref(waiting), { par: this.#phrase });
   }
 
-  /** What he said (`by`) was not for her: the reply held back comes out. */
+  /** What he said (`by`) was not for her: the reply held back comes out, as her voice goes on. */
   #letGo(by?: Attempt, restarted = true): void {
     // A reply suspended while it sounded goes on; no first sound will come again, so no thinking is lit.
     // Not while he is in a sentence, nor while one that ended may still turn out to be for her.
     if (by) this.#unjudged.delete(by);
-    if (!this.#talking && this.#unjudged.size === 0) this.#d.speaker.resume();
+    const free = !this.#talking && this.#unjudged.size === 0;
+    if (free) this.#d.speaker.resume();
     const waiting = this.#heldBack;
-    this.#heldBack = null;
     if (!waiting) return;
-    waiting.heldBack = false;
     // The sound that held it back came while its own sentence was still being transcribed: it had no reply to hold.
-    if (waiting === by) return;
-    this.#write('relachee', this.#ref(waiting), { par: by?.phrase });
+    // Let go before anything waits, or `#holdBack` would refuse the next one.
+    if (waiting === by) {
+      this.#heldBack = null;
+      waiting.heldBack = false;
+      return;
+    }
     // The chronometer was restarted by a sentence that asked nothing.
     if (restarted) this.#clockFrom = null;
+    // Held back on the same terms as her voice: the next verdict, or `#supersede`, tells.
+    if (!free) return;
+    this.#heldBack = null;
+    waiting.heldBack = false;
+    this.#write('relachee', this.#ref(waiting), { par: by?.phrase });
     // It is still on its way.
     this.#d.on({ type: 'thinking', on: true });
     if (waiting.replyId !== undefined) this.#d.speaker.release(waiting.replyId);

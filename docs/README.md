@@ -132,6 +132,10 @@ phrase est transcrite et envoyée, et sa réponse **se prépare sans se dire**. 
 retirée (`withdraw`). À la fin réelle, la réponse sort. Une prise de parole de plus de 400 ms pendant la réponse l'arrête,
 et ce qui a été entendu remonte (`cut`).
 
+Si ce n'était pas pour elle (une toux, une phrase pour quelqu'un d'autre), elle reprend, et une réponse que cette parole
+retenait sort : seulement quand toutes les phrases finies ont leur verdict et qu'aucune n'a commencé depuis. Un bruit qui
+commence une phrase retarde la reprise jusqu'à sa fin, 0,7 s de silence au moins.
+
 Le filtre ne regarde qu'une phrase transcrite localement : refusée, elle ne part jamais.
 
 « Autour de toi » (Réglages › Écoute) a trois préréglages : « Pièce calme », « Normal », les valeurs par défaut, et
