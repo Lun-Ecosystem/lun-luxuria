@@ -37,6 +37,21 @@ function linked(extra: object = {}) {
   return { s, sent };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
+/** The timers of the page simulated: a held start never meets the real bound of its wait. No `flush` after it. */
+const fakeClock = () => vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+/** From now on, the start of the presence answers only on the call it returns. */
+function holdStart(s: Session, sent: string[]): () => void {
+  let arrive: () => void = () => {};
+  s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+    sent.push(state);
+    if (state === 'started') await new Promise<void>((r) => (arrive = r));
+    return undefined;
+  }) as typeof s.core.presence;
+  return () => arrive();
+}
+/** The conversation reached the send this many times: the trace writes it just before. */
+const reachedSend = (s: Session) => s.turns.events.filter((e) => e.name === 'envoyee').length;
+const waits = (s: Session) => s.turns.events.filter((e) => e.name === 'attente_retour');
 
 beforeEach(() => {
   localStorage.clear();
@@ -143,6 +158,41 @@ describe('the session, away and back', () => {
     expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
   });
 
+  it('written while away, muted during the wait: nothing is sent, and no failure is shown', async () => {
+    const { s, sent } = linked();
+    s.core.send = vi.fn(async () => void sent.push('send'));
+    await s.enter();
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    const writing = s.write('je suis là');
+    expect(sent.at(-1)).toBe('started');
+    s.toggleMute();
+    arrive();
+    await writing;
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(sent).not.toContain('send');
+    expect(s.failure).toBe('');
+  });
+
+  it('written while a return by a key is under way: it waits for that start', async () => {
+    const { s, sent } = linked();
+    s.core.send = vi.fn(async () => void sent.push('send'));
+    await s.enter();
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    void s.setAway(false); // the first input, as `awayFollows` reads it
+    const writing = s.write('je suis là');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sent).not.toContain('send');
+    arrive();
+    await writing;
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
   it('away before entering: nothing is announced until the first input', async () => {
     const { s, sent } = linked();
     s.setAway(true);
@@ -230,10 +280,10 @@ describe('a phrase heard', () => {
       if (state === 'started') await new Promise<void>((r) => (arrive = r));
       return undefined;
     }) as typeof s.core.presence;
+    fakeClock();
     say(20);
     await vi.waitFor(() => expect(sent).toContain('started'));
-    await flush();
-    await flush();
+    await vi.advanceTimersByTimeAsync(100);
     expect(sent).not.toContain('send');
     arrive();
     await vi.waitFor(() => expect(sent).toContain('send'));
@@ -255,32 +305,25 @@ describe('a phrase heard', () => {
     expect(sent.slice(-2)).toEqual(['started', 'send']);
   });
 
-  /** From now on, the start of the presence answers only on the call it returns. */
-  function holdStart(s: Session, sent: string[]): () => void {
-    let arrive: () => void = () => {};
-    s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
-      sent.push(state);
-      if (state === 'started') await new Promise<void>((r) => (arrive = r));
-      return undefined;
-    }) as typeof s.core.presence;
-    return () => arrive();
-  }
-  /** The conversation reached the send this many times: the trace writes it just before. */
-  const reachedSend = (s: Session) => s.turns.events.filter((e) => e.name === 'envoyee').length;
-
-  it('away, the start held, two phrases: none leaves before it answers, and the first leaves first', async () => {
-    const { s, sent } = await heard('', {
-      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
-    });
+  /** Each transcription its own text, and each send says which: `phrase 0`, `phrase 1`… */
+  function numbered(s: Session, sent: string[]): void {
     let n = 0;
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => Response.json({ text: `phrase ${n++}`, confidence: 0.9 })),
     );
     s.core.send = vi.fn(async (text: string) => void sent.push(`send:${text}`)) as typeof s.core.send;
+  }
+
+  it('away, the start held, two phrases: none leaves before it answers, and the first leaves first', async () => {
+    const { s, sent } = await heard('', {
+      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
+    });
+    numbered(s, sent);
     s.setAway(true);
     await flush();
     const arrive = holdStart(s, sent);
+    fakeClock();
     say(20);
     await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
     say(20);
@@ -296,6 +339,7 @@ describe('a phrase heard', () => {
     s.setAway(true);
     await flush();
     const arrive = holdStart(s, sent);
+    fakeClock();
     void s.setAway(false); // the first input, as `awayFollows` reads it
     say(20);
     await vi.waitFor(() => expect(reachedSend(s)).toBeGreaterThan(0));
@@ -312,6 +356,7 @@ describe('a phrase heard', () => {
     s.setAway(true);
     await flush();
     const arrive = holdStart(s, sent);
+    fakeClock();
     say(20);
     await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
     expect(sent).not.toContain('send');
@@ -325,7 +370,7 @@ describe('a phrase heard', () => {
     s.setAway(true);
     await flush();
     holdStart(s, sent); // never let go
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    fakeClock();
     say(20);
     // Each check moves the clock 50 ms at most: the wait has run less than 3 s here.
     await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
@@ -336,6 +381,64 @@ describe('a phrase heard', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(sent.filter((x) => x === 'send')).toHaveLength(1);
     expect(s.failure).toBe('');
+  });
+
+  it('muted during the wait: nothing is sent, she stops thinking, and no guard rings at 61 s', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    s.toggleMute();
+    arrive();
+    await vi.advanceTimersByTimeAsync(61_000); // past the guard of the reply
+    expect(sent).not.toContain('send');
+    expect(s.failure).toBe('');
+    expect(s.thinking).toBe(false);
+    expect(s.turns.events.at(-1)?.name).toBe('sans_reponse');
+  });
+
+  it('back by a key, a fragment taken back during the wait: it never leaves', async () => {
+    const { s, sent } = await heard('');
+    numbered(s, sent);
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    void s.setAway(false); // the first input
+    say(20, undefined, 8); // a fragment at the pause: `phrase 0`
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    say(10); // he goes on: taken back; the whole sentence is `phrase 1`
+    await vi.waitFor(() => expect(s.turns.events.some((e) => e.name === 'retiree')).toBe(true));
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send:phrase 1'));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sent.filter((x) => x.startsWith('send'))).toEqual(['send:phrase 1']);
+  });
+
+  it('the wait is in the trace, with how long it lasted; nothing is written when nothing waits', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'performance'] });
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    expect(waits(s)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(500);
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    const envoyee = s.turns.events.find((e) => e.name === 'envoyee')!;
+    expect(waits(s)).toEqual([
+      expect.objectContaining({ phrase: envoyee.phrase, essai: envoyee.essai, duree: expect.any(Number) }),
+    ]);
+    expect(waits(s)[0]!['duree']).toBeGreaterThanOrEqual(500);
+    expect(waits(s)[0]!['duree']).toBeLessThan(3000);
+    say(20); // present now: nothing to wait for
+    await vi.waitFor(() => expect(sent.filter((x) => x === 'send')).toHaveLength(2));
+    expect(waits(s)).toHaveLength(1);
   });
 
   it('alone on a model, away: the fragment is still tried at the pause, nothing to wait for', async () => {

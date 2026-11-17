@@ -58,7 +58,7 @@ phrase qui passe le filtre, la reprend, avec l'accueil s'il est actif ; un bruit
 pas. Le temps sans saisie se lit toutes les 30 s, toutes les 3 s pendant l'absence. L'absence ne change que ce qui est
 annoncé et l'essai à la courte pause, qui ne part pas ; l'écoute et la sourdine restent ce qu'elles sont. Un message
 attend que le serveur ait répondu à l'annonce du retour, 3 s au plus : passé ce délai, ou sur un échec, il part quand
-même, et les messages gardent leur ordre.
+même, et les messages gardent leur ordre ; la sourdine posée pendant l'attente le retient.
 
 Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des Réglages) :
 

@@ -173,8 +173,8 @@ export class Session {
   #busySince = 0;
   /** A question to the voice service about the microphone, still unanswered. */
   #asking = false;
-  /** The start of the last return of the presence, `BACK_WAIT_MS` at most, failed or not: every message waits for it. */
-  #back: Promise<void> = Promise.resolve();
+  /** The start of a return of the presence under way, `BACK_WAIT_MS` at most, failed or not; null once it answered. */
+  #back: Promise<void> | null = null;
 
   get state(): BodyState {
     return stateOf({
@@ -264,15 +264,7 @@ export class Session {
         : new LocalBrain(() => this.settings, { get: stored, set: store }, this.#net.server);
     const out = webOutput(() => this.settings.voice.volume);
     const convo: Conversation = new Conversation({
-      brain: {
-        // Sent after the start of a return under way, in the order they came.
-        send: async (...args) => {
-          await this.#back;
-          return this.brain.send(...args);
-        },
-        cut: (id, said) => this.brain.cut(id, said),
-        withdraw: (userId) => this.brain.withdraw(userId),
-      },
+      brain: this.brain,
       stt: (audio, signal) => transcribe(audio, this.#net.voice, signal),
       speaker: (this.#speaker = new Speaker(
         (text) => synthesize(text, this.#net.voice),
@@ -290,6 +282,8 @@ export class Session {
       layout: () => this.layout,
       keyHeld: () => this.#keyHeld || this.#keyInPhrase,
       silenced: () => this.silenced,
+      // A start of a return under way: what she sends waits for it, in the order it came.
+      ready: () => this.#back,
       now: clock,
       on: (e) => {
         if (e.type === 'thinking') this.thinking = e.on;
@@ -385,22 +379,30 @@ export class Session {
   #announce = () => (this.away ? Promise.resolve() : this.#presence.announce());
   #beat = () => (this.away ? Promise.resolve() : this.#presence.beat());
 
-  /** Only what the server is told changes: listening and the mute stay as they are. */
+  /**
+   * What the server is told, and, back, what a message waits for: the start (`#back`). Listening and the mute stay as
+   * they are.
+   */
   async setAway(next: boolean): Promise<void> {
     if (next === this.away) return;
     this.away = next;
     if (!this.entered) return;
-    if (next) await this.brain.presence('stopped').catch(() => {});
-    else
-      await (this.#back = Promise.race([
-        this.#announce().catch(() => {}),
-        new Promise<void>((r) => setTimeout(r, BACK_WAIT_MS)),
-      ]));
+    if (next) {
+      await this.brain.presence('stopped').catch(() => {});
+      return;
+    }
+    const back: Promise<void> = Promise.race([
+      this.#announce().catch(() => {}),
+      new Promise<void>((r) => setTimeout(r, BACK_WAIT_MS)),
+    ]).finally(() => {
+      if (this.#back === back) this.#back = null;
+    });
+    await (this.#back = back);
   }
 
   /**
    * A phrase sent, heard or written: the person is there, as with a key. Away, the start of the presence leaves before
-   * its message; a fragment tried before the absence was noted may have left already.
+   * its message. A fragment transcribed while the absence is noted leaves during the absence, before the start.
    */
   #heard(): Promise<void> {
     this.heardAt = Date.now();
@@ -634,6 +636,10 @@ export class Session {
     if (this.silenced) return;
     this.spoke = true;
     await this.#heard();
+    // A return a key or the mouse brought may still be under way.
+    await this.#back;
+    // Muted while it waited: nothing is sent.
+    if (this.silenced) return;
     try {
       await this.#convo?.write(text);
       // It went through: an older failure no longer holds.
