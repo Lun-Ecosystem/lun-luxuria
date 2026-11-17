@@ -678,6 +678,101 @@ describe('cutting it off', () => {
     expect(t.sounds).toHaveLength(2);
   });
 
+  it('held back by its own sound, a sentence for her still answers once the later one asked nothing', async () => {
+    const aside = verdicts();
+    const later = setup(NO_TRY, aside.stt);
+    later.convo.onEndpoint(end(1000));
+    later.convo.onEndpoint({ type: 'held' });
+    later.convo.onEndpoint(end(2000));
+    aside.give(1, ASIDE);
+    await tick();
+    aside.give(0, 'Bonjour toi');
+    await tick();
+    later.say(110, 'Je réponds.');
+    await tick();
+    expect(later.sounds).toHaveLength(1);
+
+    // The later sound was only a noise.
+    const cough = verdicts();
+    const noise = setup(NO_TRY, cough.stt);
+    noise.convo.onEndpoint(end(1000));
+    noise.convo.onEndpoint({ type: 'held' });
+    noise.convo.onEndpoint({ type: 'noise' });
+    cough.give(0, 'Bonjour toi');
+    await tick();
+    noise.say(110, 'Je réponds.');
+    await tick();
+    expect(noise.sounds).toHaveLength(1);
+  });
+
+  it('a sentence begun after the last verdict still holds the reply back, until it is only a noise', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    v.give(0, 'Bonjour toi');
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    t.convo.onEndpoint({ type: 'start' });
+    v.give(1, ASIDE);
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    // The sentence that asked nothing does not time the reply, even though a noise let it out.
+    expect(t.events.filter((e) => e.type === 'latency')).toEqual([]);
+  });
+
+  /** Two sentences both held and ended, judged in either order, each for her or not, a cough before either verdict. */
+  const lastVerdicts = [false, true].flatMap((ahead) =>
+    [false, true].flatMap((reversed) =>
+      [true, false].flatMap((a) =>
+        [true, false].flatMap((b) => [-1, 0, 1].map((cough) => ({ ahead, reversed, a, b, cough }))),
+      ),
+    ),
+  );
+
+  it.each(lastVerdicts)(
+    'after the last verdict, nothing held, begun or to judge, every reply sounds or is forgotten: ' +
+      'ahead $ahead, reversed $reversed, for her $a then $b, cough $cough',
+    async ({ ahead, reversed, a, b, cough }) => {
+      const v = verdicts();
+      const t = setup(NO_TRY, v.stt);
+      let n = 0;
+      // A reply already on its way, for the first sound to hold back.
+      if (ahead) {
+        t.convo.onEndpoint(end(500));
+        v.give(n++, 'Bonjour toi');
+        await tick();
+      }
+      const sentences = [a, b].map((forHer) => ({ i: n++, text: forHer ? 'Bonjour toi' : ASIDE }));
+      for (const at of [1000, 2000]) {
+        t.convo.onEndpoint({ type: 'start' });
+        t.convo.onEndpoint({ type: 'held' });
+        t.convo.onEndpoint(end(at));
+      }
+      for (const [k, s] of (reversed ? sentences.reverse() : sentences).entries()) {
+        if (cough === k) for (const type of ['start', 'held', 'noise'] as const) t.convo.onEndpoint({ type });
+        v.give(s.i, s.text);
+        await tick();
+      }
+      for (let k = 0; k < t.sends.length; k++) {
+        t.say(110 + k, `Réponse ${k}.`);
+        t.convo.onLive({ type: 'speech-end', id: 110 + k, why: 'reply' });
+      }
+      await tick();
+      for (let i = 0; i < t.sounds.length; i++) {
+        t.sounds[i]!.end();
+        await tick();
+      }
+      const cut = t.calls.filter((c) => c.startsWith('cut ')).length;
+      expect(t.sounds.length + cut).toBe(t.sends.length);
+    },
+  );
+
   it('a reply already heard is never taken back afterwards', async () => {
     const t = setup(NO_TRY);
     t.convo.onEndpoint(end(1000));

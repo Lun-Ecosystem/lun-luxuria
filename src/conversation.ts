@@ -332,8 +332,14 @@ export class Conversation {
     for (const cut of this.#d.speaker.cutSuspended(by.replyId))
       void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
     const waiting = this.#heldBack;
-    // Held back while its own sentence was transcribed: the sentence said since will tell.
-    if (!waiting || waiting === by) return;
+    if (!waiting) return;
+    if (waiting === by) {
+      // Held back while its own sentence was transcribed: the sentence said since will tell, unless it told already.
+      if (this.#talking || this.#unjudged.size > 0) return;
+      this.#heldBack = null;
+      by.heldBack = false;
+      return;
+    }
     this.#heldBack = null;
     waiting.superseded = true;
     // Its reply is no longer awaited; a transcription still running keeps its guard, it must end.
