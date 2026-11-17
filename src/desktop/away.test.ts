@@ -156,12 +156,12 @@ describe('the session, away and back', () => {
 
 describe('a phrase heard', () => {
   /** Talks into the microphone: loud frames, then silence, 32 ms each, as the worklet gives them. */
-  function say(loudFrames: number, holding?: Session) {
+  function say(loudFrames: number, holding?: Session, quietFrames = 40) {
     const onFrame = (mic.open.mock.calls.at(-1) as unknown as [unknown, (f: Float32Array) => void])[1];
     const loud = new Float32Array(512).fill(0.3);
     const quiet = new Float32Array(512);
     let at = Date.now();
-    for (let i = 0; i < loudFrames + 40; i++) {
+    for (let i = 0; i < loudFrames + quietFrames; i++) {
       vi.setSystemTime((at += 32));
       holding?.holdKey(i < loudFrames);
       onFrame(i < loudFrames ? loud : quiet);
@@ -178,10 +178,8 @@ describe('a phrase heard', () => {
   }
 
   it('a phrase sent counts as an input, and brings the presence back', async () => {
-    // Without the attempt on a pause: a fragment sent early leaves before the sentence is known to be for it.
-    const { s, sent } = await heard('bonjour', {
-      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
-    });
+    // The attempt on a pause is on (the default): away, the session holds it back.
+    const { s, sent } = await heard('bonjour');
     s.setAway(true);
     say(20);
     await vi.waitFor(() => expect(sent).toContain('send'));
@@ -189,6 +187,83 @@ describe('a phrase heard', () => {
     expect(s.away).toBe(false);
     expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
     expect(s.spoke).toBe(true); // the scene's instruction goes
+  });
+
+  it('a phrase heard while away, the attempt off: the presence comes back before it leaves', async () => {
+    const { s, sent } = await heard('bonjour', {
+      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
+    });
+    s.setAway(true);
+    say(20);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
+  });
+
+  it('away, the attempt on: no fragment leaves at the pause, the presence then the message at the end', async () => {
+    const { s, sent, stt } = await heard('bonjour');
+    s.setAway(true);
+    say(20, undefined, 8); // 256 ms of silence: past the pause (160 ms), short of the end (700 ms)
+    await flush();
+    await flush();
+    expect(stt).not.toHaveBeenCalled();
+    expect(sent).not.toContain('send');
+    say(0, undefined, 40);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
+  });
+
+  it('present, the attempt on: the fragment leaves at the pause, as before', async () => {
+    const { sent } = await heard('bonjour');
+    say(20, undefined, 8);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent).not.toContain('stopped');
+  });
+
+  it('the start is held: nothing is sent before it answers', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    sent.length = 0; // the arrival and the stop are behind
+    let arrive: () => void = () => {};
+    s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+      sent.push(state);
+      if (state === 'started') await new Promise<void>((r) => (arrive = r));
+      return undefined;
+    }) as typeof s.core.presence;
+    say(20);
+    await vi.waitFor(() => expect(sent).toContain('started'));
+    await flush();
+    await flush();
+    expect(sent).not.toContain('send');
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
+  // The plan says nothing of it: supposed, the message goes anyway.
+  it('the start fails: the message leaves all the same', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+      sent.push(state);
+      if (state === 'started') throw new Error('down');
+      return undefined;
+    }) as typeof s.core.presence;
+    say(20);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
+  it('back again: the next phrase is tried at its pause', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    say(20);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(s.away).toBe(false);
+    const first = sent.filter((x) => x === 'send').length;
+    say(20, undefined, 8);
+    await vi.waitFor(() => expect(sent.filter((x) => x === 'send').length).toBeGreaterThan(first));
   });
 
   it('a noise does not count', async () => {
