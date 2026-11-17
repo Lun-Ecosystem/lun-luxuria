@@ -298,7 +298,7 @@ export async function readProgramPaths(session: Session, call: Call = invoke): P
 
 /**
  * The system's dialog, opened by the window: only the person chooses what it may launch. True: picked; false:
- * cancelled; a string: the refusal, said as the program's state too.
+ * cancelled; a string: the refusal, said beside the exe. It is no state of the program: one starting stays followed.
  */
 export async function pickProgram(
   session: Session,
@@ -313,12 +313,11 @@ export async function pickProgram(
     await readProgramArgs(session, call);
     return true;
   } catch (err) {
-    session.programs[name] = { said: String(err) };
     return String(err);
   }
 }
 
-/** True once the window forgot the exe, and its arguments with it; a string: the refusal, said as its state too. */
+/** True once the window forgot the exe, and its arguments with it; a string: the refusal, as for a pick. */
 export async function forgetProgram(
   session: Session,
   name: ProgramName,
@@ -330,23 +329,22 @@ export async function forgetProgram(
     await readProgramArgs(session, call);
     return true;
   } catch (err) {
-    session.programs[name] = { said: String(err) };
     return String(err);
   }
 }
 
 /**
  * The draft, shown by the window in the system's dialog: it launches only what the person confirmed there. True
- * once confirmed; a string otherwise, the window's refusal or what the dialog answered.
+ * once confirmed; false: the person did not confirm them in the dialog; a string: the window's refusal.
  */
 export async function confirmArgs(
   session: Session,
   name: ProgramName,
   args: string[],
   call: Call = invoke,
-): Promise<true | string> {
+): Promise<boolean | string> {
   try {
-    if ((await call('program_args', { name, args })) !== true) return 'Arguments non confirmés.';
+    if ((await call('program_args', { name, args })) !== true) return false;
     session.programArgs[name] = [...args];
     return true;
   } catch (err) {

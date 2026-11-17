@@ -49,6 +49,26 @@ beforeEach(() => {
   dismissAll();
 });
 
+// jsdom applies no stylesheet of a component: the rule is read in the source of the row's component, and must reach the element.
+// From the repository's root: Vite rewrites `new URL('./…', import.meta.url)` to the page's address.
+const wraps = (el: Element, component = 'src/desktop/DossierFenetre.svelte') => {
+  const css = readFileSync(component, 'utf8')
+    .match(/<style[^>]*>([\s\S]*)<\/style>/)?.[1]
+    // A comment before a rule would be read with its selector, which the DOM then refuses.
+    ?.replace(/\/\*[\s\S]*?\*\//g, '');
+  return [...(css ?? '').matchAll(/([^{}]+)\{([^}]*)\}/g)].some(
+    ([, selectors, body]) =>
+      /overflow-wrap:\s*anywhere/.test(body ?? '') &&
+      (selectors ?? '').split(',').some((sel) => {
+        try {
+          return el.matches(sel.trim());
+        } catch {
+          return false; // an at-rule or a selector the DOM does not read
+        }
+      }),
+  );
+};
+
 describe('the server’s address', () => {
   it('shows in the window, linked, and warns of a token in clear', () => {
     localStorage.setItem(
@@ -480,7 +500,7 @@ describe('the arguments of a program, confirmed in the window', () => {
     cleanup();
     open({ saved: [], confirmed: { [NAME]: [] } });
     expect(screen.queryByText(/Pas encore confirmés/)).toBeNull();
-    expect(screen.getByText(/Confirmés/)).toBeInTheDocument();
+    expect(screen.getByText(/Confirmés/)).toHaveTextContent(/^Confirmés : aucun argument$/);
     expect(screen.queryByRole('button', { name: /^Confirmer/ })).toBeNull();
   });
 
@@ -514,15 +534,69 @@ describe('the arguments of a program, confirmed in the window', () => {
     expect(draft()).toHaveValue('-m\nmodels/small.bin');
   });
 
-  it('refused in the dialog (false): said on the line, nothing changes', async () => {
+  it('refused in the dialog (false): said on the line in the neutral tone, the person’s own answer, nothing changes', async () => {
     args = () => false;
     const session = open({ confirmed: { [NAME]: ['-m', 'old.bin'] } });
+    const row = within(screen.getByText('Confirmation').parentElement!);
     await fireEvent.click(confirm());
-    await vi.waitFor(() => expect(screen.getByRole('alert').textContent?.trim()).not.toBe(''));
+    await vi.waitFor(() => expect(row.getByRole('status')).toHaveTextContent(/^Arguments non confirmés\.$/));
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(session.programArgs).toEqual({ [NAME]: ['-m', 'old.bin'] });
     expect(screen.getByText(/Confirmés/)).toHaveTextContent(/old\.bin/);
     expect(draft()).toHaveValue('-m\nmodels/small.bin');
     await vi.waitFor(() => expect(confirm()).toBeEnabled());
+    // A new try clears it.
+    args = (name, list) => ((confirmed[name] = list), true);
+    await fireEvent.click(confirm());
+    await vi.waitFor(() => expect(row.getByRole('status').textContent).toBe(''));
+  });
+
+  it('« Choisir… » or « Oublier » refused: said beside the exe, on its row, once, never as the program’s state', async () => {
+    pick = () => Promise.reject('Une boîte est déjà ouverte.');
+    forget = () => Promise.reject('Oubli refusé.');
+    const session = open({ confirmed: { [NAME]: SAVED } });
+    const row = within(screen.getByText('Son programme').parentElement!);
+    await fireEvent.click(choose());
+    await vi.waitFor(() => expect(row.getByRole('alert')).toHaveTextContent('Une boîte est déjà ouverte.'));
+    expect(row.getByText(EXE)).toBeInTheDocument();
+    expect(screen.getAllByText('Une boîte est déjà ouverte.')).toHaveLength(1);
+    expect(session.programs[NAME]).toBeUndefined();
+    await vi.waitFor(() => expect(forgetButton()).toBeEnabled());
+    await fireEvent.click(forgetButton());
+    await vi.waitFor(() => expect(row.getByRole('alert')).toHaveTextContent('Oubli refusé.'));
+    expect(screen.queryByText('Une boîte est déjà ouverte.')).toBeNull();
+    expect(session.programs[NAME]).toBeUndefined();
+    // The next try clears it.
+    pick = () => EXE;
+    await vi.waitFor(() => expect(choose()).toBeEnabled());
+    await fireEvent.click(choose());
+    await vi.waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('a long exe path breaks anywhere instead of passing under the buttons', () => {
+    const LONG = `D:\\${'un-dossier-sans-espace\\'.repeat(12)}whisper-server.exe`;
+    const session = open();
+    session.programPaths = { [NAME]: LONG };
+    flushSync();
+    expect(wraps(screen.getByText(LONG), 'src/desktop/ServiceVoix.svelte')).toBe(true);
+  });
+
+  it('not answering, never confirmed: the state says to confirm its arguments first, not to launch it', async () => {
+    const session = open();
+    session.voiceStatus = 'up';
+    session.bricks = { stt: { kind: 'whisper-server', up: false }, rvc: null };
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText(/whisper-server ne répond pas à http:\/\/127\.0\.0\.1:8080\./),
+      ).toHaveTextContent(/Confirme d’abord ses arguments, plus bas\.$/),
+    );
+    expect(screen.queryByText(/Lance-le avec « Lancer whisper-server »/)).toBeNull();
+    session.programArgs = { [NAME]: SAVED };
+    await vi.waitFor(() =>
+      expect(screen.getByText(/whisper-server ne répond pas à/)).toHaveTextContent(
+        /Lance-le avec « Lancer whisper-server »\.$/,
+      ),
+    );
   });
 
   it('a new try clears the old refusal', async () => {
@@ -630,6 +704,29 @@ describe('the arguments of a program, confirmed in the window', () => {
       at.done(null);
       await vi.waitFor(() => expect(asked('program_arguments').length).toBeGreaterThan(0));
       expect(asked('program_forget')).toHaveLength(1);
+    });
+
+    it('« Lancer » waits too, while « Choisir… », « Confirmer… » or « Oublier » is under way on the same program', async () => {
+      const launch = () => screen.getByRole('button', { name: `Lancer ${NAME}` });
+      for (const gesture of ['choose', 'confirm', 'forget'] as const) {
+        const { at, wait } = later();
+        if (gesture === 'choose') pick = wait;
+        else if (gesture === 'confirm') args = wait;
+        else forget = wait;
+        open({ saved: ['-x'] });
+        expect(launch()).toBeEnabled();
+        await fireEvent.click({ choose, confirm, forget: forgetButton }[gesture]());
+        expect(launch()).toBeDisabled();
+        await fireEvent.click(launch());
+        expect(asked('program_start')).toHaveLength(0);
+        at.done(gesture === 'confirm' ? true : null);
+        // Forgotten, the program has no « Lancer » any more.
+        if (gesture !== 'forget') await vi.waitFor(() => expect(launch()).toBeEnabled());
+        cleanup();
+        pick = () => EXE;
+        args = (name, list) => ((confirmed[name] = list), true);
+        forget = () => null;
+      }
     });
 
     it('a refusal gives every button back, or nothing could be tried again', async () => {
@@ -1031,26 +1128,6 @@ describe('the service’s folder, chosen in the system’s dialog and kept by th
     done();
     await vi.waitFor(() => expect(asked('folder_forget')).toHaveLength(1));
   });
-
-  // jsdom applies no stylesheet of a component: the rule is read in the source of the folder's row, and must reach the element.
-  // From the repository's root: Vite rewrites `new URL('./…', import.meta.url)` to the page's address.
-  const wraps = (el: Element) => {
-    const css = readFileSync('src/desktop/DossierFenetre.svelte', 'utf8')
-      .match(/<style[^>]*>([\s\S]*)<\/style>/)?.[1]
-      // A comment before a rule would be read with its selector, which the DOM then refuses.
-      ?.replace(/\/\*[\s\S]*?\*\//g, '');
-    return [...(css ?? '').matchAll(/([^{}]+)\{([^}]*)\}/g)].some(
-      ([, selectors, body]) =>
-        /overflow-wrap:\s*anywhere/.test(body ?? '') &&
-        (selectors ?? '').split(',').some((sel) => {
-          try {
-            return el.matches(sel.trim());
-          } catch {
-            return false; // an at-rule or a selector the DOM does not read
-          }
-        }),
-    );
-  };
 
   it('a long path, and a long refusal, break anywhere instead of passing under the buttons', async () => {
     window_({ folder_pick: new Error(LONG) });

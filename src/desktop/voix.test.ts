@@ -502,12 +502,12 @@ describe('whisper-server and RVC', () => {
       expect(session.programArgs).toEqual({ 'whisper-server': ['-m', 'small.bin'] });
     });
 
-    it('« Oublier » refused: nothing is read again, the words are said', async () => {
+    it('« Oublier » refused: nothing is read again, the words come back, and the program’s state is left as it was', async () => {
       const session = both();
       const call = window_({ program_forget: new Error('Oubli refusé.') });
-      await forgetProgram(session, 'rvc', call);
+      expect(await forgetProgram(session, 'rvc', call)).toBe('Oubli refusé.');
       expect(call.mock.calls.map(([cmd]) => cmd)).not.toContain('program_arguments');
-      expect(session.programs.rvc).toEqual({ said: 'Oubli refusé.' });
+      expect(session.programs.rvc).toBeUndefined();
       expect(session.programArgs).toEqual({
         'whisper-server': ['-m', 'small.bin'],
         rvc: ['-m', 'small.bin'],
@@ -526,12 +526,12 @@ describe('whisper-server and RVC', () => {
       expect(session.programArgs.rvc).toBeUndefined();
     });
 
-    it('« Choisir… » refused: nothing is read again, the words are said', async () => {
+    it('« Choisir… » refused: nothing is read again, the words come back, and the program’s state is left as it was', async () => {
       const session = both();
       const call = window_({ program_pick: new Error('Une boîte est déjà ouverte.') });
-      await pickProgram(session, 'rvc', call);
+      expect(await pickProgram(session, 'rvc', call)).toBe('Une boîte est déjà ouverte.');
       expect(call.mock.calls.map(([cmd]) => cmd)).not.toContain('program_arguments');
-      expect(session.programs.rvc).toEqual({ said: 'Une boîte est déjà ouverte.' });
+      expect(session.programs.rvc).toBeUndefined();
       expect(session.programArgs.rvc).toEqual(['-m', 'small.bin']);
     });
   });
@@ -616,6 +616,26 @@ describe('whisper-server and RVC', () => {
       sleep,
       noBricks,
     );
+    expect(session.programs['whisper-server']).toMatchObject({ said: 'whisper-server répond.', ok: true });
+  });
+
+  it('« Choisir… » and « Oublier » refused while it starts are no state of it: the follow goes on, until « répond. »', async () => {
+    const session = both();
+    await launchProgram(session, 'whisper-server', started('C:\\logs\\whisper-server.log'));
+    const refused = vi.fn(async () => Promise.reject('Une boîte est déjà ouverte.'));
+    let naps = 0;
+    const sleep = async () => {
+      if (naps++ === 0) await pickProgram(session, 'whisper-server', refused);
+      else await forgetProgram(session, 'whisper-server', refused);
+    };
+    const states = ['starting', 'answering'];
+    await followPrograms(
+      session,
+      vi.fn(async () => states.shift()),
+      sleep,
+      noBricks,
+    );
+    expect(refused).toHaveBeenCalledTimes(2);
     expect(session.programs['whisper-server']).toMatchObject({ said: 'whisper-server répond.', ok: true });
   });
 

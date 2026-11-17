@@ -95,12 +95,17 @@
   );
   const piperWaits = $derived(run.piper !== undefined && run.piper !== v.piper);
   const WAITS = 'attend la relance du service.';
-  /** What to do when a program does not answer: launch it from here when it is picked, else by hand. */
+  /**
+   * What to do when a program does not answer: launch it from here when it is picked, once its arguments were
+   * confirmed (the window refuses before), else by hand.
+   */
   const absent = (name: ProgramName, url: string) =>
     `${PROGRAMS[name]} ne répond pas à ${url}. ` +
-    (session.programPaths[name]
-      ? `Lance-le avec « Lancer ${PROGRAMS[name]} ».`
-      : 'Lance-le, puis « Lancer ou vérifier ».');
+    (!session.programPaths[name]
+      ? 'Lance-le, puis « Lancer ou vérifier ».'
+      : session.programArgs[name] === undefined
+        ? 'Confirme d’abord ses arguments, plus bas.'
+        : `Lance-le avec « Lancer ${PROGRAMS[name]} ».`);
 
   /** Saved as typed, so a click on the button right after counts; a number or a fallback waits for the field to be left. */
   const typed = (on: (d: Settings, value: string) => void) => (e: Event) => {
@@ -118,21 +123,25 @@
   const waiting = $derived(changes(session));
 
   type Gesture = 'choose' | 'confirm' | 'forget';
-  // One call at a time on a program's buttons: two clicks before its dialog shows would open a second, refused one.
+  // One call at a time on a program's buttons, « Lancer » included: two clicks before its dialog shows would open a
+  // second, refused one.
   let working = $state<Partial<Record<ProgramName, Gesture>>>({});
-  /** The refusal of a program's last gesture, until the next: beside the confirmed arguments, or as its state. */
-  let refused = $state<Partial<Record<ProgramName, { on: Gesture; said: string }>>>({});
+  /**
+   * What a program's last gesture had to say, until the next, beside its button's row; never its state, which a
+   * launch under way keeps. `refusal`: the window's; otherwise the person's own answer in the dialog.
+   */
+  let said = $state<Partial<Record<ProgramName, { on: Gesture; text: string; refusal: boolean }>>>({});
   const waits = (name: ProgramName, on: Gesture) => working[name] !== undefined && working[name] !== on;
 
-  /** True once the gesture worked; a refusal stays on the program's row, and every button comes back. */
+  /** What the gesture answered, undefined when another was under way; a refusal is kept, every button comes back. */
   async function gesture(name: ProgramName, on: Gesture, job: () => Promise<boolean | string>) {
-    if (working[name]) return false;
+    if (working[name]) return undefined;
     working[name] = on;
-    delete refused[name];
+    delete said[name];
     try {
       const done = await job();
-      if (typeof done === 'string') refused[name] = { on, said: done };
-      return done === true;
+      if (typeof done === 'string') said[name] = { on, text: done, refusal: true };
+      return done;
     } finally {
       delete working[name];
     }
@@ -144,20 +153,19 @@
   }
   const choose = (name: ProgramName) => void gesture(name, 'choose', () => pickProgram(session, name));
   async function forget(name: ProgramName) {
-    if (await gesture(name, 'forget', () => forgetProgram(session, name)))
+    if ((await gesture(name, 'forget', () => forgetProgram(session, name))) === true)
       await focus(`Choisir le programme de ${PROGRAMS[name]}`);
   }
   async function confirm(name: ProgramName, args: string[]) {
-    if (await gesture(name, 'confirm', () => confirmArgs(session, name, args)))
-      await focus(`Arguments de ${PROGRAMS[name]}`);
+    const done = await gesture(name, 'confirm', () => confirmArgs(session, name, args));
+    if (done === false) said[name] = { on: 'confirm', text: 'Arguments non confirmés.', refusal: false };
+    else if (done === true) await focus(`Arguments de ${PROGRAMS[name]}`);
   }
 
   let launching = $state<ProgramName | null>(null);
   async function launch(name: ProgramName) {
-    if (launching) return;
+    if (launching || working[name]) return;
     launching = name;
-    // What it says now replaces a refused gesture.
-    delete refused[name];
     try {
       if (await launchProgram(session, name)) void followPrograms(session);
     } finally {
@@ -174,12 +182,14 @@
   {@const label = PROGRAMS[name]}
   {@const path = session.programPaths[name]}
   {@const confirmed = session.programArgs[name]}
-  <!-- A refused « Choisir… » or « Oublier » is the program's state too: said once, in its place. -->
-  {@const stateRefused = refused[name]?.on === 'confirm' ? null : refused[name]?.said}
-  <SettingsRow
-    label="Son programme"
-    hint={path ?? 'Aucun : tu le lances toi-même. Choisis son .exe pour que l’appli le lance.'}
-  >
+  {@const s = said[name]}
+  <!-- The refusal goes beside the exe or what tells to choose it, never in their place. -->
+  {#snippet exe()}
+    {#if path}<span class="garde">{path}</span>{:else}Aucun : tu le lances toi-même. Choisis son .exe pour que
+      l’appli le lance.{/if}
+    {#if s && s.on !== 'confirm'}<span class="refus" role="alert">{s.text}</span>{/if}
+  {/snippet}
+  <SettingsRow label="Son programme" hint={exe}>
     <span class="gestes">
       {#if path}
         <Button
@@ -220,7 +230,9 @@
           ? `Confirmés : ${confirmed.map((a) => `«${a}»`).join(' ') || 'aucun argument'}`
           : 'Pas encore confirmés : l’appli ne le lance qu’avec des arguments confirmés.'}</span
       >
-      {#if refused[name]?.on === 'confirm'}<span class="refus" role="alert">{refused[name]?.said}</span>{/if}
+      {#if s?.on === 'confirm' && s.refusal}<span class="refus" role="alert">{s.text}</span>{/if}
+      <!-- Always there, so the person's own answer is announced when it comes. -->
+      <span class="dit" role="status">{s?.on === 'confirm' && !s.refusal ? s.text : ''}</span>
     {/snippet}
     <SettingsRow label="Confirmation" hint={confirmation}>
       {#if !confirmed || !same(confirmed, p.args)}
@@ -243,17 +255,17 @@
         />
       {/snippet}
     </SettingsRow>
-    <SettingsRow label="Maintenant" hint={session.programs[name]?.said} error={stateRefused}>
+    <SettingsRow label="Maintenant" hint={session.programs[name]?.said}>
       <Button
         variant="secondaire"
         size="petit"
-        disabled={launching !== null && launching !== name}
+        disabled={(launching !== null && launching !== name) || working[name] !== undefined}
         loading={launching === name}
         onclick={() => void launch(name)}>Lancer {label}</Button
       >
     </SettingsRow>
   {:else if session.programs[name]}
-    <SettingsRow label="Maintenant" hint={session.programs[name]?.said} error={stateRefused} />
+    <SettingsRow label="Maintenant" hint={session.programs[name]?.said} />
   {/if}
 {/snippet}
 
@@ -460,12 +472,17 @@
     display: inline-flex;
     gap: 8px;
   }
-  /* The kit's tone for a refusal, on its own line under what was confirmed. */
+  /* The kit's tone for the window's refusal, on its own line under the exe or what was confirmed. */
   .refus {
     display: block;
     color: var(--danger);
   }
-  /* A path in an argument has no space to break at: it wraps anywhere rather than pass under the button. */
+  /* The person's own answer in the dialog: no fault, the hint's tone. */
+  .dit {
+    display: block;
+  }
+  /* A Windows path has no space to break at: it wraps anywhere rather than pass under the buttons. */
+  .garde,
   .confirmes,
   .refus {
     overflow-wrap: anywhere;
