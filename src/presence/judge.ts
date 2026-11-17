@@ -313,7 +313,7 @@ export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdic
               : { etat: 'tenue', trouve };
       }
     } else {
-      const trouve = chevauchement(partie.banc, finPartie);
+      const trouve = mesures[a.mesure](partie.banc, finPartie);
       r = hors(trouve) ? { etat: 'ratee', espece: 'hors_bornes', trouve } : { etat: 'tenue', trouve };
     }
 
@@ -376,22 +376,42 @@ export function juger(s: Scenario, partie: Partie, lieu: Lieu = 'exact'): Verdic
   return tous;
 }
 
-/** The time a `parole` and a `joue` overlap: each speech against each sentence until its `arrete`. */
-function chevauchement(banc: readonly BancEvent[], fin: number): number {
-  const spans = (debut: (e: BancEvent) => boolean, end: (d: BancEvent, e: BancEvent) => boolean) =>
-    banc.filter(debut).map((d) => {
-      const e = banc.find((x) => x.at >= d.at && x !== d && end(d, x));
-      return [d.at, e?.at ?? fin] as const;
+/** Each sentence she plays: its reply, from its `joue` to its `arrete` (or the next `joue` of that reply). */
+function sons(banc: readonly BancEvent[], fin: number) {
+  return banc
+    .filter((e) => e.name === 'joue')
+    .map((d) => {
+      // After it in the log, not only at or after its instant: the `arrete` of the sentence before shares it.
+      const e = banc
+        .slice(banc.indexOf(d) + 1)
+        .find((x) => (x.name === 'arrete' || x.name === 'joue') && x.reponse === d.reponse);
+      return { reponse: d.reponse, de: d.at, a: e?.at ?? fin };
     });
-  const paroles = spans(
-    (e) => e.name === 'parole' && e['etape'] === 'debut',
-    (d, e) => e.name === 'parole' && e['etape'] === 'fin' && e['parole'] === d['parole'],
-  );
-  const sons = spans(
-    (e) => e.name === 'joue',
-    (d, e) => (e.name === 'arrete' || e.name === 'joue') && e.reponse === d.reponse,
-  );
-  let ms = 0;
-  for (const [a, b] of paroles) for (const [c, d] of sons) ms += Math.max(0, Math.min(b, d) - Math.max(a, c));
-  return ms;
 }
+
+const mesures = {
+  /** The time a `parole` and a `joue` overlap: each speech against each sentence until its `arrete`. */
+  chevauchement(banc: readonly BancEvent[], fin: number): number {
+    const paroles = banc
+      .filter((e) => e.name === 'parole' && e['etape'] === 'debut')
+      .map((d) => {
+        const e = banc.find(
+          (x) => x.at >= d.at && x.name === 'parole' && x['etape'] === 'fin' && x['parole'] === d['parole'],
+        );
+        return [d.at, e?.at ?? fin] as const;
+      });
+    let ms = 0;
+    for (const [a, b] of paroles)
+      for (const s of sons(banc, fin)) ms += Math.max(0, Math.min(b, s.a) - Math.max(a, s.de));
+    return ms;
+  },
+  /** The time two sentences of different replies play together: a sum over pairs, with three replies it may exceed real time. */
+  reponses_ensemble(banc: readonly BancEvent[], fin: number): number {
+    const tous = sons(banc, fin);
+    let ms = 0;
+    for (const [i, x] of tous.entries())
+      for (const y of tous.slice(i + 1))
+        if (x.reponse !== y.reponse) ms += Math.max(0, Math.min(x.a, y.a) - Math.max(x.de, y.de));
+    return ms;
+  },
+};
