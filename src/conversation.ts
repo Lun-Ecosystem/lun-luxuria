@@ -284,12 +284,12 @@ export class Conversation {
   }
 
   /** Nothing will answer this sentence: the reply before it is the unheard one again, and comes out if held back. */
-  #noAnswer(attempt: Attempt): void {
-    this.#write('sans_reponse', this.#ref(attempt), {});
+  #noAnswer(attempt: Attempt, raison?: string, restarted = true): void {
+    this.#write('sans_reponse', this.#ref(attempt), { raison });
     // A try at a pause may have passed the filter: the sentence did not, its words go.
     if (attempt.phrase !== undefined) this.#d.trace?.forget(attempt.phrase);
     this.#unlink(attempt);
-    this.#letGo(attempt);
+    this.#letGo(attempt, restarted);
   }
 
   /** He talks again while a reply is on its way: it waits, silent, for what he is saying. A cough must not cost it. */
@@ -381,10 +381,13 @@ export class Conversation {
     if (waiting.replyId !== undefined) this.#forget(waiting.replyId);
   }
 
-  #forget(replyId: number): void {
+  /** `byGuard`: its guard's message is the one to read; a cut that fails is for the server to know, not told. */
+  #forget(replyId: number, byGuard = false): void {
     this.#write('oubliee', { reponse: replyId });
     this.#d.speaker.drop(replyId);
-    void this.#d.brain.cut(replyId, '').catch((err) => this.#fail('Coupure non transmise', err));
+    void this.#d.brain.cut(replyId, '').catch((err) => {
+      if (!byGuard) this.#fail('Coupure non transmise', err);
+    });
   }
 
   /** Transcribes, filters, sends; held unless `final`. */
@@ -428,6 +431,12 @@ export class Conversation {
       if (attempt.dropped) return;
       // Nothing will come of it: the end of the sentence must not wait for a reply.
       attempt.dropped = true;
+      // Replaced by a later sentence for her, whose reply is on its way: nothing to tell, its thinking stays on. It
+      // still leaves what is to be judged, or her voice would never resume. Its end did not restart the chronometer.
+      if (attempt.superseded) {
+        this.#noAnswer(attempt, 'remplacee', false);
+        return;
+      }
       if (attempt.committed) {
         d.on({ type: 'thinking', on: false });
         this.#noAnswer(attempt);
@@ -538,7 +547,7 @@ export class Conversation {
 
   /** The first sentence of its reply did not come in time: the server forgets it, and nothing will answer it. */
   #late(attempt: Attempt): void {
-    if (attempt.replyId !== undefined) this.#forget(attempt.replyId);
+    if (attempt.replyId !== undefined) this.#forget(attempt.replyId, true);
     this.#over(attempt, `Sa réponse n’est pas venue : aucune phrase en ${REPLY_TIMEOUT_MS / 1000} s`);
     // Whatever comes of it now is thrown away.
     attempt.late = true;
@@ -558,7 +567,7 @@ export class Conversation {
       attempt.replyId = e.id;
       this.#write('numero', this.#ref(attempt), { message: attempt.userId });
       if (attempt.dropped) this.#d.speaker.drop(e.id);
-      else if (attempt.superseded || attempt.late) this.#forget(e.id);
+      else if (attempt.superseded || attempt.late) this.#forget(e.id, attempt.late);
       else if (attempt.committed) {
         this.#waitingReply = e.id;
         if (attempt.heldBack) this.#d.speaker.hold(e.id);

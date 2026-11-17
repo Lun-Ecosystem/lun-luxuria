@@ -2167,6 +2167,27 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     expect(failed(t)).toEqual([{ type: 'failed', text: GUARD }]);
   });
 
+  it('a reply replaced by a new sentence, its cut refused: that is still said', async () => {
+    const t = setup(
+      NO_TRY,
+      'Bonjour toi',
+      () => false,
+      undefined,
+      undefined,
+      [],
+      'Le serveur a répondu 404.',
+    );
+    t.convo.onEndpoint(ended);
+    await flush();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 4000 });
+    await flush();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(failed(t)).toEqual([
+      { type: 'failed', text: 'Coupure non transmise : Le serveur a répondu 404.' },
+    ]);
+  });
+
   it.each([
     [
       'broke',
