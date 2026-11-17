@@ -1559,6 +1559,27 @@ describe('folded, never hiding what blocks', () => {
     opened('voix', { voice: { service: { launch: true, piper: 'voix.onnx' } } }, { voix: 'C:/voix' });
     expect(advanced()).not.toHaveAttribute('open');
   });
+
+  it('the service’s folder to choose: its own row opens the block, an old path waiting or none kept', () => {
+    const marked = () =>
+      screen.getByText('Dossier du service').closest('.ligne')!.querySelector('[data-bloque]');
+    const launch = { launch: true, piper: 'voix.onnx' };
+    opened('voix', { voice: { service: { ...launch, folder: 'D:/ancien/voix' } } });
+    expect(advanced()).toHaveAttribute('open');
+    expect(marked()).not.toBeNull();
+    cleanup();
+    opened('voix', { voice: { service: launch } });
+    expect(advanced()).toHaveAttribute('open');
+    expect(marked()).not.toBeNull();
+    cleanup();
+    opened('voix', { voice: { service: launch } }, { voix: 'C:/voix' });
+    expect(marked()).toBeNull();
+  });
+
+  it('the body’s folder is in no folded block: nothing to open there', () => {
+    opened('corps', { body: { folder: 'C:/ancien/corps' } });
+    expect(screen.getByRole('button', { name: 'Choisir le dossier du corps' }).closest('details')).toBeNull();
+  });
 });
 
 describe('the room', () => {

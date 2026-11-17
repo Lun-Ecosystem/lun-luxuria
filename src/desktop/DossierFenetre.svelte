@@ -16,6 +16,7 @@
     name,
     of,
     none,
+    needed = false,
     after,
   }: {
     session: Session;
@@ -25,6 +26,8 @@
     of: string;
     /** Said while the window keeps none and none waits. */
     none: string;
+    /** What uses it cannot start without it: while none is kept, the row opens a folded block around it. */
+    needed?: boolean;
     /** What follows a choice or a forget that worked: the body reads itself again; the service, nothing. */
     after?: () => void;
   } = $props();
@@ -93,7 +96,7 @@
 {/snippet}
 
 <SettingsRow label="Dossier {of}" hint={folder}>
-  <span class="gestes" bind:this={gestes}>
+  <span class="gestes" bind:this={gestes} data-bloque={needed && !path ? '' : undefined}>
     {#if path}
       <Button
         variant="fantome"

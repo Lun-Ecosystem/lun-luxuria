@@ -9,8 +9,8 @@
   let { what, cards = false, children }: { what: string; cards?: boolean; children: Snippet } = $props();
   let block: HTMLDetailsElement;
 
-  // Folded never hides what blocks: an error shown inside, or a text marked `data-bloque`, opens it; it never closes
-  // by itself.
+  // Folded never hides what blocks: an error shown inside, or what is marked `data-bloque` (a text, a folder's row),
+  // opens it; it never closes by itself.
   $effect(() => {
     const look = () => {
       if (block.querySelector('[role="alert"], [data-bloque]')) block.open = true;

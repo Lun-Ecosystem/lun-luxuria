@@ -341,6 +341,7 @@
         name="voix"
         of="du service"
         none="Aucun : choisis le dossier qui contient service.py."
+        needed
       />
     {/if}
   </SettingsCard>
