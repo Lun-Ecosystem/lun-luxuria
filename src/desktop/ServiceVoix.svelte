@@ -32,6 +32,7 @@
     runningWith,
     same,
     startVoice,
+    unconfirmed,
     type ProgramName,
   } from './voix.ts';
 
@@ -226,8 +227,9 @@
       />
     </SettingsRow>
     <!-- Each argument as the window's dialog shows it: between « », nothing added. -->
+    <!-- What the app's start leaves down blocks: the folded block opens on it, without an alert for a fixed text. -->
     {#snippet confirmation()}
-      <span class="confirmes"
+      <span class="confirmes" data-bloque={unconfirmed(session).includes(name) ? '' : undefined}
         >{confirmed
           ? `Confirmés : ${confirmed.map((a) => `«${a}»`).join(' ') || 'aucun argument'}`
           : 'Pas encore confirmés : l’appli ne le lance qu’avec des arguments confirmés.'}</span

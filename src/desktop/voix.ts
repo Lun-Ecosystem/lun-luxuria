@@ -407,9 +407,10 @@ export const unconfirmed = (session: Session): ProgramName[] =>
  * stays down: no dialog opens by itself, in the middle of a turn.
  */
 export async function startPrograms(session: Session, call: Call = invoke): Promise<boolean> {
+  const waiting = unconfirmed(session);
   const started = await Promise.all(
     asked(session).map(async (p) => {
-      if (session.programArgs[p.name] !== undefined) return launchProgram(session, p.name, call);
+      if (!waiting.includes(p.name)) return launchProgram(session, p.name, call);
       session.programs[p.name] = {
         said: 'Ses arguments sont à confirmer, dans les réglages avancés de la voix.',
       };

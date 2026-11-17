@@ -175,8 +175,9 @@ describe('the folders an older page kept', () => {
 });
 
 describe('the arguments of the programs never confirmed', () => {
-  const ONE = 'Les arguments de whisper-server sont à confirmer, dans les réglages avancés de la voix.';
-  const LINE = /sont à confirmer, dans les réglages avancés de la voix\./;
+  // The button leads to the settings, and the folded block opens there: the line says no more.
+  const ONE = 'Les arguments de whisper-server sont à confirmer.';
+  const LINE = /sont à confirmer/;
   const FOLDERS = /Les dossiers se choisissent de nouveau, dans les réglages\./;
   // Only the window launches a program.
   beforeEach(() => void (where.inWindow = true));
@@ -268,15 +269,21 @@ describe('the arguments of the programs never confirmed', () => {
     render(Scene, { session, openSettings: () => {} });
     expect(screen.getAllByText(LINE)).toHaveLength(1);
     expect(
-      screen.getByText(
-        'Les arguments de whisper-server et de RVC sont à confirmer, dans les réglages avancés de la voix.',
-      ),
+      screen.getByText('Les arguments de whisper-server et de RVC sont à confirmer.'),
     ).toBeInTheDocument();
     await confirmArgs(session, 'whisper-server', ['-m', 'small.bin'], confirmed);
     flushSync();
-    expect(
-      screen.getByText('Les arguments de RVC sont à confirmer, dans les réglages avancés de la voix.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Les arguments de RVC sont à confirmer.')).toBeInTheDocument();
+  });
+
+  it('« Lancer … avec l’appli » switched off: the line goes, without a reload', () => {
+    const session = new Session();
+    programs(session);
+    render(Scene, { session, openSettings: () => {} });
+    expect(screen.getByText(ONE)).toBeInTheDocument();
+    programs(session, { launch: false });
+    flushSync();
+    expect(screen.queryByText(LINE)).toBeNull();
   });
 
   it('in a browser tab: no line, no program is launched there', () => {

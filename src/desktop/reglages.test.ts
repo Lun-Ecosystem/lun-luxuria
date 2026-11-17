@@ -438,7 +438,9 @@ describe('the arguments of a program, confirmed in the window', () => {
     });
   });
   const asked = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd);
-  const open = (over: { saved?: string[]; confirmed?: Record<string, string[]>; path?: boolean } = {}) => {
+  const open = (
+    over: { saved?: string[]; confirmed?: Record<string, string[]>; path?: boolean; launch?: boolean } = {},
+  ) => {
     localStorage.setItem(
       'luxuria.settings',
       JSON.stringify({
@@ -449,7 +451,7 @@ describe('the arguments of a program, confirmed in the window', () => {
             stt: {
               kind: NAME,
               url: 'http://127.0.0.1:8080',
-              program: { args: over.saved ?? SAVED, launch: false },
+              program: { args: over.saved ?? SAVED, launch: over.launch ?? false },
             },
           },
         },
@@ -475,6 +477,27 @@ describe('the arguments of a program, confirmed in the window', () => {
     expect(confirm()).toBeEnabled();
     expect(session.programArgs).toEqual({});
     expect(asked('program_args')).toHaveLength(0);
+  });
+
+  it('launched with the app, never confirmed: the folded block opens on them, said without an alert', async () => {
+    open({ launch: true });
+    await waitFor(() => expect(advanced()).toHaveAttribute('open'));
+    const notice = within(advanced()).getByText(/Pas encore confirmés/);
+    // A fixed text: an alert would be announced each time the screen opens.
+    expect(notice.closest('[role="alert"]')).toBeNull();
+  });
+
+  it('never confirmed but not launched with the app: nothing blocks, the block stays folded', () => {
+    open();
+    expect(screen.getByText(/Pas encore confirmés/)).toBeInTheDocument();
+    expect(advanced()).not.toHaveAttribute('open');
+  });
+
+  it('a confirmation the window no longer keeps, while the screen is open: the block opens then', async () => {
+    const session = open({ launch: true, confirmed: { [NAME]: SAVED } });
+    expect(advanced()).not.toHaveAttribute('open');
+    session.programArgs = {};
+    await waitFor(() => expect(advanced()).toHaveAttribute('open'));
   });
 
   it('confirmed: « Confirmés : … » says them, and a draft equal to them offers no « Confirmer… »', () => {

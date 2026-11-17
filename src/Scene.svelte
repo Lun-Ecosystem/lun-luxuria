@@ -157,7 +157,7 @@
     {/if}
     {#if toConfirm.length}
       <span class="echec" role="status">
-        Les arguments de {toConfirm.join(' et de ')} sont à confirmer, dans les réglages avancés de la voix.
+        Les arguments de {toConfirm.join(' et de ')} sont à confirmer.
         <button class="reprise" onclick={() => openSettings('voix')}>Confirmer les arguments</button>
       </span>
     {/if}
