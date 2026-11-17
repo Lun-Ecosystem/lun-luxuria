@@ -132,5 +132,12 @@
     "motif": "if (this.#turns.length === 0 && this.#shown) this.#on({ type: 'silent' });",
     "par": "if (this.#turns.length === 0) this.#on({ type: 'silent' });",
     "maillon": "voix"
+  },
+  "memoire-ignoree": {
+    "quoi": "mémoire des tours finis ignorée : un tour fini se recrée",
+    "fichier": "src/speech/speaker.ts",
+    "motif": "return this.#gone.has(id) || this.#ended.has(id);",
+    "par": "return this.#gone.has(id);",
+    "maillon": "voix"
   }
 }

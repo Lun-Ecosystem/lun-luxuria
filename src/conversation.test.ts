@@ -886,21 +886,24 @@ describe('cutting it off', () => {
   /** How: its done in error; the same, then its words and their end, late (two connections); or its stream breaks. */
   const HOW = ['done', 'late', 'throws'] as const;
   // As soon as sent, the last sentence for her is not known yet: `last` would only replay `soon: false`.
+  // Halved twice, on what found nothing more: no reply already on its way (the runs above play it), and one order of
+  // the verdicts in two. Every way and every mode stays played; the mutations of the memory and of `#over` still die.
   const errorRuns = [true, false].flatMap((soon) =>
     WHICH.filter((which) => !soon || (which !== 'none' && which !== 'last')).flatMap((which) =>
       (which === 'none' ? HOW.slice(0, 1) : HOW).flatMap((how) =>
-        lastVerdicts.map((c) => ({ ...c, which, how, soon })),
+        lastVerdicts.filter((c) => !c.ahead).map((c) => ({ ...c, which, how, soon })),
       ),
     ),
   );
+  const someLines = timelines().filter((_, i) => i % 2 === 0);
 
   it.each(errorRuns)(
     'the reply of a sentence ends in error: nothing stays held, the last one for her still answers, and each ' +
       'error is said at most once, that of the last one for her once (ahead $ahead, $said, errors on $which, ' +
-      'by $how, $soon, every order, a cough anywhere)',
+      'by $how, $soon, one order in two, a cough anywhere)',
     async ({ ahead, said, which, how, soon }) => {
       const settle = () => new Promise<void>((ok) => setImmediate(ok));
-      for (const line of timelines())
+      for (const line of someLines)
         for (let cough = -1; cough < line.length; cough++) {
           const name = `${line.join(' ')}, cough before ${line[cough] ?? 'nothing'}`;
           const v = verdicts();
