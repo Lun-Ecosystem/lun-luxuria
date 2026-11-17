@@ -647,7 +647,7 @@ then it blocks, and says so as an error: a folded block opens on it. One the pag
           )}
           {@render field(
             'Attente avant de reprendre',
-            'Après un bruit, si on reparle dans ce temps, elle ne reprend pas.',
+            'Après un bruit, si tu reparles dans ce temps, sa voix ne reprend pas.',
             secs(s.bargeIn.resumeMs),
             's',
             (v) => set((d) => (d.bargeIn.resumeMs = ms(v, 0, 1000, d.bargeIn.resumeMs))),

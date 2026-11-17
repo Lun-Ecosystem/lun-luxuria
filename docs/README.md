@@ -140,10 +140,10 @@ commence une phrase retarde la reprise jusqu'à sa fin, le silence de fin, 0,7 s
 
 Sa voix ne reprend pas aussitôt : elle attend « Attente avant de reprendre » (Réglages › Écoute, réglages avancés),
 0,3 s par défaut, de 0 à 1 s, 0 pour reprendre aussitôt. Une phrase qui commence dans ce temps la garde muette ; un
-nouveau bruit relance l'attente. La réponse retenue, elle, sort sans attendre. Le micro qui s'arrête la fait reprendre
-tout de suite, et le bouton qui la coupe annule l'attente. Sa limite : l'attente déplace la falaise à environ 1 s après
-le bruit, elle ne la supprime pas. Une parole qui commence après l'attente est encore couverte jusqu'à sa tenue
-(lun-luxuria#63).
+nouveau bruit relance l'attente. Une réponse retenue est relâchée sans attendre, mais derrière une voix suspendue,
+elle ne sonne qu'après la reprise de cette voix. Quand le micro s'arrête, sa voix reprend tout de suite ; le bouton qui
+la fait taire annule l'attente. Sa limite : l'attente déplace la falaise à environ 1 s après le bruit, elle ne la
+supprime pas. Une parole qui commence après l'attente est encore couverte jusqu'à sa tenue (lun-luxuria#63).
 
 Le filtre ne regarde qu'une phrase transcrite localement : refusée, elle ne part jamais.
 

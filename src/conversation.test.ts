@@ -408,10 +408,14 @@ describe('cutting it off', () => {
 
   it('she does not resume while a sentence that ended may still be for her, nor over one he holds', async () => {
     const FILTERED = { filter: { scene: true, small: true } };
-    const cough = await suspended();
+    const v = verdicts();
+    const cough = await suspended({}, v.stt);
     cough.convo.onEndpoint(ended);
     cough.convo.onEndpoint({ type: 'noise' });
+    // Its verdict comes only after the wait could have ended: what may still be for her keeps her silent all along.
+    await resumed();
     expect(cough.sounds).toHaveLength(1);
+    v.give(0, 'Bonjour toi');
     await tick();
     expect(cough.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
 
@@ -420,6 +424,7 @@ describe('cutting it off', () => {
     over.convo.onEndpoint(ended);
     over.convo.onEndpoint({ type: 'held' });
     await tick();
+    await resumed();
     expect(over.sounds).toHaveLength(1);
     over.convo.onEndpoint(ended);
     await tick();
@@ -464,6 +469,7 @@ describe('cutting it off', () => {
     t.convo.silence();
     t.convo.onEndpoint({ type: 'noise' });
     await tick();
+    await resumed();
     expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
     expect(t.sounds).toHaveLength(1);
   });
@@ -677,6 +683,7 @@ describe('cutting it off', () => {
     t.convo.onEndpoint(ended);
     t.convo.onEndpoint({ type: 'start' });
     await tick();
+    await resumed();
     expect(t.sounds).toHaveLength(1);
     expect(t.calls).toEqual(['sound stop']);
     // That sentence was only a noise: now nothing is said, and she goes on.
@@ -996,9 +1003,24 @@ describe('cutting it off', () => {
       const t = await silenced(waits(0));
       const base = vi.getTimerCount();
       t.convo.onEndpoint({ type: 'noise' });
+      // Before the flush: a timer of 0 ms would be gone after it.
+      expect(vi.getTimerCount()).toBe(base);
       await flush();
       expect(t.sounds).toHaveLength(2);
       expect(vi.getTimerCount()).toBe(base);
+    });
+
+    it('resumeMs 0: she still does not resume while a sentence that ended waits for its verdict', async () => {
+      const v = verdicts();
+      const t = await silenced(waits(0), v.stt);
+      t.convo.onEndpoint(end(1000));
+      t.convo.onEndpoint({ type: 'noise' });
+      await later(5 * WAIT);
+      expect(t.sounds).toHaveLength(1);
+      v.give(0, ASIDE);
+      await flush();
+      expect(t.sounds).toHaveLength(2);
+      expect(t.calls).toEqual(['sound stop']);
     });
 
     it('the microphone stops: she resumes at once, in the wait too', async () => {
@@ -1051,6 +1073,8 @@ describe('cutting it off', () => {
       // Held over her answer, and nothing after it: she stays silent, however long.
       t.convo.onEndpoint({ type: 'held' });
       await later(5 * WAIT);
+      expect(t.sounds).toHaveLength(2);
+      expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"', 'sound stop']);
     });
 
     it('a reply held back is let out at once: only her own voice waits', async () => {
