@@ -76,6 +76,7 @@ Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des R�
   dossier sans `corps.json` est refusé, et le choix d'avant reste. Seuls ses fichiers images directs sont lus (png,
   jpg, webp, gif, 10 Mo au plus). Une image manquante rend le souffle, et l'écran dit pourquoi ; « Relire » recharge
   le dossier, « Oublier » rend le souffle.
+
 Les champs du service voix, de whisper-server et de RVC sont dans Réglages › Voix, sous « Réglages avancés » ; son
 état et « Lancer ou vérifier » restent devant.
 
@@ -239,3 +240,6 @@ Remove-Item Env:GESTES_STT
   elle fait lire au service tout `.onnx` du poste comme voix, un lecteur réseau ou un lien vers un partage sous une
   lettre de lecteur compris ; elle lit les images du dossier du corps choisi ; elle joint les origines confirmées, par
   toute méthode et tout chemin, et une origine est un nom, que son DNS peut faire pointer vers le réseau local.
+- `localhost` est admis par son nom, dans le filtre de la fenêtre comme dans les adresses du service : le système le
+  résout, et une ligne du fichier `hosts` (droits d'administrateur) l'enverrait ailleurs. La sonde des programmes, elle,
+  ne garde que les adresses de la boucle locale.

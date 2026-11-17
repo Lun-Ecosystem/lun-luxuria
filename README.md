@@ -26,7 +26,8 @@ Son nom, son ton et le modèle qui le fait répondre se règlent dans l'applicat
 ## Ce qu'il te faut
 
 - Node `^22.13.0 || >=24` et [uv](https://docs.astral.sh/uv/) pour le service voix.
-- Une voix, au choix : Piper ou Kokoro, et son modèle.
+- Une voix, au choix : Piper ou Kokoro, et son modèle. La fenêtre lance Piper ; Kokoro, seulement le service lancé à la
+  main.
 - Un modèle compatible OpenAI, ou un serveur auquel se relier.
 
 ## Démarrer en local
