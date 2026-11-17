@@ -255,6 +255,96 @@ describe('a phrase heard', () => {
     expect(sent.slice(-2)).toEqual(['started', 'send']);
   });
 
+  /** From now on, the start of the presence answers only on the call it returns. */
+  function holdStart(s: Session, sent: string[]): () => void {
+    let arrive: () => void = () => {};
+    s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+      sent.push(state);
+      if (state === 'started') await new Promise<void>((r) => (arrive = r));
+      return undefined;
+    }) as typeof s.core.presence;
+    return () => arrive();
+  }
+  /** The conversation reached the send this many times: the trace writes it just before. */
+  const reachedSend = (s: Session) => s.turns.events.filter((e) => e.name === 'envoyee').length;
+
+  it('away, the start held, two phrases: none leaves before it answers, and the first leaves first', async () => {
+    const { s, sent } = await heard('', {
+      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
+    });
+    let n = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ text: `phrase ${n++}`, confidence: 0.9 })),
+    );
+    s.core.send = vi.fn(async (text: string) => void sent.push(`send:${text}`)) as typeof s.core.send;
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(2));
+    expect(sent.filter((x) => x.startsWith('send'))).toEqual([]);
+    arrive();
+    await vi.waitFor(() => expect(sent.filter((x) => x.startsWith('send'))).toHaveLength(2));
+    expect(sent.slice(-3)).toEqual(['started', 'send:phrase 0', 'send:phrase 1']);
+  });
+
+  it('back by a key or the mouse, the start held: a phrase waits for it', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    void s.setAway(false); // the first input, as `awayFollows` reads it
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBeGreaterThan(0));
+    expect(sent).not.toContain('send');
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
+  it('the attempt off by the person, the start held: nothing is sent before it answers', async () => {
+    const { s, sent } = await heard('bonjour', {
+      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
+    });
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    expect(sent).not.toContain('send');
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
+  it('a start that never answers: the message leaves at 3 s, once, and no failure is shown', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    holdStart(s, sent); // never let go
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    say(20);
+    // Each check moves the clock 50 ms at most: the wait has run less than 3 s here.
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    await vi.advanceTimersByTimeAsync(2900);
+    expect(sent).not.toContain('send');
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sent.filter((x) => x === 'send')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sent.filter((x) => x === 'send')).toHaveLength(1);
+    expect(s.failure).toBe('');
+  });
+
+  it('alone on a model, away: the fragment is still tried at the pause, nothing to wait for', async () => {
+    const { s, stt } = await heard('bonjour', { brain: 'alone' });
+    s.setAway(true);
+    say(20, undefined, 8); // past the pause, short of the end
+    await vi.waitFor(() => expect(stt).toHaveBeenCalled());
+  });
+
   it('back again: the next phrase is tried at its pause', async () => {
     const { s, sent } = await heard('bonjour');
     s.setAway(true);

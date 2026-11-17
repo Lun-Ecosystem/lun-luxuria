@@ -32,6 +32,8 @@ const SAID_KEY = 'luxuria.said';
 const FORGOTTEN = 'Ce poste n’est plus reconnu par le serveur : entre un nouveau code d’appairage.';
 const BEAT_MS = 30_000;
 const BUSY_POLL_MS = 3000;
+/** A server that does not answer the return must not hold her words: past it, the message leaves all the same. */
+const BACK_WAIT_MS = 3000;
 const SUBTITLE_STAYS_MS = 4000;
 const TRACE_STAYS_MS = 6000;
 /** The one clock of a turn, for the listening, the conversation and her voice: it never goes back, as `Date.now` may. */
@@ -171,7 +173,7 @@ export class Session {
   #busySince = 0;
   /** A question to the voice service about the microphone, still unanswered. */
   #asking = false;
-  /** The return of the presence the last phrase brought, if it was away: what the conversation sends waits for it. */
+  /** The start of the last return of the presence, `BACK_WAIT_MS` at most, failed or not: every message waits for it. */
   #back: Promise<void> = Promise.resolve();
 
   get state(): BodyState {
@@ -263,7 +265,7 @@ export class Session {
     const out = webOutput(() => this.settings.voice.volume);
     const convo: Conversation = new Conversation({
       brain: {
-        // Away, the presence comes back first: a phrase heard waits for that start, as one written does.
+        // Sent after the start of a return under way, in the order they came.
         send: async (...args) => {
           await this.#back;
           return this.brain.send(...args);
@@ -279,9 +281,10 @@ export class Session {
         this.turns,
       )),
       trace: this.turns,
-      // Away, nothing is tried at a pause: a fragment would leave before the presence is back.
+      // Away and linked, nothing is tried at a pause: a fragment would leave before the presence is back. Alone, the
+      // presence is nothing to wait for.
       settings: () =>
-        this.away
+        this.away && this.settings.brain === 'linked'
           ? { ...this.settings, endOfSpeech: { ...this.settings.endOfSpeech, speculate: false } }
           : this.settings,
       layout: () => this.layout,
@@ -388,14 +391,20 @@ export class Session {
     this.away = next;
     if (!this.entered) return;
     if (next) await this.brain.presence('stopped').catch(() => {});
-    else await this.#announce();
+    else
+      await (this.#back = Promise.race([
+        this.#announce().catch(() => {}),
+        new Promise<void>((r) => setTimeout(r, BACK_WAIT_MS)),
+      ]));
   }
 
-  /** A phrase sent, heard or written: the person is there, as with a key. Away, the presence comes back first. */
+  /**
+   * A phrase sent, heard or written: the person is there, as with a key. Away, the start of the presence leaves before
+   * its message; a fragment tried before the absence was noted may have left already.
+   */
   #heard(): Promise<void> {
     this.heardAt = Date.now();
-    // A start that fails neither holds the message back nor throws: it leaves all the same.
-    return (this.#back = this.setAway(false).catch(() => {}));
+    return this.setAway(false);
   }
 
   #onLive(e: LiveEvent): void {
