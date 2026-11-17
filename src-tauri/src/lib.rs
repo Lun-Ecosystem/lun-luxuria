@@ -2,6 +2,8 @@
 //! what a browser tab cannot: a window of its own, global keys, requests without CORS.
 
 mod body;
+#[cfg(test)]
+mod core_permissions;
 mod folders;
 mod idle;
 mod job;
