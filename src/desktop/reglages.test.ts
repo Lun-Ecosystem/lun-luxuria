@@ -609,6 +609,30 @@ describe('the arguments of a program, confirmed in the window', () => {
     await vi.waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   });
 
+  it('a new draft clears what « Confirmer… » said: no « non confirmés » under the arguments it shows as confirmed', async () => {
+    args = () => false;
+    open({ confirmed: { [NAME]: ['-m', 'old.bin'] } });
+    await fireEvent.click(confirm());
+    await vi.waitFor(() => expect(screen.getByText('Arguments non confirmés.')).toBeInTheDocument());
+    // Typed back to what the window confirmed: « Confirmer… » goes, and so does the dialog's « no ».
+    await fireEvent.input(draft(), { target: { value: '-m\nold.bin' } });
+    expect(screen.queryByRole('button', { name: /^Confirmer/ })).toBeNull();
+    expect(screen.getByText(/Confirmés/)).toHaveTextContent(/old\.bin/);
+    expect(screen.queryByText('Arguments non confirmés.')).toBeNull();
+  });
+
+  it('a new draft clears the window’s refusal of « Confirmer… »', async () => {
+    args = () => Promise.reject('Une boîte est déjà ouverte.');
+    open();
+    await fireEvent.click(confirm());
+    await vi.waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Une boîte est déjà ouverte.'),
+    );
+    await fireEvent.input(draft(), { target: { value: '-m\nmodels/large.bin' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(confirm()).toBeEnabled();
+  });
+
   it('« Oublier » reads the confirmed arguments again, after the window forgot', async () => {
     forget = () => ((confirmed = {}), null);
     const session = open({ confirmed: { [NAME]: SAVED } });

@@ -220,6 +220,8 @@
         oninput={(e) => {
           const lines = argsOf((e.currentTarget as HTMLTextAreaElement).value);
           set((d) => (edit(d).args = lines));
+          // What « Confirmer… » said was of another draft.
+          if (said[name]?.on === 'confirm') delete said[name];
         }}
       />
     </SettingsRow>
