@@ -392,16 +392,23 @@ export async function launchProgram(
   }
 }
 
+/** Each program in use, picked and asked to launch with the app. */
+const asked = (session: Session) =>
+  inUse(session.settings.voice.service).filter((p) => p.program.launch && session.programPaths[p.name]);
+
+/** Those the app's start leaves down, their arguments never confirmed: the scene says so. */
+export const unconfirmed = (session: Session): ProgramName[] =>
+  asked(session)
+    .filter((p) => session.programArgs[p.name] === undefined)
+    .map((p) => p.name);
+
 /**
  * At the window's start: each program in use, picked and asked to launch. One whose arguments were never confirmed
  * stays down: no dialog opens by itself, in the middle of a turn.
  */
 export async function startPrograms(session: Session, call: Call = invoke): Promise<boolean> {
-  const asked = inUse(session.settings.voice.service).filter(
-    (p) => p.program.launch && session.programPaths[p.name],
-  );
   const started = await Promise.all(
-    asked.map(async (p) => {
+    asked(session).map(async (p) => {
       if (session.programArgs[p.name] !== undefined) return launchProgram(session, p.name, call);
       session.programs[p.name] = {
         said: 'Ses arguments sont à confirmer, dans les réglages avancés de la voix.',
