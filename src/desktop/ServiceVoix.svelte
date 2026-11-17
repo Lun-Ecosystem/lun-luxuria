@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import {
     Badge,
     Button,
@@ -19,6 +20,7 @@
     argsOf,
     changes,
     checkVoice,
+    confirmArgs,
     followPrograms,
     forgetProgram,
     launchProgram,
@@ -28,6 +30,7 @@
     PROGRAMS,
     restartVoice,
     runningWith,
+    same,
     startVoice,
     type ProgramName,
   } from './voix.ts';
@@ -114,10 +117,47 @@
   const restart = () => act(() => restartVoice(session, pingVoice(session.voiceFetch)));
   const waiting = $derived(changes(session));
 
+  type Gesture = 'choose' | 'confirm' | 'forget';
+  // One call at a time on a program's buttons: two clicks before its dialog shows would open a second, refused one.
+  let working = $state<Partial<Record<ProgramName, Gesture>>>({});
+  /** The refusal of a program's last gesture, until the next: beside the confirmed arguments, or as its state. */
+  let refused = $state<Partial<Record<ProgramName, { on: Gesture; said: string }>>>({});
+  const waits = (name: ProgramName, on: Gesture) => working[name] !== undefined && working[name] !== on;
+
+  /** True once the gesture worked; a refusal stays on the program's row, and every button comes back. */
+  async function gesture(name: ProgramName, on: Gesture, job: () => Promise<boolean | string>) {
+    if (working[name]) return false;
+    working[name] = on;
+    delete refused[name];
+    try {
+      const done = await job();
+      if (typeof done === 'string') refused[name] = { on, said: done };
+      return done === true;
+    } finally {
+      delete working[name];
+    }
+  }
+  /** The clicked button went: the focus goes to what replaces it, once enabled again, rather than to the page. */
+  async function focus(label: string) {
+    await tick();
+    document.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.focus();
+  }
+  const choose = (name: ProgramName) => void gesture(name, 'choose', () => pickProgram(session, name));
+  async function forget(name: ProgramName) {
+    if (await gesture(name, 'forget', () => forgetProgram(session, name)))
+      await focus(`Choisir le programme de ${PROGRAMS[name]}`);
+  }
+  async function confirm(name: ProgramName, args: string[]) {
+    if (await gesture(name, 'confirm', () => confirmArgs(session, name, args)))
+      await focus(`Arguments de ${PROGRAMS[name]}`);
+  }
+
   let launching = $state<ProgramName | null>(null);
   async function launch(name: ProgramName) {
     if (launching) return;
     launching = name;
+    // What it says now replaces a refused gesture.
+    delete refused[name];
     try {
       if (await launchProgram(session, name)) void followPrograms(session);
     } finally {
@@ -133,6 +173,9 @@
 {#snippet program(name: ProgramName, p: Program, edit: (d: Settings) => Program)}
   {@const label = PROGRAMS[name]}
   {@const path = session.programPaths[name]}
+  {@const confirmed = session.programArgs[name]}
+  <!-- A refused « Choisir… » or « Oublier » is the program's state too: said once, in its place. -->
+  {@const stateRefused = refused[name]?.on === 'confirm' ? null : refused[name]?.said}
   <SettingsRow
     label="Son programme"
     hint={path ?? 'Aucun : tu le lances toi-même. Choisis son .exe pour que l’appli le lance.'}
@@ -143,14 +186,18 @@
           variant="fantome"
           size="petit"
           aria-label="Oublier le programme de {label}"
-          onclick={() => void forgetProgram(session, name)}>Oublier</Button
+          disabled={waits(name, 'forget')}
+          loading={working[name] === 'forget'}
+          onclick={() => void forget(name)}>Oublier</Button
         >
       {/if}
       <Button
         variant="secondaire"
         size="petit"
         aria-label="Choisir le programme de {label}"
-        onclick={() => void pickProgram(session, name)}>Choisir…</Button
+        disabled={waits(name, 'choose')}
+        loading={working[name] === 'choose'}
+        onclick={() => choose(name)}>Choisir…</Button
       >
     </span>
   </SettingsRow>
@@ -166,6 +213,27 @@
         }}
       />
     </SettingsRow>
+    <!-- Each argument as the window's dialog shows it: between « », nothing added. -->
+    {#snippet confirmation()}
+      <span class="confirmes"
+        >{confirmed
+          ? `Confirmés : ${confirmed.map((a) => `«${a}»`).join(' ') || 'aucun argument'}`
+          : 'Pas encore confirmés : l’appli ne le lance qu’avec des arguments confirmés.'}</span
+      >
+      {#if refused[name]?.on === 'confirm'}<span class="refus" role="alert">{refused[name]?.said}</span>{/if}
+    {/snippet}
+    <SettingsRow label="Confirmation" hint={confirmation}>
+      {#if !confirmed || !same(confirmed, p.args)}
+        <Button
+          variant="secondaire"
+          size="petit"
+          aria-label="Confirmer les arguments de {label}"
+          disabled={waits(name, 'confirm')}
+          loading={working[name] === 'confirm'}
+          onclick={() => void confirm(name, p.args)}>Confirmer…</Button
+        >
+      {/if}
+    </SettingsRow>
     <SettingsRow label="Lancer {label} avec l’appli" hint="Seulement si rien ne répond déjà à son adresse.">
       {#snippet children({ labelId })}
         <Switch
@@ -175,7 +243,7 @@
         />
       {/snippet}
     </SettingsRow>
-    <SettingsRow label="Maintenant" hint={session.programs[name]?.said}>
+    <SettingsRow label="Maintenant" hint={session.programs[name]?.said} error={stateRefused}>
       <Button
         variant="secondaire"
         size="petit"
@@ -185,7 +253,7 @@
       >
     </SettingsRow>
   {:else if session.programs[name]}
-    <SettingsRow label="Maintenant" hint={session.programs[name]?.said} />
+    <SettingsRow label="Maintenant" hint={session.programs[name]?.said} error={stateRefused} />
   {/if}
 {/snippet}
 
@@ -391,5 +459,15 @@
   .gestes {
     display: inline-flex;
     gap: 8px;
+  }
+  /* The kit's tone for a refusal, on its own line under what was confirmed. */
+  .refus {
+    display: block;
+    color: var(--danger);
+  }
+  /* A path in an argument has no space to break at: it wraps anywhere rather than pass under the button. */
+  .confirmes,
+  .refus {
+    overflow-wrap: anywhere;
   }
 </style>

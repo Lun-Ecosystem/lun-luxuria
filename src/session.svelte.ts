@@ -121,6 +121,8 @@ export class Session {
   programs = $state<Partial<Record<ProgramName, ProgramState>>>({});
   /** The `.exe` the person picked for each, as the window keeps it: shown, never sent back. */
   programPaths = $state<Partial<Record<ProgramName, string>>>({});
+  /** The arguments the person confirmed for each, as the window keeps them: a name missing was never confirmed. */
+  programArgs = $state<Partial<Record<ProgramName, string[]>>>({});
   /** The folders the person chose in the system's dialog, as the window keeps them: shown, never sent back. */
   folders = $state<Partial<Record<FolderName, string>>>({});
   /**

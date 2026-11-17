@@ -567,13 +567,14 @@ describe('the arguments of a program, confirmed in the window', () => {
     await vi.waitFor(() => expect(choose()).toHaveFocus());
   });
 
-  it('after « Confirmer… » worked, it is gone and the focus does not fall to the page', async () => {
+  it('after « Confirmer… » worked, it is gone and the focus goes to the draft, not to the page', async () => {
     open();
     confirm().focus();
     await fireEvent.click(confirm());
     await vi.waitFor(() => expect(screen.queryByRole('button', { name: /^Confirmer/ })).toBeNull());
     await vi.waitFor(() => expect(document.body).not.toHaveFocus());
     expect(document.activeElement).not.toBeNull();
+    await vi.waitFor(() => expect(draft()).toHaveFocus());
   });
 
   describe('one call at a time', () => {
