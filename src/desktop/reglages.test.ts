@@ -39,6 +39,7 @@ vi.mock('@tauri-apps/api/core', async (real) => ({
 const { default: Reglages } = await import('../Reglages.svelte');
 const { toasts, dismissAll } = await import('../lib/ui/toasts.svelte.ts');
 const { Session } = await import('../session.svelte.ts');
+const { readProgramPaths } = await import('./voix.ts');
 
 beforeEach(() => {
   localStorage.clear();
@@ -491,6 +492,33 @@ describe('the arguments of a program, confirmed in the window', () => {
     open();
     expect(screen.getByText(/Pas encore confirmés/)).toBeInTheDocument();
     expect(advanced()).not.toHaveAttribute('open');
+  });
+
+  it('at the window’s start, the screen open: folded while the arguments are read, open only if they really miss', async () => {
+    for (const [kept, opens] of [
+      [{ [NAME]: SAVED }, false],
+      [{}, true],
+    ] as const) {
+      const session = open({ launch: true, path: false });
+      const at: { answer?: (v: unknown) => void } = {};
+      invoke.mockImplementation((cmd: string) =>
+        cmd === 'program_paths'
+          ? Promise.resolve({ [NAME]: EXE })
+          : cmd === 'program_arguments'
+            ? new Promise((r) => (at.answer = r))
+            : Promise.resolve(null),
+      );
+      const reading = readProgramPaths(session);
+      await vi.waitFor(() => expect(at.answer).toBeDefined());
+      // The observer of the folded block answers after the page's changes.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(advanced()).not.toHaveAttribute('open');
+      at.answer!(kept);
+      await reading;
+      await new Promise((r) => setTimeout(r, 0));
+      expect(advanced().hasAttribute('open')).toBe(opens);
+      cleanup();
+    }
   });
 
   it('a confirmation the window no longer keeps, while the screen is open: the block opens then', async () => {

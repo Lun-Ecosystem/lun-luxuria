@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { flushSync, tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { confirmArgs, forgetProgram } from './desktop/voix.ts';
+import { confirmArgs, forgetProgram, readProgramPaths } from './desktop/voix.ts';
 import Scene from './Scene.svelte';
 import { Session } from './session.svelte.ts';
 import type { Settings } from './settings.ts';
@@ -284,6 +284,33 @@ describe('the arguments of the programs never confirmed', () => {
     programs(session, { launch: false });
     flushSync();
     expect(screen.queryByText(LINE)).toBeNull();
+  });
+
+  it('at the window’s start: nothing while the arguments are read, then the line only if they really miss', async () => {
+    for (const [kept, shown] of [
+      [{ 'whisper-server': [] }, false],
+      [{}, true],
+    ] as const) {
+      const session = new Session();
+      programs(session);
+      session.programPaths = {};
+      render(Scene, { session, openSettings: () => {} });
+      const at: { answer?: (v: unknown) => void } = {};
+      const call = vi.fn((cmd: string) =>
+        cmd === 'program_paths'
+          ? Promise.resolve({ 'whisper-server': 'C:/w/whisper-server.exe' })
+          : new Promise((r) => (at.answer = r)),
+      );
+      const reading = readProgramPaths(session, call);
+      await vi.waitFor(() => expect(at.answer).toBeDefined());
+      flushSync();
+      expect(screen.queryByText(LINE)).toBeNull();
+      at.answer!(kept);
+      await reading;
+      flushSync();
+      expect(screen.queryByText(LINE) !== null).toBe(shown);
+      cleanup();
+    }
   });
 
   it('in a browser tab: no line, no program is launched there', () => {
