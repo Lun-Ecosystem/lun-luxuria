@@ -171,6 +171,8 @@ export class Session {
   #busySince = 0;
   /** A question to the voice service about the microphone, still unanswered. */
   #asking = false;
+  /** The return of the presence the last phrase brought, if it was away: what the conversation sends waits for it. */
+  #back: Promise<void> = Promise.resolve();
 
   get state(): BodyState {
     return stateOf({
@@ -260,7 +262,15 @@ export class Session {
         : new LocalBrain(() => this.settings, { get: stored, set: store }, this.#net.server);
     const out = webOutput(() => this.settings.voice.volume);
     const convo: Conversation = new Conversation({
-      brain: this.brain,
+      brain: {
+        // Away, the presence comes back first: a phrase heard waits for that start, as one written does.
+        send: async (...args) => {
+          await this.#back;
+          return this.brain.send(...args);
+        },
+        cut: (id, said) => this.brain.cut(id, said),
+        withdraw: (userId) => this.brain.withdraw(userId),
+      },
       stt: (audio, signal) => transcribe(audio, this.#net.voice, signal),
       speaker: (this.#speaker = new Speaker(
         (text) => synthesize(text, this.#net.voice),
@@ -269,7 +279,11 @@ export class Session {
         this.turns,
       )),
       trace: this.turns,
-      settings: () => this.settings,
+      // Away, nothing is tried at a pause: a fragment would leave before the presence is back.
+      settings: () =>
+        this.away
+          ? { ...this.settings, endOfSpeech: { ...this.settings.endOfSpeech, speculate: false } }
+          : this.settings,
       layout: () => this.layout,
       keyHeld: () => this.#keyHeld || this.#keyInPhrase,
       silenced: () => this.silenced,
@@ -380,7 +394,8 @@ export class Session {
   /** A phrase sent, heard or written: the person is there, as with a key. Away, the presence comes back first. */
   #heard(): Promise<void> {
     this.heardAt = Date.now();
-    return this.setAway(false);
+    // A start that fails neither holds the message back nor throws: it leaves all the same.
+    return (this.#back = this.setAway(false).catch(() => {}));
   }
 
   #onLive(e: LiveEvent): void {
