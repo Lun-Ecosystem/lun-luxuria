@@ -62,7 +62,7 @@ Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des R�
 
 - **Le réseau** : le serveur et le modèle sont joints par le côté Rust (plugin-http, sans cookies), sans CORS, derrière
   un filtre (`src-tauri/src/net_guard.rs`) : chaque requête part sans proxy et sans suivre de redirection, en http ou
-  https, vers 127.0.0.1, localhost ou [::1], ou vers une origine (`schéma://hôte:port`) que la personne a confirmée.
+  https, vers 127.0.0.1, localhost ou [::1], ou vers une origine (`schéma://hôte`, avec son port s'il n'est pas celui du schéma) que la personne a confirmée.
   Sous l'adresse du serveur et celle du modèle, à l'arrivée et dans les Réglages, une adresse hors de ce poste offre
   « Confirmer… », qui ouvre la boîte du système « Une adresse hors de ce poste ». Confirmée, l'origine est gardée côté
   Rust dans `hotes.json`, au dossier de configuration de l'appli, relu à chaque requête ; Réglages › Fenêtre,
@@ -108,7 +108,8 @@ Les champs du service voix, de whisper-server et de RVC sont dans Réglages › 
   sont gardés côté Rust dans `arguments.json` ; un autre exe choisi les fait tomber, « Oublier » aussi. Un caractère
   invisible ou de contrôle est refusé dans un argument comme dans le chemin de l'exe. L'appli ne lance que l'exe gardé,
   avec ses arguments confirmés : au démarrage, un programme jamais confirmé ne part pas, la scène et les réglages
-  avancés de la voix, ouverts d'eux-mêmes, disent de les confirmer, et aucune boîte ne s'ouvre seule. Il part dans son dossier, sans shell ni console, et seulement si rien ne répond déjà
+  avancés de la voix, ouverts d'eux-mêmes, disent de les confirmer, et aucune boîte ne s'ouvre seule. Il part dans son
+  dossier, sans shell ni console, et seulement si rien ne répond déjà
   à son adresse : c'est Rust qui la sonde, celle du champ, sur 127.0.0.1, localhost ou [::1] seulement, une autre
   refusée. Sa sortie va dans `whisper-server.log` ou `rvc.log`, vidés à chaque lancement. Rattaché à un job Windows, il
   s'arrête avec l'appli, même si elle plante, avec ce qu'il a ouvert lui-même : une fenêtre, ou un navigateur qui
@@ -241,5 +242,5 @@ Remove-Item Env:GESTES_STT
   lettre de lecteur compris ; elle lit les images du dossier du corps choisi ; elle joint les origines confirmées, par
   toute méthode et tout chemin, et une origine est un nom, que son DNS peut faire pointer vers le réseau local.
 - `localhost` est admis par son nom, dans le filtre de la fenêtre comme dans les adresses du service : le système le
-  résout, et une ligne du fichier `hosts` (droits d'administrateur) l'enverrait ailleurs. La sonde des programmes, elle,
+  résout, et une ligne du fichier `hosts` (droits d'administrateur) pourrait l'envoyer ailleurs. La sonde des programmes, elle,
   ne garde que les adresses de la boucle locale.

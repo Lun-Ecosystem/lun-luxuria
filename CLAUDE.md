@@ -32,8 +32,8 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
 - Côté Rust, le moins possible : lire le corps, lancer le service voix (programme fixe, jamais de shell) et, à la
   demande, whisper-server et RVC (un .exe existant, arrêté avec l'appli), dessiner l'icône de la barre selon l'état que
   dit la page, lire depuis quand la session n'a reçu ni touche ni souris (l'absence). Chaque permission de
-  `src-tauri/capabilities/` est nommée ; aucune `core:*` sans un appel de la page : `default.json` n'en garde que
-  `core:event:allow-listen` et les commandes de fenêtre que la page appelle (`core_permissions.rs` en tient la liste).
+  `src-tauri/capabilities/` est nommée, sauf `http:default`, derrière le filtre ; du cœur de Tauri (`core:*`), aucune
+  sans un appel de la page : `core:event:allow-listen` et ses commandes de fenêtre (`core_permissions.rs` les liste).
 - Ce qui borne l'IPC ([lun-luxuria#78](https://github.com/Lun-Ecosystem/lun-luxuria/issues/78) ; le détail dans
   `docs/README.md`). Aucune commande ne prend un dossier de la page : chacun se choisit dans la boîte du système et
   reste côté Rust. Rust borne les arguments du service (`checked_service_args`) : cinq drapeaux, leurs adresses sur la
