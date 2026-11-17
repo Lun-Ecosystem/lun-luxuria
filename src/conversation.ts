@@ -90,6 +90,8 @@ interface Attempt {
    * Before the sentence ended, its end tells it, as for a whole sentence; withdrawn, it is never told.
    */
   failed?: string;
+  /** The server saw its reply to its end: whatever its stream does after, its words come by the live. */
+  done?: boolean;
   /** The guard of what it waits for now: its transcription, then the first sentence of its reply. */
   guard?: ReturnType<typeof setTimeout>;
   /** Its reply did not come in time: whatever comes of it now is thrown away. The message itself stays. */
@@ -506,13 +508,15 @@ export class Conversation {
   }
 
   /**
-   * Nothing more will come of its reply: it ended in error, its stream broke, or its guard went off. What came of it is
-   * said, then the line goes on; the failure is told once, and only if its sentence ends on it.
+   * Nothing more will come of its reply: it ended in error, its stream broke before its end, or its guard went off.
+   * What came of it is said, then the line goes on; the failure is told once, and only if its sentence ends on it.
    */
   #over(attempt: Attempt, text: string): void {
     this.#answered(attempt);
-    // Withdrawn, replaced, past its guard, or over already: nobody waits for it, nothing is said of it.
-    if (attempt.dropped || attempt.superseded || attempt.late || attempt.failed !== undefined) return;
+    // Withdrawn, replaced, past its guard, or over already: nobody waits for it, nothing is said of it. Seen to its
+    // end by the server, only its stream broke: its reply goes on by the live.
+    if (attempt.dropped || attempt.superseded || attempt.late || attempt.failed !== undefined || attempt.done)
+      return;
     attempt.failed = text;
     if (attempt.replyId !== undefined)
       // Held back, its words would be said over him: they go. No end of speech will come for the others.
@@ -563,6 +567,7 @@ export class Conversation {
       this.#answered(attempt);
       this.#durations(e.message, this.#ref(attempt));
       if (e.message.status === 'error') this.#over(attempt, e.message.error ?? 'Sa réponse a échoué.');
+      else attempt.done = true;
     }
   }
 

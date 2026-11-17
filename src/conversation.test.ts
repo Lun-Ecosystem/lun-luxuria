@@ -1976,6 +1976,39 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     await lineGoesOn(t);
   });
 
+  /** A stream that numbers its reply, sees it to its end, then breaks: its reading broke, not the reply. */
+  const doneThenBreak = async (on: (e: SendEvent) => void, id: number) => {
+    on({ type: 'user', message: message(id) });
+    on({ type: 'reply', id: id + 100 });
+    on({ type: 'done', message: message(id) });
+    throw new Error('réseau');
+  };
+
+  it.each([
+    ['a fragment tried at the pause', {}],
+    ['the sentence sent whole at its end', NO_TRY],
+  ] as [string, Partial<Settings>][])(
+    'its done came, then its stream breaks (%s): its words come by the live and are said, nothing is told',
+    async (_, over) => {
+      const t = setup(over, 'Bonjour toi', () => false, undefined, undefined, [doneThenBreak]);
+      if (over === NO_TRY) {
+        t.convo.onEndpoint(ended);
+        await flush();
+      } else await sentence(t);
+      await late(t, 'Je réponds.');
+      expect(t.sounds).toHaveLength(1);
+      expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+      t.sounds[0]!.end();
+      await flush();
+      expect(said(t)).toHaveLength(1);
+      // Its guard went with its done: a minute later, still nothing is told.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(failed(t)).toEqual([]);
+      expect(named(t, 'sans_reponse')).toEqual([]);
+      await lineGoesOn(t);
+    },
+  );
+
   it('a withdrawn fragment whose reply ends in error says nothing, writes nothing, lights nothing', async () => {
     const t = setup();
     t.convo.onEndpoint(pause);

@@ -140,7 +140,7 @@ export class Speaker {
     // One at a time: a voice conversion takes one call at a time, and order matters more than speed.
     // shortcut: an urgency waits for the sentences already being made, give it its own lane if that is heard.
     const turn = this.#turn(id, urgent);
-    // Its end came: words after it are of a reply that ended in error, its message spoke for them.
+    // Its end came: words after it are ignored, of a reply that ended in error or of a server that broke the order.
     if (turn.ended) return;
     const rang = turn.pieces.length + 1;
     const clip = this.#chain.then(() => this.#oneClip(text, id, rang));
