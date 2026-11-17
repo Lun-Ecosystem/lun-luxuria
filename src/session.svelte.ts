@@ -1,6 +1,6 @@
 import { openMicrophone, webOutput } from './audio.ts';
 import { stateOf, type BodyState } from './body/body.ts';
-import { Conversation, type Service } from './conversation.ts';
+import { Conversation, Refusal, type Service } from './conversation.ts';
 import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
 import { CoreClient, CoreError } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
@@ -177,9 +177,14 @@ export class Session {
   #asking = false;
   /**
    * What may clear the message on screen: its service answering again (`poll`: the poll's own message), or the words
-   * of a reply heard of after it (`after`, the latest one then).
+   * of a reply heard of after it (`after`, the latest one then). `n`: its rank among the messages shown.
    */
-  #failed: { service?: Service | undefined; poll?: true | undefined; after: number } = { after: 0 };
+  #failed: { service?: Service | undefined; poll?: true | undefined; after: number; n: number } = {
+    after: 0,
+    n: 0,
+  };
+  /** How many messages were shown: an answer counts only for those shown before its request left. */
+  #shownCount = 0;
   /**
    * The latest reply heard of: its words, or those of one before it, never clear a message shown since. Message ids
    * grow with the thread, on the server as alone.
@@ -370,12 +375,15 @@ export class Session {
     async () => {
       // Also reached from a beat refused while away: it must not reopen the presence.
       if (this.away) return;
+      const since = this.#shownCount;
       try {
         await this.brain.presence('started', {
           ...this.#flags(),
           ritual: this.settings.speak.ritual && !this.silenced,
         });
         this.linked = true;
+        // The server answered: at the return from an absence, no beat would say so before 30 s. Alone, nothing did.
+        if (this.settings.brain === 'linked') this.#serverBack(since);
         // Gone while the start was on its way: it closes again.
         if (this.away) void this.brain.presence('stopped').catch(() => {});
       } catch {
@@ -397,23 +405,27 @@ export class Session {
   #announce = () => (this.away ? Promise.resolve() : this.#presence.announce());
   #beat = async (): Promise<void> => {
     if (this.away) return;
+    const since = this.#shownCount;
     // Taken or gone, it answered: the server is there again.
-    if ((await this.#presence.beat()) !== undefined) this.#serverBack();
+    if ((await this.#presence.beat()) !== undefined) this.#serverBack(since);
   };
 
   /** A message on screen, and what may clear it; the poll's own (`poll`) gives way to any other. */
   #tell(text: string, service?: Service, poll?: true): void {
     this.failure = text;
-    this.#failed = { service, poll, after: this.#lastReply };
+    this.#failed = { service, poll, after: this.#lastReply, n: ++this.#shownCount };
   }
 
-  /** The message on screen tells that this service no longer answers. */
-  #down(service: Service): boolean {
-    return this.failure !== '' && this.#failed.service === service;
+  /**
+   * The message on screen tells that this service no longer answers, and, for an answer to a request that left when
+   * `since` messages were shown, came before it: an answer to a question asked earlier says nothing of it.
+   */
+  #down(service: Service, since = Infinity): boolean {
+    return this.failure !== '' && this.#failed.service === service && this.#failed.n <= since;
   }
 
-  #serverBack(): void {
-    if (this.#down('serveur')) this.failure = '';
+  #serverBack(since?: number): void {
+    if (this.#down('serveur', since)) this.failure = '';
   }
 
   /**
@@ -526,11 +538,12 @@ export class Session {
     // Not `AbortSignal.timeout`: a service that hangs is cut on the clock of the page.
     const stop = new AbortController();
     const guard = setTimeout(() => stop.abort(), BUSY_POLL_MS);
+    const since = this.#shownCount;
     try {
       const apps = await appsOnMicrophone(this.#net.voice, stop.signal);
       this.#voiceDownTold = false;
       // A 404 is a service without the detection: it answers, so the poll's own message goes, and only that one.
-      if (this.#down('voix') && (apps !== NO_DETECTION || this.#failed.poll)) this.failure = '';
+      if (this.#down('voix', since) && (apps !== NO_DETECTION || this.#failed.poll)) this.failure = '';
       return apps;
     } catch {
       // Once for each outage, and over nothing: any other message says more.
@@ -714,8 +727,9 @@ export class Session {
       // It went through: an older failure no longer holds.
       this.failure = '';
     } catch (err) {
-      // A server that no longer answers (the 502 of the proxy) goes when it answers again; a refusal stays.
-      const down = err instanceof CoreError && err.status >= 500;
+      // Answered in error (its reply refused, a 4xx), it stays. Not reached, or nothing back (the network, the transport
+      // of the window, a 5xx): it goes when the server answers again.
+      const down = !(err instanceof Refusal) && !(err instanceof CoreError && err.status < 500);
       this.#tell(err instanceof Error ? err.message : String(err), down ? 'serveur' : undefined);
     }
     await this.#refreshThread();

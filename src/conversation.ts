@@ -49,6 +49,9 @@ interface Failed {
   service?: Service;
 }
 
+/** The server answered a written message, in error: unlike a message that never reached it, nothing is to wait for. */
+export class Refusal extends Error {}
+
 export type ConversationEvent =
   | { type: 'thinking'; on: boolean }
   /** A phrase heard passed the filter: it is for her, so the person is there. */
@@ -648,7 +651,7 @@ export class Conversation {
       if (e.type === 'done' && e.message.status === 'error')
         refused = e.message.error ?? 'Sa réponse a échoué.';
     });
-    if (refused !== undefined) throw new Error(refused);
+    if (refused !== undefined) throw new Refusal(refused);
   }
 
   /** The mute comes: a fragment held for the end of the sentence is withdrawn, and no reply is left to take back. */

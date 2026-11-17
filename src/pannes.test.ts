@@ -17,6 +17,7 @@ vi.mock('./audio.ts', () => ({
 }));
 
 import type { LiveEvent, Message } from './brain.ts';
+import { CoreError } from './core.ts';
 import { Session } from './session.svelte.ts';
 import { DEFAULTS, type Settings } from './settings.ts';
 
@@ -162,11 +163,12 @@ describe('a voice failure, and the poll of the service', () => {
     const w = world({ detection: true });
     await w.s.enter();
     await voiceFails(w);
+    const shown = w.s.failure;
     w.micro = '502';
     await vi.advanceTimersByTimeAsync(9000);
     expect(w.asked.micro).toBeGreaterThan(0);
-    // A 502 of the proxy is a service that is down, not an empty list: the message stays.
-    expect(w.s.failure).not.toBe('');
+    // A 502 of the proxy is a service that is down, not an empty list: the message stays, the poll's gives way to it.
+    expect(w.s.failure).toBe(shown);
     w.micro = 'ok';
     await vi.advanceTimersByTimeAsync(3000);
     expect(w.s.failure).toBe('');
@@ -483,6 +485,149 @@ describe('a message is cleared only by a more recent reply', () => {
   });
 });
 
+describe('the message of the poll', () => {
+  it('a poll that fails does not replace a server message', async () => {
+    const w = world({ detection: true });
+    await w.s.enter();
+    await serverFails(w);
+    const shown = w.s.failure;
+    w.micro = '502';
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(w.asked.micro).toBeGreaterThan(1);
+    expect(w.s.failure).toBe(shown);
+  });
+
+  it('two outages, the service back between them: it is said again at the second', async () => {
+    const w = world({ detection: true });
+    w.micro = '502';
+    await w.s.enter();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(w.s.failure).toBe('Le service voix ne répond plus.');
+    w.micro = 'ok';
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(w.s.failure).toBe('');
+    w.micro = '502';
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(w.s.failure).toBe('Le service voix ne répond plus.');
+  });
+
+  it('one outage: its message cleared by something else is not said again at each poll', async () => {
+    const w = world({ detection: true });
+    w.micro = '502';
+    await w.s.enter();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(w.s.failure).toBe('Le service voix ne répond plus.');
+    // A written message goes through: the server answers, the voice service still does not.
+    await w.s.write('bonjour');
+    expect(w.s.failure).toBe('');
+    const asked = w.asked.micro;
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(w.asked.micro).toBeGreaterThan(asked);
+    expect(w.s.failure).toBe('');
+  });
+});
+
+describe('an answer counts only if it left after the message', () => {
+  it('a poll that left before a voice failure and comes back after it does not clear it', async () => {
+    const w = world({ detection: true });
+    w.micro = 'hang';
+    await w.s.enter();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(w.asked.micro).toBe(1);
+    await voiceFails(w);
+    const shown = w.s.failure;
+    // It answers now, for a question asked before her voice failed.
+    w.pending.splice(0).forEach((answer) => answer());
+    await flushAll();
+    expect(w.s.failure).toBe(shown);
+    w.micro = 'ok';
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(w.s.failure).toBe('');
+  });
+
+  it('a beat that left before a server failure and comes back after it does not clear it', async () => {
+    const w = world();
+    await w.s.enter();
+    const held: ((answer: 'taken') => void)[] = [];
+    let hold = true;
+    w.s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+      if (state !== 'beat') return undefined;
+      return hold ? new Promise<'taken'>((r) => held.push(r)) : 'taken';
+    }) as typeof w.s.core.presence;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(held).toHaveLength(1);
+    await serverFails(w);
+    const shown = w.s.failure;
+    held[0]!('taken');
+    await flushAll();
+    expect(w.s.failure).toBe(shown);
+    hold = false;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(w.s.failure).toBe('');
+  });
+
+  it('away, a server failure goes when the start of her return answers, not 30 s later', async () => {
+    const w = world();
+    await w.s.enter();
+    await w.s.setAway(true);
+    await serverFails(w);
+    await w.s.setAway(false);
+    await flushAll();
+    expect(w.s.failure).toBe('');
+  });
+});
+
+describe('a written message', () => {
+  const unreached = [
+    ['the network', () => new TypeError('Failed to fetch')],
+    ['a 502', () => new CoreError(502, 'Le serveur a répondu 502.')],
+  ] as const;
+  /** The server does not get it, or nothing comes back: a server failure. */
+  async function unsent(w: ReturnType<typeof world>, error: () => Error) {
+    const err = error();
+    w.s.core.send = vi.fn(async () => {
+      throw err;
+    });
+    await w.s.write('bonjour');
+    expect(w.s.failure).toBe(err.message);
+  }
+
+  it.each(unreached)('not reached, %s: it goes when the live stream comes back', async (_, error) => {
+    const w = world();
+    await w.s.enter();
+    await unsent(w, error);
+    w.link!(false);
+    await flushAll();
+    expect(w.s.failure).not.toBe('');
+    w.link!(true);
+    await flushAll();
+    expect(w.s.failure).toBe('');
+  });
+
+  it.each(unreached)('not reached, %s: it goes when a beat answers', async (_, error) => {
+    const w = world();
+    await w.s.enter();
+    await unsent(w, error);
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(w.s.failure).not.toBe('');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(w.s.failure).toBe('');
+  });
+
+  it('refused with a 4xx: the server answered, it stays', async () => {
+    const w = world();
+    await w.s.enter();
+    w.s.core.send = vi.fn(async () => {
+      throw new CoreError(400, 'Message refusé.');
+    });
+    await w.s.write('bonjour');
+    w.link!(false);
+    w.link!(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(w.s.failure).toBe('Message refusé.');
+  });
+});
+
 /** Alone on a model: no stream comes back, no beat answers; the model answers as the test sets it. */
 function alone() {
   const w = world({
@@ -535,6 +680,10 @@ describe('alone, on a model', () => {
     const guard = 'Sa réponse n’est pas venue : aucune phrase en 60 s';
     expect(w.s.failure).toBe(guard);
     await vi.advanceTimersByTimeAsync(90_000);
+    expect(w.s.failure).toBe(guard);
+    // Alone, the start of a return from an absence answers whatever the model does: it says nothing of it.
+    await w.s.setAway(true);
+    await w.s.setAway(false);
     expect(w.s.failure).toBe(guard);
     m.answer = 'ok';
     await said(w);

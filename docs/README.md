@@ -61,17 +61,21 @@ attend que le serveur ait répondu à l'annonce du retour, 3 s au plus : passé 
 même, et les messages gardent leur ordre ; la sourdine posée pendant l'attente le retient.
 
 **Les messages d'échec.** Le message d'un service qui ne répond plus s'efface quand ce service répond de nouveau, sans
-rien annoncer. Le service voix (transcription, synthèse) : son sondage, toutes les 3 s, `GET /voix/micro`, que la
-détection d'une autre appli utilise aussi. Un sondage sans réponse en 3 s est coupé ; un refus (dont le 502 du
-mandataire de Vite) ou aucune réponse disent « Le service voix ne répond plus. », une fois par panne, et seulement si
-rien d'autre n'est affiché. Une réponse efface tout message du service voix ; un 404 (un service sans détection)
-n'efface que celui du sondage. Détection coupée, le sondage tourne quand même tant qu'un message du service voix est
-affiché, pour son seul retour : il ne touche ni à la détection ni au micro, et s'arrête quand le message part. Le
-serveur : le retour du flux `live`, ou un battement qui répond. Compte comme une panne du serveur ce qui ne lui
-parvient pas ou ne revient pas (un envoi qui échoue ou dont le flux casse, aucune phrase de la réponse en 60 s, une
-coupure ou un retrait non transmis, un statut 500 ou plus à un message écrit), et comme un refus ce qu'il répond en
-erreur (le plafond, un message refusé, un autre statut à un message écrit), comme, seul, ce que le modèle répond en
-erreur. Un refus, le micro et le modèle qui reconnaît la voix n'ont pas de service à attendre. Tout message part
+rien annoncer ; une réponse ne compte que si sa requête est partie après le message. Le service voix (transcription,
+synthèse) : son sondage, `GET /voix/micro`, que la détection d'une autre appli utilise aussi, toutes les 3 s. Un
+sondage sans réponse en 3 s est coupé, et le tour qui tombe à ce moment ne part pas : un service figé est interrogé
+toutes les 6 s. Tout statut d'erreur autre que 404 (dont le 502 du mandataire de Vite), ou aucune réponse, dit « Le
+service voix ne répond plus. », une fois par panne, et seulement si rien d'autre n'est affiché. Une réponse efface tout
+message du service voix ; un 404, un service qui répond sans détection, n'efface que celui du sondage. Détection
+coupée, le sondage tourne quand même tant qu'un message du service voix est affiché, pour son seul retour : il ne
+touche ni à la détection ni au micro, et s'arrête quand le message part. Le serveur : le retour du flux `live`, un
+battement ou un démarrage de la présence qui répondent ; un message du serveur posé pendant une absence part donc au
+retour, quand le démarrage répond. Compte comme une panne du serveur ce qui ne lui parvient pas ou n'en revient pas :
+une phrase dont l'envoi échoue, quel qu'en soit le statut, ou dont le flux casse, aucune phrase de la réponse en 60 s,
+une coupure ou un retrait non transmis, un message écrit arrêté par le réseau, par le transport de la fenêtre ou par
+un statut 500 ou plus. Compte comme un refus ce que le serveur répond en erreur (une réponse finie en erreur, dont le
+plafond ; un statut 4xx à un message écrit) et, seul, ce que le modèle répond en erreur. Un refus, le micro et le
+modèle qui reconnaît la voix n'ont pas de service à attendre. Tout message part
 aussi quand une phrase est dite d'une réponse reçue après lui, jamais de la sienne, ou quand un message écrit passe.
 Seul, sans flux ni battement, un message du serveur (un modèle figé jusqu'à la garde) reste jusqu'à la prochaine
 réponse. Sous la sourdine, le sondage et le battement continuent : ce qu'elle ne dit pas n'efface rien.
