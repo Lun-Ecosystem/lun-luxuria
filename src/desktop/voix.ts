@@ -163,7 +163,7 @@ export function startVoice(
     const service = session.settings.voice.service;
     if (!service.launch)
       return said.down(
-        'Le service voix ne répond pas. Lance-le, ou active « Lancer le service voix avec l’appli ».',
+        'Le service voix ne répond pas. Lance-le, ou active « Lancer le service voix avec l’appli », plus bas, dans les réglages avancés.',
       );
     const lack = missing(session);
     if (lack) return said.down(`Le service voix ne répond pas. ${lack}`);

@@ -118,6 +118,14 @@ describe('startVoice', () => {
     expect(session.voiceStatus).toBe('down');
   });
 
+  it('not asked to launch: the advice says where its switch is, in the folded settings below', async () => {
+    const session = withService(false);
+    await startVoice(session, async () => false, vi.fn(), noSleep, noBricks);
+    expect(session.voiceSaid).toBe(
+      'Le service voix ne répond pas. Lance-le, ou active « Lancer le service voix avec l’appli », plus bas, dans les réglages avancés.',
+    );
+  });
+
   it('a missing folder or voice file is named, and nothing starts', async () => {
     const call = vi.fn();
     const noFolder = withService(true, '');
