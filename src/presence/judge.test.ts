@@ -328,6 +328,60 @@ describe('judging a game', () => {
     });
   });
 
+  it('measures the time two sounds of different replies play together', () => {
+    const mesure = { ...commun, id: 'm', mecanisme: 'voix', mesure: 'reponses_ensemble' } as const;
+    // Reply 101 sounds from 3424 to 4800 (the hand-written game). A second reply starts at 4600: 200 ms together.
+    const chevauche: BancEvent[] = [
+      ...banc,
+      { de: 'banc', at: 4600, name: 'joue', reponse: 102, texte: 'Et demain.' },
+      { de: 'banc', at: 5200, name: 'arrete', reponse: 102 },
+    ];
+    expect(un({ ...mesure, entre: [0, 0] }, {}, { ...partie, banc: chevauche })).toMatchObject({
+      espece: 'hors_bornes',
+      trouve: 200,
+    });
+    expect(un({ ...mesure, entre: [200, 200] }, {}, { ...partie, banc: chevauche })).toMatchObject({
+      etat: 'tenue',
+      trouve: 200,
+    });
+    // The same sounds one after the other: nothing together.
+    const suite: BancEvent[] = [
+      ...banc,
+      { de: 'banc', at: 4800, name: 'joue', reponse: 102, texte: 'Et demain.' },
+      { de: 'banc', at: 5200, name: 'arrete', reponse: 102 },
+    ];
+    expect(un({ ...mesure, entre: [0, 0] }, {}, { ...partie, banc: suite })).toMatchObject({
+      etat: 'tenue',
+      trouve: 0,
+    });
+    // Two sentences of one reply never count against each other, nor does a lone reply.
+    const une: BancEvent[] = [
+      ...banc,
+      { de: 'banc', at: 4800, name: 'joue', reponse: 101, texte: 'Et demain.' },
+      { de: 'banc', at: 5200, name: 'arrete', reponse: 101 },
+    ];
+    expect(un({ ...mesure, entre: [0, 0] }, {}, { ...partie, banc: une })).toMatchObject({ trouve: 0 });
+    expect(un({ ...mesure, entre: [0, 0] })).toMatchObject({ etat: 'tenue', trouve: 0 });
+    // A sentence that ends at the very instant the next one of its reply begins: the next one is not cut short.
+    const collees: BancEvent[] = [
+      ...banc.slice(0, 3),
+      { de: 'banc', at: 3000, name: 'joue', reponse: 101, texte: 'Un.' },
+      { de: 'banc', at: 3500, name: 'arrete', reponse: 101 },
+      { de: 'banc', at: 3500, name: 'joue', reponse: 101, texte: 'Deux.' },
+      { de: 'banc', at: 5000, name: 'arrete', reponse: 101 },
+      { de: 'banc', at: 4000, name: 'joue', reponse: 102, texte: 'Et demain.' },
+      { de: 'banc', at: 4400, name: 'arrete', reponse: 102 },
+    ];
+    expect(un({ ...mesure, entre: [0, 0] }, {}, { ...partie, banc: collees })).toMatchObject({ trouve: 400 });
+    // Two sounds still going when the game stops, at 6000, run to its end.
+    const ouverts: BancEvent[] = [
+      ...banc,
+      { de: 'banc', at: 5500, name: 'joue', reponse: 102, texte: 'Et.' },
+      { de: 'banc', at: 5800, name: 'joue', reponse: 103, texte: 'Ou.' },
+    ];
+    expect(un({ ...mesure, entre: [0, 0] }, {}, { ...partie, banc: ouverts })).toMatchObject({ trouve: 200 });
+  });
+
   it('passes a known defect only while it gives its species and its value', () => {
     const hors = { ...tenue, entre: [0, 300] } as Attendu;
     const connu = (c: Partial<NonNullable<Scenario['connus']>[number]>, a: Attendu = hors) =>
