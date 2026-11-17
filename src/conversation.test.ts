@@ -2188,6 +2188,36 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     ]);
   });
 
+  it('a reply replaced before its number comes, its cut refused: that is still said', async () => {
+    const t = setup(
+      NO_TRY,
+      'Bonjour toi',
+      () => false,
+      undefined,
+      undefined,
+      [
+        async (on, id) => {
+          on({ type: 'user', message: message(id) });
+          return new Promise<never>(() => {});
+        },
+      ],
+      'Le serveur a répondu 404.',
+    );
+    t.convo.onEndpoint(ended);
+    await flush();
+    // Its number has not come yet: held back, then replaced by the sentence for her, nothing to cut so far.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 4000 });
+    await flush();
+    expect(t.calls).toEqual([]);
+    t.sends[0]!.on({ type: 'reply', id: 110 });
+    await flush();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(failed(t)).toEqual([
+      { type: 'failed', text: 'Coupure non transmise : Le serveur a répondu 404.' },
+    ]);
+  });
+
   it.each([
     [
       'broke',
@@ -2234,6 +2264,8 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     await flush();
     expect(t.events.slice(before)).toEqual([]);
     expect(named(t, 'transcrite').filter((e) => e['echec'])).toHaveLength(1);
+    // The trace says what became of it.
+    expect(named(t, 'sans_reponse').map((e) => e['raison'])).toEqual(['remplacee']);
     // Her reply to B sounds; a cough over it, and she resumes: A no longer keeps anything open.
     t.say(110, 'Une phrase assez longue pour être coupée.');
     t.say(110, 'La suite.');
@@ -2273,6 +2305,8 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     t.say(110, 'Pour B.');
     await flush();
     expect(t.sounds).toHaveLength(1);
+    // A's end came before B's: the chronometer of B is kept, and its latency is measured.
+    expect(t.events.filter((e) => e.type === 'latency')).toHaveLength(1);
   });
 });
 
