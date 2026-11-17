@@ -111,5 +111,12 @@
     "motif": "this.#playing !== null || this.#reading !== null || (!!turn && turn.sounded && !turn.held)",
     "par": "this.#playing !== null || this.#reading !== null",
     "maillon": "suspension"
+  },
+  "debut-oublie": {
+    "quoi": "start ne pose plus #talking",
+    "fichier": "src/conversation.ts",
+    "motif": "      case 'start':\n        this.#talking = true;\n",
+    "par": "      case 'start':\n",
+    "maillon": "suspension"
   }
 }

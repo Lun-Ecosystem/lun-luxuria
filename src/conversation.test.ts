@@ -591,6 +591,280 @@ describe('cutting it off', () => {
     expect(t.calls).toEqual(['cut 110 ""']);
   });
 
+  /** Each transcription waits for `give`, numbered from 0 in the order of the sentences that ended; an error fails it. */
+  function verdicts() {
+    const waiting: ((text: string | Error) => void)[] = [];
+    const stt = (): Promise<Heard> =>
+      new Promise((ok, fail) =>
+        waiting.push((text) => (text instanceof Error ? fail(text) : ok({ text, confidence: 0.9 }))),
+      );
+    return { stt, give: (i: number, text: string | Error) => waiting[i]!(text) };
+  }
+  const ASIDE = 'Sous-titres par Amara.org';
+
+  /** Her reply 110 is on its way; sentences A then B both end before either has a verdict. */
+  async function twoEnded() {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    v.give(0, 'Bonjour toi');
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(3000));
+    return { ...v, t };
+  }
+
+  it('a reply held back waits for every sentence that ended: the later one for her forgets it', async () => {
+    const { t, give } = await twoEnded();
+    give(1, ASIDE);
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    expect(t.calls).toEqual([]);
+    give(2, 'Bonjour toi');
+    await tick();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(t.sounds).toHaveLength(0);
+  });
+
+  it('the later one asks nothing too: it comes out once, after the last verdict', async () => {
+    const { t, give } = await twoEnded();
+    give(1, ASIDE);
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    give(2, ASIDE);
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual([]);
+    expect(t.trace.events.filter((e) => e.name === 'relachee')).toHaveLength(1);
+  });
+
+  it('the sound that held it back was its own sentence: the next sentence still holds a reply back', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    // Held while its own sentence is still transcribed: it had no reply to hold.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    v.give(0, ASIDE);
+    await tick();
+    // The next sentence asks (its reply is 110: the first send), and a third voice must hold it back in its turn.
+    t.convo.onEndpoint({ type: 'held' });
+    v.give(1, 'Bonjour toi');
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    t.convo.onEndpoint(end(5000));
+    v.give(2, ASIDE);
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual([]);
+  });
+
+  it('a verdict after the next sentence began does not resume her over it', async () => {
+    const t = await suspended({}, ASIDE);
+    t.convo.onEndpoint(ended);
+    t.convo.onEndpoint({ type: 'start' });
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual(['sound stop']);
+    // That sentence was only a noise: now nothing is said, and she goes on.
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.sounds).toHaveLength(2);
+  });
+
+  it('held back by its own sound, a sentence for her still answers once the later one asked nothing', async () => {
+    const aside = verdicts();
+    const later = setup(NO_TRY, aside.stt);
+    later.convo.onEndpoint(end(1000));
+    later.convo.onEndpoint({ type: 'held' });
+    later.convo.onEndpoint(end(2000));
+    aside.give(1, ASIDE);
+    await tick();
+    aside.give(0, 'Bonjour toi');
+    await tick();
+    later.say(110, 'Je réponds.');
+    await tick();
+    expect(later.sounds).toHaveLength(1);
+
+    // The later sound was only a noise.
+    const cough = verdicts();
+    const noise = setup(NO_TRY, cough.stt);
+    noise.convo.onEndpoint(end(1000));
+    noise.convo.onEndpoint({ type: 'held' });
+    noise.convo.onEndpoint({ type: 'noise' });
+    cough.give(0, 'Bonjour toi');
+    await tick();
+    noise.say(110, 'Je réponds.');
+    await tick();
+    expect(noise.sounds).toHaveLength(1);
+  });
+
+  it('a sentence begun after the last verdict still holds the reply back, until it is only a noise', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    v.give(0, 'Bonjour toi');
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    t.convo.onEndpoint({ type: 'start' });
+    v.give(1, ASIDE);
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    // The sentence that asked nothing does not time the reply, even though a noise let it out.
+    expect(t.events.filter((e) => e.type === 'latency')).toEqual([]);
+  });
+
+  it('a late verdict for a sentence already replaced takes back nothing said since', async () => {
+    // C judged before A, or after.
+    for (const cLast of [false, true]) {
+      // A is for her and slow; B holds it back and is judged for her first (110); C holds 110 back and asks nothing.
+      const v = verdicts();
+      const t = setup(NO_TRY, v.stt);
+      t.convo.onEndpoint(end(1000));
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(2000));
+      v.give(1, 'Bonjour toi');
+      await tick();
+      t.convo.onEndpoint({ type: 'start' });
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(3000));
+      const late: [number, string][] = [
+        [2, ASIDE],
+        [0, 'Bonjour toi'],
+      ];
+      for (const [i, text] of cLast ? late.reverse() : late) {
+        v.give(i, text);
+        await tick();
+      }
+      t.say(110, 'Pour B.');
+      t.say(111, 'Pour A.');
+      await tick();
+      expect(t.sounds, `C last: ${cLast}`).toHaveLength(1);
+      expect(t.calls, `C last: ${cLast}`).toEqual(['cut 111 ""']);
+    }
+  });
+
+  it('nor does it stop the clock of the newer sentence: its reply is still timed', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    v.give(1, 'Bonjour toi');
+    await tick();
+    // A cough holds 110 back while A is still transcribed.
+    for (const type of ['start', 'held', 'noise'] as const) t.convo.onEndpoint({ type });
+    v.give(0, 'Bonjour toi');
+    await tick();
+    t.say(110, 'Pour B.');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.events.filter((e) => e.type === 'latency')).toHaveLength(1);
+  });
+
+  it('nor does it cut the newer reply as it sounds', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    v.give(1, 'Bonjour toi');
+    await tick();
+    t.say(110, 'Pour B.');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    v.give(0, 'Bonjour toi');
+    await tick();
+    expect(t.calls).toEqual(['cut 111 ""']);
+  });
+
+  /** Sentences 0 to 2 are said (`said`) in order, each judged (`judged`) after it ended, in any order between them. */
+  function timelines(): string[][] {
+    const out: string[][] = [];
+    const grow = (line: string[], said: number, judged: number[]) => {
+      if (line.length === 6) return void out.push(line);
+      if (said < 3) grow([...line, `said${said}`], said + 1, judged);
+      for (const k of [0, 1, 2])
+        if (k < said && !judged.includes(k)) grow([...line, `judged${k}`], said, [...judged, k]);
+    };
+    grow([], 0, []);
+    return out;
+  }
+  const HEARD = { elle: 'Bonjour toi', rien: ASIDE, panne: new Error('panne') };
+  type Heard3 = keyof typeof HEARD;
+  const kinds = Object.keys(HEARD) as Heard3[];
+  /** A reply already on its way, or not; what each of the three sentences turns out to be. */
+  const lastVerdicts = [false, true].flatMap((ahead) =>
+    kinds.flatMap((a) => kinds.flatMap((b) => kinds.map((c) => ({ ahead, said: [a, b, c] })))),
+  );
+
+  it.each(lastVerdicts)(
+    'after the last verdict, nothing open: the last sentence for her answers, and every reply sounds or is ' +
+      'forgotten (ahead $ahead, $said, every order of verdicts, a cough anywhere)',
+    async ({ ahead, said }) => {
+      // Nothing here waits on a timer: the turn of the loop after every promise is enough.
+      const settle = () => new Promise<void>((ok) => setImmediate(ok));
+      for (const line of timelines())
+        for (let cough = -1; cough < line.length; cough++) {
+          const name = `${line.join(' ')}, cough before ${line[cough] ?? 'nothing'}`;
+          const v = verdicts();
+          const t = setup(NO_TRY, v.stt);
+          // The sentences for her, in the order they were sent; -1 is the reply already on its way.
+          const sent: number[] = [];
+          let n = 0;
+          if (ahead) {
+            t.convo.onEndpoint(end(500));
+            v.give(n++, 'Bonjour toi');
+            sent.push(-1);
+            await settle();
+          }
+          const first = n;
+          for (const [i, step] of line.entries()) {
+            if (cough === i)
+              for (const type of ['start', 'held', 'noise'] as const) t.convo.onEndpoint({ type });
+            const k = Number(step.at(-1));
+            if (step.startsWith('said')) {
+              for (const type of ['start', 'held'] as const) t.convo.onEndpoint({ type });
+              t.convo.onEndpoint(end(1000 * (k + 1)));
+            } else {
+              v.give(first + k, HEARD[said[k]!]);
+              if (said[k] === 'elle') sent.push(k);
+            }
+            await settle();
+          }
+          for (let r = 0; r < t.sends.length; r++) {
+            t.say(110 + r, `Réponse ${r}.`);
+            t.convo.onLive({ type: 'speech-end', id: 110 + r, why: 'reply' });
+          }
+          await settle();
+          for (let s = 0; s < t.sounds.length; s++) {
+            t.sounds[s]!.end();
+            await settle();
+          }
+          expect(t.sends, name).toHaveLength(sent.length);
+          const cut = t.calls.filter((c) => c.startsWith('cut ')).length;
+          expect(t.sounds.length + cut, name).toBe(t.sends.length);
+          if (sent.length === 0) continue;
+          const sounded = t.trace.events.filter((e) => e.name === 'premier_son').map((e) => e.reponse);
+          expect(sounded, name).toContain(110 + sent.indexOf(Math.max(...sent)));
+        }
+    },
+  );
+
   it('a reply already heard is never taken back afterwards', async () => {
     const t = setup(NO_TRY);
     t.convo.onEndpoint(end(1000));

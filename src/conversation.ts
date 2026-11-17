@@ -68,6 +68,8 @@ export const REPLY_TIMEOUT_MS = 60_000;
 
 /** A fragment sent before the sentence was over: its words stay silent until it is. */
 interface Attempt {
+  /** In the order he said them: a later sentence has a greater one. */
+  made: number;
   /** Set when the transcription came back and went to the core. */
   sent?: Promise<void>;
   userId?: number;
@@ -128,6 +130,7 @@ export class Conversation {
   #unanswered = new Set<Attempt>();
   /** The sentence being heard, in the trace: numbered at its first sound. */
   #phrase: number | undefined;
+  #made = 0;
 
   constructor(deps: ConversationDeps) {
     this.#d = deps;
@@ -249,6 +252,7 @@ export class Conversation {
         this.#attempt = null;
         return;
       case 'start':
+        this.#talking = true;
         this.#sentence = { from: this.#d.now(), tries: 0 };
         return;
     }
@@ -295,21 +299,33 @@ export class Conversation {
     this.#write('retenue', this.#ref(waiting), { par: this.#phrase });
   }
 
-  /** What he said (`by`) was not for her: the reply held back comes out. */
+  /** He is in a sentence, or one that ended may still turn out to be for her. */
+  get #open(): boolean {
+    return this.#talking || this.#unjudged.size > 0;
+  }
+
+  /** What he said (`by`) was not for her: her voice goes on, and the reply held back comes out, once nothing is open. */
   #letGo(by?: Attempt, restarted = true): void {
-    // A reply suspended while it sounded goes on; no first sound will come again, so no thinking is lit.
-    // Not while he is in a sentence, nor while one that ended may still turn out to be for her.
     if (by) this.#unjudged.delete(by);
-    if (!this.#talking && this.#unjudged.size === 0) this.#d.speaker.resume();
+    const open = this.#open;
+    // A reply suspended while it sounded goes on; no first sound will come again, so no thinking is lit.
+    if (!open) this.#d.speaker.resume();
     const waiting = this.#heldBack;
-    this.#heldBack = null;
     if (!waiting) return;
-    waiting.heldBack = false;
     // The sound that held it back came while its own sentence was still being transcribed: it had no reply to hold.
-    if (waiting === by) return;
-    this.#write('relachee', this.#ref(waiting), { par: by?.phrase });
+    // Let go before anything waits, or `#holdBack` would refuse the next one.
+    if (waiting === by) {
+      this.#heldBack = null;
+      waiting.heldBack = false;
+      return;
+    }
     // The chronometer was restarted by a sentence that asked nothing.
     if (restarted) this.#clockFrom = null;
+    // Held back only while something is open: what is still to be judged, or said, lets it out or forgets it.
+    if (open) return;
+    this.#heldBack = null;
+    waiting.heldBack = false;
+    this.#write('relachee', this.#ref(waiting), { par: by?.phrase });
     // It is still on its way.
     this.#d.on({ type: 'thinking', on: true });
     if (waiting.replyId !== undefined) this.#d.speaker.release(waiting.replyId);
@@ -317,6 +333,11 @@ export class Conversation {
 
   /** What he said (`by`) was for her: the reply held back is never said, and the server forgets it. His message stays. */
   #supersede(by: Attempt): void {
+    // Replaced already by a sentence for her said after it, which cut what it had to: as if it asked nothing.
+    if (by.superseded) {
+      this.#letGo(by, false);
+      return;
+    }
     // A reply suspended while it sounded is cut for good, and the server learns what was heard of it.
     // A word too short to have suspended her (« non ») cuts her all the same, now that it is known to be for her.
     const { on, mode } = this.#d.settings().bargeIn;
@@ -325,8 +346,19 @@ export class Conversation {
     for (const cut of this.#d.speaker.cutSuspended(by.replyId))
       void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
     const waiting = this.#heldBack;
-    // Held back while its own sentence was transcribed: the sentence said since will tell.
-    if (!waiting || waiting === by) return;
+    if (!waiting) return;
+    if (waiting === by) {
+      // Held back while its own sentence was transcribed: the sentence said since will tell, unless it told already.
+      if (this.#open) return;
+      this.#heldBack = null;
+      by.heldBack = false;
+      return;
+    }
+    // Held back for a sentence said after this one: a late verdict does not take it back, its own reply comes too.
+    if (waiting.made > by.made) {
+      this.#letGo(by, false);
+      return;
+    }
     this.#heldBack = null;
     waiting.superseded = true;
     // Its reply is no longer awaited; a transcription still running keeps its guard, it must end.
@@ -343,7 +375,13 @@ export class Conversation {
 
   /** Transcribes, filters, sends; held unless `final`. */
   #try(audio: Float32Array, final: boolean): Attempt {
-    const attempt: Attempt = { dropped: false, committed: final, early: !final, keyHeld: this.#d.keyHeld() };
+    const attempt: Attempt = {
+      made: ++this.#made,
+      dropped: false,
+      committed: final,
+      early: !final,
+      keyHeld: this.#d.keyHeld(),
+    };
     const t = this.#d.trace;
     if (t && this.#phrase !== undefined) {
       attempt.phrase = this.#phrase;
