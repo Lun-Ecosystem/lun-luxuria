@@ -1391,6 +1391,7 @@ describe('what is said aloud', () => {
     expect(t.events).toContainEqual({
       type: 'failed',
       text: 'Ta phrase n’a pas pu être transcrite : le service voix ne répond pas',
+      service: 'voix',
     });
   });
 });
@@ -2108,7 +2109,9 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     expect(named(t, 'sans_reponse')).toEqual([]);
     t.convo.onEndpoint(ended);
     await flush();
-    expect(failed(t)).toEqual([{ type: 'failed', text: 'Sa réponse n’est pas venue : refusé' }]);
+    expect(failed(t)).toEqual([
+      { type: 'failed', text: 'Sa réponse n’est pas venue : refusé', service: 'serveur' },
+    ]);
     expect(named(t, 'sans_reponse')).toHaveLength(1);
     expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
     await vi.advanceTimersByTimeAsync(60_000);
@@ -2139,7 +2142,7 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     await flush();
     // The cut was sent, and refused: that is for the server to know, not for her to be told.
     expect(t.calls).toEqual(['cut 110 ""']);
-    expect(failed(t)).toEqual([{ type: 'failed', text: GUARD }]);
+    expect(failed(t)).toEqual([{ type: 'failed', text: GUARD, service: 'serveur' }]);
     expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
     await goesOn(t);
   });
@@ -2164,7 +2167,7 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     t.sends[0]!.on({ type: 'reply', id: 110 });
     await flush();
     expect(t.calls).toEqual(['cut 110 ""']);
-    expect(failed(t)).toEqual([{ type: 'failed', text: GUARD }]);
+    expect(failed(t)).toEqual([{ type: 'failed', text: GUARD, service: 'serveur' }]);
   });
 
   it('a reply replaced by a new sentence, its cut refused: that is still said', async () => {
@@ -2184,7 +2187,7 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     await flush();
     expect(t.calls).toEqual(['cut 110 ""']);
     expect(failed(t)).toEqual([
-      { type: 'failed', text: 'Coupure non transmise : Le serveur a répondu 404.' },
+      { type: 'failed', text: 'Coupure non transmise : Le serveur a répondu 404.', service: 'serveur' },
     ]);
   });
 
@@ -2214,7 +2217,7 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     await flush();
     expect(t.calls).toEqual(['cut 110 ""']);
     expect(failed(t)).toEqual([
-      { type: 'failed', text: 'Coupure non transmise : Le serveur a répondu 404.' },
+      { type: 'failed', text: 'Coupure non transmise : Le serveur a répondu 404.', service: 'serveur' },
     ]);
   });
 
@@ -2227,14 +2230,16 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
         throw new Error('flux coupé');
       },
       'Sa réponse n’est pas venue : flux coupé',
+      'serveur',
     ],
-    ['ended in error, then broke', errorThenBreak, 'Plafond atteint'],
-  ])('R2: a stream that %s, then its guard: one message', async (_, stream, text) => {
+    // A refusal names no service.
+    ['ended in error, then broke', errorThenBreak, 'Plafond atteint', undefined],
+  ])('R2: a stream that %s, then its guard: one message', async (_, stream, text, service) => {
     const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, [stream]);
     await sentence(t);
-    expect(failed(t)).toEqual([{ type: 'failed', text }]);
+    expect(failed(t)).toEqual([{ type: 'failed', text, service }]);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(failed(t)).toEqual([{ type: 'failed', text }]);
+    expect(failed(t)).toEqual([{ type: 'failed', text, service }]);
     expect(t.calls).toEqual([]);
     await goesOn(t);
   });

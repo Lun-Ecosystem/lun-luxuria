@@ -35,14 +35,22 @@ export async function synthesize(text: string, f: typeof fetch = fetch): Promise
   };
 }
 
-export async function appsOnMicrophone(f: typeof fetch = fetch): Promise<string[]> {
-  const res = await f('/voix/micro');
-  if (!res.ok) return [];
+/** What a service without the detection answers (404): no app known, and a service that answered all the same. */
+export const NO_DETECTION: readonly string[] = Object.freeze([]);
+
+/** Who holds the microphone. Any refusal but a 404, the 502 of the proxy among them, or no answer: the service is down. */
+export async function appsOnMicrophone(
+  f: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<readonly string[]> {
+  const res = await f('/voix/micro', { signal: signal ?? null });
+  if (res.status === 404) return NO_DETECTION;
+  if (!res.ok) throw new Error(`détection refusée (${res.status})`);
   return ((await res.json()) as { apps: string[] }).apps;
 }
 
 /** Whether another app holds the microphone, ignoring those that do not mean a conversation. */
-export function busyWith(apps: string[], ignored: string[]): boolean {
+export function busyWith(apps: readonly string[], ignored: string[]): boolean {
   const skip = ignored.map((a) => a.toLowerCase());
   // The page's own holder (a browser, or msedgewebview2 for the window) is skipped. shortcut: a call in a browser tab or
   // in another WebView2 app (the new Teams) goes unseen; tell holders apart by process id if it bites.

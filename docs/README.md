@@ -60,6 +60,22 @@ annoncé et l'essai à la courte pause, qui ne part pas ; l'écoute et la sourdi
 attend que le serveur ait répondu à l'annonce du retour, 3 s au plus : passé ce délai, ou sur un échec, il part quand
 même, et les messages gardent leur ordre ; la sourdine posée pendant l'attente le retient.
 
+**Les messages d'échec.** Le message d'un service qui ne répond plus s'efface quand ce service répond de nouveau, sans
+rien annoncer. Le service voix (transcription, synthèse) : son sondage, toutes les 3 s, `GET /voix/micro`, que la
+détection d'une autre appli utilise aussi. Un sondage sans réponse en 3 s est coupé ; un refus (dont le 502 du
+mandataire de Vite) ou aucune réponse disent « Le service voix ne répond plus. », une fois par panne, et seulement si
+rien d'autre n'est affiché. Une réponse efface tout message du service voix ; un 404 (un service sans détection)
+n'efface que celui du sondage. Détection coupée, le sondage tourne quand même tant qu'un message du service voix est
+affiché, pour son seul retour : il ne touche ni à la détection ni au micro, et s'arrête quand le message part. Le
+serveur : le retour du flux `live`, ou un battement qui répond. Compte comme une panne du serveur ce qui ne lui
+parvient pas ou ne revient pas (un envoi qui échoue ou dont le flux casse, aucune phrase de la réponse en 60 s, une
+coupure ou un retrait non transmis, un statut 500 ou plus à un message écrit), et comme un refus ce qu'il répond en
+erreur (le plafond, un message refusé, un autre statut à un message écrit), comme, seul, ce que le modèle répond en
+erreur. Un refus, le micro et le modèle qui reconnaît la voix n'ont pas de service à attendre. Tout message part
+aussi quand une phrase est dite d'une réponse reçue après lui, jamais de la sienne, ou quand un message écrit passe.
+Seul, sans flux ni battement, un message du serveur (un modèle figé jusqu'à la garde) reste jusqu'à la prochaine
+réponse. Sous la sourdine, le sondage et le battement continuent : ce qu'elle ne dit pas n'efface rien.
+
 Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des Réglages) :
 
 - **Le réseau** : le serveur et le modèle sont joints par le côté Rust (plugin-http, sans cookies), sans CORS, derrière

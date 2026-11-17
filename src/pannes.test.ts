@@ -337,6 +337,8 @@ describe('what stays', () => {
     const w = world();
     await w.s.enter();
     await voiceFails(w);
+    // The voice service is still down while the server comes back: its poll, detection off, does not clear it either.
+    w.micro = '502';
     w.link!(false);
     w.link!(true);
     await vi.advanceTimersByTimeAsync(90_000);
@@ -478,6 +480,104 @@ describe('a message is cleared only by a more recent reply', () => {
     expect(out.ends.length).toBe(sounds + 1); // her reply sounds again
     expect(w.s.subtitle).toMatch(/^phrase/);
     expect(w.s.failure).toBe('Le service voix ne répond plus.');
+  });
+});
+
+/** Alone on a model: no stream comes back, no beat answers; the model answers as the test sets it. */
+function alone() {
+  const w = world({
+    detection: true,
+    settings: { brain: 'alone', model: { ...DEFAULTS.model, name: 'test' } },
+  });
+  const m = { answer: 'ok' as 'ok' | '502' | 'hang' };
+  const voice = globalThis.fetch;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(url).includes('/chat/completions')) return voice(url, init);
+      if (m.answer === '502') return new Response('', { status: 502 });
+      if (m.answer === 'hang')
+        return new Promise<Response>((_, reject) =>
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
+        );
+      const frame = JSON.stringify({ choices: [{ delta: { content: 'Je suis là.' } }] });
+      return new Response(`data: ${frame}\n\ndata: [DONE]\n\n`);
+    }),
+  );
+  return { w, m };
+}
+
+describe('alone, on a model', () => {
+  it('a model that fails: no service to wait for, the message stays until the next reply is said', async () => {
+    const { w, m } = alone();
+    m.answer = '502';
+    await w.s.enter();
+    await said(w);
+    await flushAll();
+    expect(w.s.failure).toBe('Le modèle a répondu 502.');
+    // The voice service answers its polls, and beats answer nothing alone: neither clears it.
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(w.asked.micro).toBeGreaterThan(0);
+    expect(w.s.failure).toBe('Le modèle a répondu 502.');
+    m.answer = 'ok';
+    await said(w);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(w.s.subtitle).toBe('Je suis là.');
+    expect(w.s.failure).toBe('');
+  });
+
+  it('a model that hangs: the guard says it, a server failure, kept until the next reply is said', async () => {
+    const { w, m } = alone();
+    m.answer = 'hang';
+    await w.s.enter();
+    await said(w);
+    await vi.advanceTimersByTimeAsync(60_000);
+    const guard = 'Sa réponse n’est pas venue : aucune phrase en 60 s';
+    expect(w.s.failure).toBe(guard);
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(w.s.failure).toBe(guard);
+    m.answer = 'ok';
+    await said(w);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(w.s.subtitle).toBe('Je suis là.');
+    expect(w.s.failure).toBe('');
+  });
+});
+
+describe('the mute', () => {
+  it('a message shown before it: what she does not say clears nothing, the first reply she says after does', async () => {
+    const w = world();
+    await w.s.enter();
+    await serverFails(w, 1);
+    w.beat = 'throw';
+    w.s.toggleMute();
+    // A reply that comes under the mute is not said.
+    words(w, 2, 1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(w.s.subtitle).not.toMatch(/^phrase/);
+    expect(w.s.failure).toContain('Coupure non transmise');
+    w.s.toggleMute();
+    await flushAll();
+    expect(w.s.failure).toContain('Coupure non transmise');
+    words(w, 3, 1);
+    await flushAll();
+    expect(w.s.failure).toBe('');
+  });
+
+  it('under the mute, the poll goes on: a voice failure goes when the service answers, the microphone stays closed', async () => {
+    const w = world({ detection: true });
+    await w.s.enter();
+    await voiceFails(w);
+    w.micro = '502';
+    w.s.toggleMute();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(w.asked.micro).toBeGreaterThan(0);
+    expect(w.s.failure).toMatch(/voix/i);
+    w.micro = 'ok';
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(w.s.failure).toBe('');
+    expect(w.s.silenced).toBe(true);
+    expect(w.s.capturing).toBe(false);
   });
 });
 
