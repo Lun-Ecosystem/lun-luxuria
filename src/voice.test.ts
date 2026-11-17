@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { busyWith, synthesize, transcribe } from './voice.ts';
+import { appsOnMicrophone, busyWith, synthesize, transcribe } from './voice.ts';
 
 describe('the local voice', () => {
   it('sends raw samples and reads what was heard', async () => {
@@ -43,6 +43,42 @@ describe('the local voice', () => {
     expect(clip.samples[0]).toBe(0.5);
     const no = (async () => new Response('', { status: 500 })) as unknown as typeof fetch;
     await expect(synthesize('a', no)).rejects.toThrow('500');
+  });
+
+  describe('the poll of the microphone', () => {
+    const answering = (status: number, body: unknown = { apps: ['discord.exe'] }) =>
+      (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+
+    it('an answer lists the apps that hold the microphone', async () => {
+      expect(await appsOnMicrophone(answering(200))).toEqual(['discord.exe']);
+    });
+
+    it('its signal goes to fetch, to give up on a service that hangs', async () => {
+      const seen: (AbortSignal | null | undefined)[] = [];
+      const f = (async (_: string, init?: RequestInit) => {
+        seen.push(init?.signal);
+        return Response.json({ apps: [] });
+      }) as unknown as typeof fetch;
+      const stop = new AbortController();
+      await appsOnMicrophone(f, stop.signal);
+      expect(seen[0]).toBe(stop.signal);
+    });
+
+    it('a 404 is no detection, not a failure: an empty list', async () => {
+      expect(await appsOnMicrophone(answering(404, {}))).toEqual([]);
+    });
+
+    it('any other refusal, the 502 of the proxy among them, is a failure, not an empty list', async () => {
+      await expect(appsOnMicrophone(answering(502, {}))).rejects.toThrow();
+      await expect(appsOnMicrophone(answering(500, {}))).rejects.toThrow();
+    });
+
+    it('a service that does not answer is a failure too', async () => {
+      const down = (async () => {
+        throw new TypeError('Failed to fetch');
+      }) as unknown as typeof fetch;
+      await expect(appsOnMicrophone(down)).rejects.toThrow();
+    });
   });
 
   it('busy: another app, unless it is ignored or the browser holding it for this page', () => {

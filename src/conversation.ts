@@ -41,12 +41,23 @@ export interface ConversationDeps {
   trace?: Trace;
 }
 
+/** A service that did not answer: its message goes when it answers again. A refusal names none. */
+export type Service = 'voix' | 'serveur';
+
+interface Failed {
+  text: string;
+  service?: Service;
+}
+
+/** The server answered a written message, in error: unlike a message that never reached it, nothing is to wait for. */
+export class Refusal extends Error {}
+
 export type ConversationEvent =
   | { type: 'thinking'; on: boolean }
   /** A phrase heard passed the filter: it is for her, so the person is there. */
   | { type: 'addressed' }
   | { type: 'ignored'; text: string }
-  | { type: 'failed'; text: string }
+  | ({ type: 'failed' } & Failed)
   | { type: 'latency'; ms: number; speculated: boolean }
   | { type: 'said' };
 
@@ -89,7 +100,7 @@ interface Attempt {
    * Nothing more will come of its reply (it ended in error, its stream broke, its guard went off): what to tell, once.
    * Before the sentence ended, its end tells it, as for a whole sentence; withdrawn, it is never told.
    */
-  failed?: string;
+  failed?: Failed;
   /** The server saw its reply to its end: whatever its stream does after, its words come by the live. */
   done?: boolean;
   /** The guard of what it waits for now: its transcription, then the first sentence of its reply. */
@@ -146,8 +157,8 @@ export class Conversation {
     return { phrase: a.phrase, essai: a.essai, reponse: a.replyId };
   }
 
-  #fail(what: string, err: unknown): void {
-    this.#d.on({ type: 'failed', text: failure(what, err) });
+  #fail(what: string, err: unknown, service: Service): void {
+    this.#d.on({ type: 'failed', text: failure(what, err), service });
   }
 
   /** A turn the brain marked as spoken. */
@@ -198,7 +209,8 @@ export class Conversation {
       this.#lastSpokeAt = this.#d.now();
       this.#d.on({ type: 'said' });
     } else if (e.type === 'failed') {
-      this.#d.on({ type: 'failed', text: e.text });
+      // Her voice failed on a sentence: the synthesis of the voice service.
+      this.#d.on({ type: 'failed', text: e.text, service: 'voix' });
     }
   }
 
@@ -358,7 +370,9 @@ export class Conversation {
     if (on && this.#d.speaker.speaking) this.#d.speaker.suspend(mode === 'soft', by.phrase);
     this.#unjudged.delete(by);
     for (const cut of this.#d.speaker.cutSuspended(by.replyId))
-      void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
+      void this.#d.brain
+        .cut(cut.id, cut.said)
+        .catch((err) => this.#fail('Coupure non transmise', err, 'serveur'));
     const waiting = this.#heldBack;
     if (!waiting) return;
     if (waiting === by) {
@@ -386,7 +400,7 @@ export class Conversation {
     this.#write('oubliee', { reponse: replyId });
     this.#d.speaker.drop(replyId);
     void this.#d.brain.cut(replyId, '').catch((err) => {
-      if (!byGuard) this.#fail('Coupure non transmise', err);
+      if (!byGuard) this.#fail('Coupure non transmise', err, 'serveur');
     });
   }
 
@@ -441,7 +455,7 @@ export class Conversation {
         d.on({ type: 'thinking', on: false });
         this.#noAnswer(attempt);
       }
-      this.#fail('Ta phrase n’a pas pu être transcrite', err);
+      this.#fail('Ta phrase n’a pas pu être transcrite', err, 'voix');
       return;
     } finally {
       clearTimeout(attempt.guard);
@@ -512,7 +526,7 @@ export class Conversation {
         this.#onTurn(e, attempt),
       );
     } catch (err) {
-      this.#over(attempt, failure('Sa réponse n’est pas venue', err));
+      this.#over(attempt, { text: failure('Sa réponse n’est pas venue', err), service: 'serveur' });
     }
   }
 
@@ -520,35 +534,38 @@ export class Conversation {
    * Nothing more will come of its reply: it ended in error, its stream broke before its end, or its guard went off.
    * What came of it is said, then the line goes on; the failure is told once, and only if its sentence ends on it.
    */
-  #over(attempt: Attempt, text: string): void {
+  #over(attempt: Attempt, failed: Failed): void {
     this.#answered(attempt);
     // Withdrawn, replaced, past its guard, or over already: nobody waits for it, nothing is said of it. Seen to its
     // end by the server, only its stream broke: its reply goes on by the live.
     if (attempt.dropped || attempt.superseded || attempt.late || attempt.failed !== undefined || attempt.done)
       return;
-    attempt.failed = text;
+    attempt.failed = failed;
     if (attempt.replyId !== undefined)
       // Held back, its words would be said over him: they go. No end of speech will come for the others.
       if (attempt.heldBack) this.#d.speaker.drop(attempt.replyId);
       else this.#d.speaker.end(attempt.replyId);
     // A fragment: its sentence may still go on.
-    if (attempt.committed) this.#told(attempt, text);
+    if (attempt.committed) this.#told(attempt, failed);
   }
 
   /** Nothing will answer it: as for a sentence that asked nothing, what it suspended, or held back, goes on. */
-  #told(attempt: Attempt, text: string): void {
+  #told(attempt: Attempt, failed: Failed): void {
     this.#d.on({ type: 'thinking', on: false });
     // Not `#noAnswer`: this sentence was for her, the trace keeps its words.
     this.#write('sans_reponse', this.#ref(attempt), { raison: 'erreur' });
     this.#unlink(attempt);
     this.#letGo(attempt);
-    this.#d.on({ type: 'failed', text });
+    this.#d.on({ type: 'failed', ...failed });
   }
 
   /** The first sentence of its reply did not come in time: the server forgets it, and nothing will answer it. */
   #late(attempt: Attempt): void {
     if (attempt.replyId !== undefined) this.#forget(attempt.replyId, true);
-    this.#over(attempt, `Sa réponse n’est pas venue : aucune phrase en ${REPLY_TIMEOUT_MS / 1000} s`);
+    this.#over(attempt, {
+      text: `Sa réponse n’est pas venue : aucune phrase en ${REPLY_TIMEOUT_MS / 1000} s`,
+      service: 'serveur',
+    });
     // Whatever comes of it now is thrown away.
     attempt.late = true;
   }
@@ -575,7 +592,9 @@ export class Conversation {
     } else if (e.type === 'done') {
       this.#answered(attempt);
       this.#durations(e.message, this.#ref(attempt));
-      if (e.message.status === 'error') this.#over(attempt, e.message.error ?? 'Sa réponse a échoué.');
+      // The server answered, with a refusal: no service to wait for.
+      if (e.message.status === 'error')
+        this.#over(attempt, { text: e.message.error ?? 'Sa réponse a échoué.' });
       else attempt.done = true;
     }
   }
@@ -588,7 +607,9 @@ export class Conversation {
   #withdraw(attempt: Attempt): void {
     if (attempt.replyId !== undefined) this.#d.speaker.drop(attempt.replyId);
     if (attempt.userId !== undefined)
-      void this.#d.brain.withdraw(attempt.userId).catch((err) => this.#fail('Retrait non transmis', err));
+      void this.#d.brain
+        .withdraw(attempt.userId)
+        .catch((err) => this.#fail('Retrait non transmis', err, 'serveur'));
   }
 
   /** The speaker went on talking: what it prepared is thrown away. */
@@ -630,7 +651,7 @@ export class Conversation {
       if (e.type === 'done' && e.message.status === 'error')
         refused = e.message.error ?? 'Sa réponse a échoué.';
     });
-    if (refused !== undefined) throw new Error(refused);
+    if (refused !== undefined) throw new Refusal(refused);
   }
 
   /** The mute comes: a fragment held for the end of the sentence is withdrawn, and no reply is left to take back. */
@@ -655,6 +676,8 @@ export class Conversation {
     clearTimeout(this.#resuming);
     const cut = this.#d.speaker.stop();
     if (cut)
-      void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
+      void this.#d.brain
+        .cut(cut.id, cut.said)
+        .catch((err) => this.#fail('Coupure non transmise', err, 'serveur'));
   }
 }

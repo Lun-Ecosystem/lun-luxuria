@@ -1,8 +1,8 @@
 import { openMicrophone, webOutput } from './audio.ts';
 import { stateOf, type BodyState } from './body/body.ts';
-import { Conversation } from './conversation.ts';
+import { Conversation, Refusal, type Service } from './conversation.ts';
 import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
-import { CoreClient } from './core.ts';
+import { CoreClient, CoreError } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
 import type { FolderName } from './desktop/dossiers.ts';
 import type { Bricks, ProgramName, ProgramState } from './desktop/voix.ts';
@@ -20,7 +20,7 @@ import { presenceKeeper, watchPage } from './page.ts';
 import { readSettings, type Layout, type Settings } from './settings.ts';
 import { Speaker, type SpeakerEvent } from './speech/speaker.ts';
 import { Trace } from './trace.ts';
-import { appsOnMicrophone, busyWith, synthesize, transcribe } from './voice.ts';
+import { appsOnMicrophone, busyWith, NO_DETECTION, synthesize, transcribe } from './voice.ts';
 
 const SETTINGS_KEY = 'luxuria.settings';
 const MIC_KEY = 'luxuria.mic';
@@ -31,7 +31,9 @@ const LAYOUT_KEY = 'luxuria.layout';
 const SAID_KEY = 'luxuria.said';
 const FORGOTTEN = 'Ce poste n’est plus reconnu par le serveur : entre un nouveau code d’appairage.';
 const BEAT_MS = 30_000;
+/** Each turn of the poll, and its guard: a service that does not answer in that time is down. */
 const BUSY_POLL_MS = 3000;
+const VOICE_DOWN = 'Le service voix ne répond plus.';
 /** A server that does not answer the return must not hold her words: past it, the message leaves all the same. */
 const BACK_WAIT_MS = 3000;
 const SUBTITLE_STAYS_MS = 4000;
@@ -173,6 +175,23 @@ export class Session {
   #busySince = 0;
   /** A question to the voice service about the microphone, still unanswered. */
   #asking = false;
+  /**
+   * What may clear the message on screen: its service answering again (`poll`: the poll's own message), or the words
+   * of a reply heard of after it (`after`, the latest one then). `n`: its rank among the messages shown.
+   */
+  #failed: { service?: Service | undefined; poll?: true | undefined; after: number; n: number } = {
+    after: 0,
+    n: 0,
+  };
+  /** How many messages were shown: an answer counts only for those shown before its request left. */
+  #shownCount = 0;
+  /**
+   * The latest reply heard of: its words, or those of one before it, never clear a message shown since. Message ids
+   * grow with the thread, on the server as alone.
+   */
+  #lastReply = 0;
+  /** The poll said the voice service no longer answers: once for each outage, until it answers again. */
+  #voiceDownTold = false;
   /** The start of a return of the presence under way, `BACK_WAIT_MS` at most, failed or not; null once it answered. */
   #back: Promise<void> | null = null;
 
@@ -294,7 +313,7 @@ export class Session {
         } else if (e.type === 'ignored') this.#showTrace(e.text);
         else if (e.type === 'latency') this.latencies = [e, ...this.latencies].slice(0, 20);
         else if (e.type === 'failed') {
-          this.failure = e.text;
+          this.#tell(e.text, e.service);
           this.capped = /plafond/i.test(e.text);
         }
       },
@@ -310,7 +329,11 @@ export class Session {
           // No end will come for what it was saying.
           this.#speaker?.stop();
           this.thinking = false;
-        } else if (!this.linked) void this.#announce();
+        } else if (!this.linked) {
+          // The stream is back: the server answers again.
+          this.#serverBack();
+          void this.#announce();
+        }
         this.linked = up;
       },
       signal,
@@ -352,12 +375,15 @@ export class Session {
     async () => {
       // Also reached from a beat refused while away: it must not reopen the presence.
       if (this.away) return;
+      const since = this.#shownCount;
       try {
         await this.brain.presence('started', {
           ...this.#flags(),
           ritual: this.settings.speak.ritual && !this.silenced,
         });
         this.linked = true;
+        // The server answered: at the return from an absence, no beat would say so before 30 s. Alone, nothing did.
+        if (this.settings.brain === 'linked') this.#serverBack(since);
         // Gone while the start was on its way: it closes again.
         if (this.away) void this.brain.presence('stopped').catch(() => {});
       } catch {
@@ -377,7 +403,30 @@ export class Session {
   }
   // Away, nothing is announced: a beat would be refused, and its refusal would announce again.
   #announce = () => (this.away ? Promise.resolve() : this.#presence.announce());
-  #beat = () => (this.away ? Promise.resolve() : this.#presence.beat());
+  #beat = async (): Promise<void> => {
+    if (this.away) return;
+    const since = this.#shownCount;
+    // Taken or gone, it answered: the server is there again.
+    if ((await this.#presence.beat()) !== undefined) this.#serverBack(since);
+  };
+
+  /** A message on screen, and what may clear it; the poll's own (`poll`) gives way to any other. */
+  #tell(text: string, service?: Service, poll?: true): void {
+    this.failure = text;
+    this.#failed = { service, poll, after: this.#lastReply, n: ++this.#shownCount };
+  }
+
+  /**
+   * The message on screen tells that this service no longer answers, and, for an answer to a request that left when
+   * `since` messages were shown, came before it: an answer to a question asked earlier says nothing of it.
+   */
+  #down(service: Service, since = Infinity): boolean {
+    return this.failure !== '' && this.#failed.service === service && this.#failed.n <= since;
+  }
+
+  #serverBack(since?: number): void {
+    if (this.#down('serveur', since)) this.failure = '';
+  }
 
   /**
    * What the server is told, and, back, what a message waits for: the start (`#back`). Listening and the mute stay as
@@ -410,6 +459,7 @@ export class Session {
   }
 
   #onLive(e: LiveEvent): void {
+    if (e.type === 'speech') this.#lastReply = Math.max(this.#lastReply, e.id);
     this.#convo?.onLive(e);
     if (e.type === 'message') void this.#refreshThread();
   }
@@ -423,7 +473,8 @@ export class Session {
       this.reading = e.mute === true;
       if (e.mute) return;
       this.speaking = true;
-      this.failure = '';
+      // A reply heard of after the message: its voice and the server answer. Its own words, said late, are not.
+      if (e.id > this.#failed.after) this.failure = '';
       this.capped = false;
     } else if (e.type === 'silent') {
       this.speaking = false;
@@ -458,14 +509,12 @@ export class Session {
   async #pollBusy(): Promise<void> {
     if (!this.settings.busy.on) {
       this.busy = false;
+      // Detection off, it still asks while a voice message is shown: for the return of the service only.
+      if (this.#down('voix')) void this.#askVoice();
       return this.#applyMic();
     }
-    // The one before has not answered: another would only wait behind it, one more open request every turn.
-    if (this.#asking) return;
-    this.#asking = true;
-    const apps = await appsOnMicrophone(this.#net.voice)
-      .catch(() => [])
-      .finally(() => (this.#asking = false));
+    const apps = await this.#askVoice();
+    if (!apps) return;
     const taken = busyWith(apps, this.settings.busy.ignored);
     const now = Date.now();
     if (taken) this.#busySince = now;
@@ -475,6 +524,37 @@ export class Session {
     if (changed) {
       void this.#beat();
       await this.#applyMic();
+    }
+  }
+
+  /**
+   * Who holds the microphone, none when the service is down; undefined while the question before is unanswered. Its
+   * answer, or none, says whether the voice service is there.
+   */
+  async #askVoice(): Promise<readonly string[] | undefined> {
+    // The one before has not answered: another would only wait behind it, one more open request every turn.
+    if (this.#asking) return undefined;
+    this.#asking = true;
+    // Not `AbortSignal.timeout`: a service that hangs is cut on the clock of the page.
+    const stop = new AbortController();
+    const guard = setTimeout(() => stop.abort(), BUSY_POLL_MS);
+    const since = this.#shownCount;
+    try {
+      const apps = await appsOnMicrophone(this.#net.voice, stop.signal);
+      this.#voiceDownTold = false;
+      // A 404 is a service without the detection: it answers, so the poll's own message goes, and only that one.
+      if (this.#down('voix', since) && (apps !== NO_DETECTION || this.#failed.poll)) this.failure = '';
+      return apps;
+    } catch {
+      // Once for each outage, and over nothing: any other message says more.
+      if (!this.#voiceDownTold && this.failure === '') {
+        this.#voiceDownTold = true;
+        this.#tell(VOICE_DOWN, 'voix', true);
+      }
+      return [];
+    } finally {
+      clearTimeout(guard);
+      this.#asking = false;
     }
   }
 
@@ -513,7 +593,7 @@ export class Session {
       this.#mic = await openMicrophone({ echoCancellation, noiseSuppression }, (f) => this.#onFrame(f));
       this.capturing = true;
     } catch (err) {
-      this.failure = `Le micro n’a pas pu s’ouvrir : ${String(err)}`;
+      this.#tell(`Le micro n’a pas pu s’ouvrir : ${String(err)}`);
     }
   }
 
@@ -526,7 +606,9 @@ export class Session {
       this.#silero = new SileroVoice(await loadSilero(bytes, engineUrl));
     } catch (err) {
       this.#silero = false;
-      this.failure = `Le modèle qui reconnaît la voix n’a pas pu se charger, le niveau sonore le remplace : ${String(err)}`;
+      this.#tell(
+        `Le modèle qui reconnaît la voix n’a pas pu se charger, le niveau sonore le remplace : ${String(err)}`,
+      );
     }
     return this.#silero;
   }
@@ -551,7 +633,7 @@ export class Session {
       .catch((err: unknown) => {
         // The model failed while it ran: the level takes over, or every frame would fail the same way.
         this.#silero = false;
-        this.failure = `Le modèle qui reconnaît la voix a échoué, le niveau sonore le remplace : ${String(err)}`;
+        this.#tell(`Le modèle qui reconnaît la voix a échoué, le niveau sonore le remplace : ${String(err)}`);
       });
   }
 
@@ -645,7 +727,10 @@ export class Session {
       // It went through: an older failure no longer holds.
       this.failure = '';
     } catch (err) {
-      this.failure = err instanceof Error ? err.message : String(err);
+      // Answered in error (its reply refused, a 4xx), it stays. Not reached, or nothing back (the network, the transport
+      // of the window, a 5xx): it goes when the server answers again.
+      const down = !(err instanceof Refusal) && !(err instanceof CoreError && err.status < 500);
+      this.#tell(err instanceof Error ? err.message : String(err), down ? 'serveur' : undefined);
     }
     await this.#refreshThread();
   }
