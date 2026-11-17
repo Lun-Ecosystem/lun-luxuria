@@ -9,11 +9,12 @@
 // - elle parle seule à 1000 (pourquoi : spontaneous), synthèse → son 1150, la phrase 1 coupée à sa virgule
 //   comme le fait le serveur, « Demain matin il fera frais, », 27 car. × 60 = 1620 ms.
 // - la toux, 2016 → 2466 : tenue 2016 + 384 = 2400 → suspendue, son arrêté ; dernière trame 2464 ; pause 2624 →
-//   essai, transcrite vide 2774 → bruit ; fin 2464 + 704 = 3168 → sans réponse → reprise, la phrase redite à 3168.
-// - parole 1, 3360 → 4960, 192 ms après cette fin (200 à la trame près) : une nouvelle phrase, elle parle par-dessus
-//   jusqu'à sa tenue 3360 + 384 = 3744 → suspendue. Chevauchement : 3744 − 3360 = 384, au plus une tenue et une
-//   trame (432) ; le voulu est nul.
-// - dernière trame 4928 ; pause 5088 → essai, pour elle ; fin 4928 + 704 = 5632 → confirmée → coupée.
+//   essai, transcrite vide 2774 → bruit ; fin 2464 + 704 = 3168 → sans réponse → la reprise.
+// - la reprise attend `bargeIn.resumeMs`, 300 ms par défaut : la phrase redite viendrait à 3168 + 300 = 3468.
+// - parole 1, 3360 → 4960, 192 ms après cette fin (200 à la trame près) : elle commence dans l'attente, avec 108 ms de
+//   marge, et l'annule ; elle ne reprend pas. Aucun son pendant la parole : chevauchement nul, le voulu.
+// - dernière trame 4928 ; pause 5088 → essai, pour elle ; fin 4928 + 704 = 5632 → confirmée → coupée pour de bon.
+//   Une parole qui commence plus de 300 ms après la fin de la toux la trouve qui parle : `toux-puis-parole-tard`.
 import type { Scenario } from '../scenario.ts';
 
 export default {
@@ -50,20 +51,19 @@ export default {
       id: 'reprise',
       niveau: 'tous',
       mecanisme: 'suspension',
-      dit: 'elle reprend après la toux',
+      dit: "elle ne reprend pas : la parole commence dans l'attente d'après la toux",
       evenement: 'reprise_voix',
       ou: { parle: 1 },
+      absent: true,
     },
     {
-      id: 'suspendue-par-la-parole',
-      niveau: 'exact',
-      mecanisme: 'suspension',
-      dit: 'la nouvelle parole la suspend à sa tenue',
-      evenement: 'suspendue',
+      id: 'coupee',
+      niveau: 'tous',
+      mecanisme: 'coupure',
+      dit: 'la parole est pour elle : sa voix suspendue est coupée pour de bon',
+      evenement: 'coupee',
       ou: { parle: 1 },
-      depuis: { parole: 1, bord: 'debut' },
-      // tenue à 384 ms du début, une trame de marge
-      entre: [384, 416],
+      depuis: { parole: 1, bord: 'fin' },
     },
     {
       id: 'chevauchement-garanti',
@@ -81,15 +81,6 @@ export default {
       dit: 'elle ne reprend pas par-dessus',
       mesure: 'chevauchement',
       entre: [0, 0],
-    },
-  ],
-  connus: [
-    {
-      issue: 'Lun-Ecosystem/lun-luxuria#63',
-      attendu: 'chevauchement-nul',
-      espece: 'hors_bornes',
-      // une tenue, de 3360 à 3744
-      trouve: 384,
     },
   ],
 } satisfies Scenario;

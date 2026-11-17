@@ -118,5 +118,12 @@
     "motif": "      case 'start':\n        this.#talking = true;\n",
     "par": "      case 'start':\n",
     "maillon": "suspension"
+  },
+  "reprise-sans-attente": {
+    "quoi": "resumeMs ignoré : elle reprend aussitôt",
+    "fichier": "src/conversation.ts",
+    "motif": "const resumeMs = this.#d.settings().bargeIn.resumeMs;",
+    "par": "const resumeMs = 0;",
+    "maillon": "suspension"
   }
 }

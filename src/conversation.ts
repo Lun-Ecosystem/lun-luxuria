@@ -128,6 +128,8 @@ export class Conversation {
   #unjudged = new Set<Attempt>();
   /** Sent, and neither the first sentence of its reply nor its end came yet: each has its guard. */
   #unanswered = new Set<Attempt>();
+  /** The wait before her voice resumes: one only, started again by each let-go. */
+  #resuming: ReturnType<typeof setTimeout> | undefined;
   /** The sentence being heard, in the trace: numbered at its first sound. */
   #phrase: number | undefined;
   #made = 0;
@@ -253,6 +255,7 @@ export class Conversation {
         return;
       case 'start':
         this.#talking = true;
+        clearTimeout(this.#resuming);
         this.#sentence = { from: this.#d.now(), tries: 0 };
         return;
     }
@@ -309,7 +312,16 @@ export class Conversation {
     if (by) this.#unjudged.delete(by);
     const open = this.#open;
     // A reply suspended while it sounded goes on; no first sound will come again, so no thinking is lit.
-    if (!open) this.#d.speaker.resume();
+    // Not at once: he may talk again right after a cough, and she must not be heard over him (#63).
+    if (!open) {
+      clearTimeout(this.#resuming);
+      const resumeMs = this.#d.settings().bargeIn.resumeMs;
+      if (resumeMs <= 0) this.#d.speaker.resume();
+      else
+        this.#resuming = setTimeout(() => {
+          if (!this.#open) this.#d.speaker.resume();
+        }, resumeMs);
+    }
     const waiting = this.#heldBack;
     if (!waiting) return;
     // The sound that held it back came while its own sentence was still being transcribed: it had no reply to hold.
@@ -333,6 +345,8 @@ export class Conversation {
 
   /** What he said (`by`) was for her: the reply held back is never said, and the server forgets it. His message stays. */
   #supersede(by: Attempt): void {
+    // For her, what the wait would resume is cut; the two let-goes below, as if it asked nothing, start it again.
+    clearTimeout(this.#resuming);
     // Replaced already by a sentence for her said after it, which cut what it had to: as if it asked nothing.
     if (by.superseded) {
       this.#letGo(by, false);
@@ -617,10 +631,14 @@ export class Conversation {
     this.#unjudged.clear();
     this.#dropAttempt();
     this.#letGo(undefined, false);
+    // After the let-go, which would start a wait: nothing more will be heard, so she resumes now.
+    clearTimeout(this.#resuming);
+    this.#d.speaker.resume();
   }
 
   /** The button that exists only while it speaks. */
   silence(): void {
+    clearTimeout(this.#resuming);
     const cut = this.#d.speaker.stop();
     if (cut)
       void this.#d.brain.cut(cut.id, cut.said).catch((err) => this.#fail('Coupure non transmise', err));
