@@ -136,6 +136,7 @@ fn read(file: &Path) -> Vec<String> {
 
 /** Changes the origins kept in `file`, written as `programs::save_entry` writes its file. */
 fn save(file: &Path, change: impl FnOnce(&mut Vec<String>)) -> Result<(), String> {
+    let _files = crate::voice::hold(&crate::programs::FILES);
     let mut hosts = read(file);
     change(&mut hosts);
     if let Some(parent) = file.parent() {
@@ -862,5 +863,21 @@ mod tests {
             net_hosts(t.app.handle().clone()).unwrap(),
             ["https://example.com"]
         );
+    }
+
+    #[test]
+    fn a_write_waits_for_the_files_lock() {
+        let t = guarded();
+        let file = hosts_file(&t);
+        std::thread::scope(|s| {
+            // Inside the scope: a failed assert drops it, and the writer ends.
+            let held = crate::voice::hold(&crate::programs::FILES);
+            let writer = s.spawn(|| super::save(&file, |h| h.push("https://example.com".into())));
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            assert!(!file.exists(), "hotes.json written under the lock");
+            drop(held);
+            writer.join().unwrap().unwrap();
+        });
+        assert_eq!(super::read(&file), ["https://example.com"]);
     }
 }

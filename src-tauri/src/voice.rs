@@ -39,29 +39,39 @@ pub fn checked_dir(dir: &str) -> Result<PathBuf, String> {
     crate::folders::holding(dir, SCRIPT, "Dossier du service introuvable.")
 }
 
-/** A control character, or a format one that hides or reorders text: a box would not show what starts. */
+const INVISIBLE: &str = "caractère invisible ou de contrôle refusé.";
+
+/**
+ * A control character, or one that shows as nothing or reorders text: a box would not show what starts.
+ * shortcut: a list, not the Unicode categories (no dependency for them); revisit when an invisible character passes.
+ */
 fn hidden(c: char) -> bool {
     c.is_control()
-        || matches!(c, '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+        || matches!(c, '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}'..='\u{1160}'
+            | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFA0}' | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{E0000}'..='\u{E007F}' | '\u{E0100}'..='\u{E01EF}')
 }
 
-/** Refused by its rank, never shown raw: what it holds is what would mislead. */
-pub fn checked_args(args: &[String]) -> Result<(), String> {
+/** Their number and their length, for the programs and the service. */
+fn checked_limits(args: &[String]) -> Result<(), String> {
     if args.len() > ARGS_MAX {
         return Err(format!("Trop d’arguments ({ARGS_MAX} au plus)."));
     }
-    for (rank, a) in (1..).zip(args) {
-        if a.len() > ARG_LEN_MAX {
-            return Err("Argument illisible.".to_string());
-        }
-        if a.chars().any(hidden) {
-            return Err(format!(
-                "Argument {rank} : caractère invisible ou de contrôle refusé."
-            ));
-        }
+    if args.iter().any(|a| a.len() > ARG_LEN_MAX) {
+        return Err("Argument illisible.".to_string());
     }
     Ok(())
+}
+
+/** A program's: refused by its rank, never shown raw, since what it holds is what would mislead. */
+pub fn checked_args(args: &[String]) -> Result<(), String> {
+    checked_limits(args)?;
+    match (1..).zip(args).find(|(_, a)| a.chars().any(hidden)) {
+        Some((rank, _)) => Err(format!("Argument {rank} : {INVISIBLE}")),
+        None => Ok(()),
+    }
 }
 
 /**
@@ -78,10 +88,11 @@ const SERVICE_FLAGS: [(&str, &str); 5] = [
 
 /**
  * The service's arguments: the general limits, then `SERVICE_FLAGS` only, each with its value (`--flag=value` reads
- * as `--flag value`), every occurrence checked since argparse keeps the last. A refusal names the field.
+ * as `--flag value`), every occurrence checked since argparse keeps the last. A refusal names the field, an
+ * invisible character's too, which is never shown.
  */
 pub fn checked_service_args(args: &[String]) -> Result<(), String> {
-    checked_args(args)?;
+    checked_limits(args)?;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let (flag, inline) = match arg.split_once('=') {
@@ -89,6 +100,9 @@ pub fn checked_service_args(args: &[String]) -> Result<(), String> {
             None => (arg.as_str(), None),
         };
         let Some(&(_, field)) = SERVICE_FLAGS.iter().find(|(f, _)| *f == flag) else {
+            if flag.chars().any(hidden) {
+                return Err(format!("Autres arguments : {INVISIBLE}"));
+            }
             return Err(format!("Autres arguments : {flag} refusé."));
         };
         // As argparse reads it: a next word that starts with a dash is another flag, unless it is a number.
@@ -100,6 +114,9 @@ pub fn checked_service_args(args: &[String]) -> Result<(), String> {
                     .filter(|v| !v.starts_with('-') || v.parse::<f64>().is_ok())
             })
             .ok_or_else(|| format!("{field} : valeur manquante après {flag}."))?;
+        if value.chars().any(hidden) {
+            return Err(format!("{field} : {INVISIBLE}"));
+        }
         checked_service_value(flag, field, value)?;
     }
     Ok(())
@@ -469,11 +486,12 @@ mod tests {
     #[test]
     fn an_invisible_or_control_character_is_refused_by_its_rank() {
         // Each refused range by its ends, and controls past `\n`, `\r` and `\t`.
-        let hidden = [
-            '\n', '\r', '\t', '\0', '\u{7F}', '\u{85}', '\u{061C}', '\u{200B}', '\u{200F}',
-            '\u{202A}', '\u{202E}', '\u{2060}', '\u{2064}', '\u{2066}', '\u{2069}', '\u{FEFF}',
-        ];
-        for c in hidden {
+        let hidden = "\n\r\t\0\u{7F}\u{85}\u{00AD}\u{034F}\u{061C}\u{115F}\u{1160}\u{180E}\
+            \u{200B}\u{200F}\u{2028}\u{2029}\u{202A}\u{202E}\u{2060}\u{2064}\u{2066}\u{2069}\
+            \u{3164}\u{FE00}\u{FE0F}\u{FEFF}\u{FFA0}\u{FFF9}\u{FFFB}\u{E0000}\u{E007F}\u{E0100}\
+            \u{E01EF}";
+        assert_eq!(hidden.chars().count(), 33);
+        for c in hidden.chars() {
             let args = ["-m".to_string(), "x".to_string(), format!("a{c}b")];
             assert_eq!(
                 checked_args(&args),
@@ -775,16 +793,36 @@ mod service_args {
     }
 
     #[test]
-    fn an_invisible_or_control_character_is_refused_before_the_flags() {
+    fn an_invisible_or_control_character_names_the_field_of_its_flag() {
         for c in ['\n', '\r', '\t', '\u{202E}', '\u{200B}'] {
             let value = format!("f{c}r");
             let err = checked_service_args(&strings(&["--stt", "faster:small", "--lang", &value]));
             assert_eq!(
                 err,
-                Err("Argument 4 : caractère invisible ou de contrôle refusé.".to_string()),
+                Err("Langue : caractère invisible ou de contrôle refusé.".to_string()),
                 "{c:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_path_copied_with_its_hidden_mark_names_the_voice() {
+        // Windows' file properties, « Sécurité », copy the path behind a U+202A.
+        let voice = "Voix : caractère invisible ou de contrôle refusé.".to_string();
+        let path = "piper:\u{202A}C:\\voix\\fr.onnx";
+        let spaced = checked_service_args(&strings(&["--stt", "faster:small", "--tts", path]));
+        assert_eq!(spaced, Err(voice.clone()));
+        let inline = checked_service_args(&strings(&[&format!("--tts={path}")]));
+        assert_eq!(inline, Err(voice));
+    }
+
+    #[test]
+    fn an_invisible_character_off_the_flags_is_other_arguments_never_shown() {
+        let err = checked_service_args(&strings(&["--stt\u{200B}", "faster:small"])).unwrap_err();
+        assert_eq!(
+            err,
+            "Autres arguments : caractère invisible ou de contrôle refusé."
+        );
     }
 
     #[cfg(windows)]

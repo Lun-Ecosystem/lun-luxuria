@@ -28,6 +28,9 @@ const PATHS: &str = "programmes.json";
 const ARGS: &str = "arguments.json";
 const NO_EXE: &str = "Choisis d’abord son programme.";
 
+/** Around each read then write of a config file: `program_forget` runs beside the async commands. */
+pub static FILES: Mutex<()> = Mutex::new(());
+
 /** A program this app started, with what it was started with. */
 pub struct Held {
     child: Child,
@@ -88,6 +91,7 @@ pub fn save_path(file: &Path, name: &str, path: Option<&Path>) -> Result<(), Str
 
 /** Keeps `name`'s path in `file`, or forgets it with `None`; the name is checked by the caller. */
 pub fn save_entry(file: &Path, name: &str, path: Option<&Path>) -> Result<(), String> {
+    let _files = hold(&FILES);
     let mut paths = read_paths(file);
     match path {
         Some(p) => paths.insert(name.to_string(), p.display().to_string()),
@@ -111,6 +115,7 @@ pub fn read_arguments(file: &Path) -> HashMap<String, Vec<String>> {
 /** Keeps `name`'s confirmed arguments, or forgets them with `None`; written as `save_entry` writes its file. */
 pub fn save_arguments(file: &Path, name: &str, args: Option<&[String]>) -> Result<(), String> {
     let name = checked_name(name)?;
+    let _files = hold(&FILES);
     let mut all = read_arguments(file);
     match args {
         Some(a) => all.insert(name.to_string(), a.to_vec()),
@@ -160,9 +165,7 @@ pub fn confirm_args(
     ask: impl FnOnce(&str, &str) -> MessageDialogResult,
 ) -> Result<bool, String> {
     let name = checked_name(name)?;
-    if !read_paths(paths_file).contains_key(name) {
-        return Err(NO_EXE.into());
-    }
+    let exe = read_paths(paths_file).remove(name).ok_or(NO_EXE)?;
     checked_args(args)?;
     if read_arguments(args_file)
         .get(name)
@@ -171,11 +174,17 @@ pub fn confirm_args(
         return Ok(true);
     }
     let _box = one_box::take(one)?;
-    let text = if args.is_empty() {
+    // Numbered and between marks: an empty argument and edge spaces show, and no argument reads as none.
+    let listed = if args.is_empty() {
         "Aucun argument.".to_string()
     } else {
-        args.join("\n")
+        let lines: Vec<_> = (1..)
+            .zip(args)
+            .map(|(n, a)| format!("{n}. «{a}»"))
+            .collect();
+        lines.join("\n")
     };
+    let text = format!("Programme : {exe}\n\n{listed}");
     if !one_box::confirmed(&ask(&format!("Les arguments de {}", label(name)), &text)) {
         return Ok(false);
     }
@@ -184,8 +193,11 @@ pub fn confirm_args(
     Ok(true)
 }
 
-/** The field's address, as `host:port` on the loopback (`loopback.rs`); refused, as typed, when it is not. */
+/** The field's address, as `host:port` on the loopback (`loopback.rs`); refused, as typed, when it is not; empty, said. */
 fn probed(url: &str) -> Result<String, String> {
+    if url.trim().is_empty() {
+        return Err("Adresse vide.".to_string());
+    }
     crate::loopback::addr(url).ok_or_else(|| {
         format!("Adresse refusée : {url} (127.0.0.1, localhost ou [::1] seulement).")
     })
@@ -543,16 +555,29 @@ mod tests {
         assert!(programs.0.lock().unwrap().is_empty());
     }
 
-    /// Addresses the field may hold that are not the loopback, or not an address at all.
-    const REFUSED: [&str; 7] = [
+    /// Addresses the field may hold that are not the loopback, or not an address at all; the empty one has its own.
+    const REFUSED: [&str; 6] = [
         "http://192.0.2.1:8080",
         "http://example.com:80",
         "http://127.0.0.1@example.com:80",
         "127.0.0.1:9",
         "http://localhost:9/inference",
-        "",
         "pas une adresse",
     ];
+
+    #[test]
+    fn an_empty_address_says_so() {
+        let programs = Programs::default();
+        let root = crate::net_scope::TempRoot(dir("vide"));
+        let log = root.0.join("rvc.log");
+        for url in ["", "   "] {
+            let refused = state(&programs, "rvc", url).unwrap_err();
+            assert_eq!(refused, "Adresse vide.", "{url:?}");
+            let err = start(&programs, "rvc", Some("C:\\x.exe"), &[], url, &log).unwrap_err();
+            assert_eq!(err, "Adresse vide.", "{url:?}");
+        }
+        assert!(!log.exists());
+    }
 
     fn is_refusal(err: &str, url: &str) -> bool {
         err.starts_with("Adresse refusée : ")
@@ -856,7 +881,13 @@ mod tests {
             let args = v(&["--modèle", "C:\\Mes modèles\\voix d’été.bin"]);
             let yes = MessageDialogResult::Custom("Confirmer".into());
             assert_eq!(run(&s, &one, "rvc", &args, yes, &seen), Ok(true));
-            assert_eq!(seen.borrow()[0].1.lines().collect::<Vec<_>>(), args);
+            assert_eq!(
+                seen.borrow()[0].1,
+                format!(
+                    "{}1. «--modèle»\n2. «C:\\Mes modèles\\voix d’été.bin»",
+                    head(&s)
+                )
+            );
             assert_eq!(read_arguments(&s.args)["rvc"], args);
         }
 
@@ -903,6 +934,11 @@ mod tests {
             assert_eq!(read_arguments(&s.args)["rvc"], v(&["-p", "1"]));
         }
 
+        /// What the box says above the arguments: the exe kept, then an empty line.
+        fn head(s: &Setup) -> String {
+            format!("Programme : {}\n\n", s.exe.display())
+        }
+
         #[test]
         fn the_box_is_titled_with_the_program_and_lists_one_argument_per_line() {
             let s = setup("args-boite", true);
@@ -912,7 +948,13 @@ mod tests {
             let seen = seen.borrow();
             assert_eq!(seen.len(), 1);
             assert_eq!(seen[0].0, "Les arguments de RVC");
-            assert_eq!(seen[0].1.lines().collect::<Vec<_>>(), args);
+            assert_eq!(
+                seen[0].1,
+                format!(
+                    "{}1. «-m»\n2. «models\\ggml small.bin»\n3. «--port»\n4. «8080»",
+                    head(&s)
+                )
+            );
             save_entry(&s.paths, "whisper-server", Some(&s.exe)).unwrap();
             let again = Seen::default();
             let _ = run(
@@ -924,6 +966,64 @@ mod tests {
                 &again,
             );
             assert_eq!(again.borrow()[0].0, "Les arguments de whisper-server");
+        }
+
+        #[test]
+        fn no_arguments_and_an_argument_that_says_so_are_two_boxes() {
+            let s = setup("args-aucun", true);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let _ = run(&s, &one, "rvc", &[], MessageDialogResult::Cancel, &seen);
+            let says = v(&["Aucun argument."]);
+            let _ = run(&s, &one, "rvc", &says, MessageDialogResult::Cancel, &seen);
+            let seen = seen.borrow();
+            assert_eq!(seen[0].1, format!("{}Aucun argument.", head(&s)));
+            assert_eq!(seen[1].1, format!("{}1. «Aucun argument.»", head(&s)));
+        }
+
+        #[test]
+        fn an_empty_argument_and_edge_spaces_show_between_the_marks() {
+            let s = setup("args-bords", true);
+            let (one, seen) = (OneBox::default(), Seen::default());
+            let args = v(&["", " a ", "b"]);
+            let _ = run(&s, &one, "rvc", &args, MessageDialogResult::Cancel, &seen);
+            assert_eq!(
+                seen.borrow()[0].1,
+                format!("{}1. «»\n2. « a »\n3. «b»", head(&s))
+            );
+        }
+
+        #[test]
+        fn the_file_is_read_again_after_the_box() {
+            // What the box lets happen meanwhile: another name written. A lock held over the box would hang here.
+            let s = setup("args-relu", true);
+            let one = OneBox::default();
+            let got = confirm_args(&s.paths, &s.args, &one, "rvc", &v(&["-p", "1"]), |_, _| {
+                save_arguments(&s.args, "whisper-server", Some(&v(&["-m", "x"]))).unwrap();
+                MessageDialogResult::Custom("Confirmer".into())
+            });
+            assert_eq!(got, Ok(true));
+            let read = read_arguments(&s.args);
+            assert_eq!(read["rvc"], v(&["-p", "1"]));
+            assert_eq!(read["whisper-server"], v(&["-m", "x"]), "lost by the write");
+        }
+
+        #[test]
+        fn a_write_waits_for_the_files_lock() {
+            let s = setup("args-verrou", false);
+            std::thread::scope(|t| {
+                // Inside the scope: a failed assert drops it, and the writers end.
+                let held = hold(&FILES);
+                let paths = t.spawn(|| save_entry(&s.paths, "rvc", Some(&s.exe)));
+                let args = t.spawn(|| save_arguments(&s.args, "rvc", Some(&v(&["-p"]))));
+                std::thread::sleep(Duration::from_millis(200));
+                assert!(!s.paths.exists(), "programmes.json written under the lock");
+                assert!(!s.args.exists(), "arguments.json written under the lock");
+                drop(held);
+                paths.join().unwrap().unwrap();
+                args.join().unwrap().unwrap();
+            });
+            assert_eq!(read_arguments(&s.args)["rvc"], v(&["-p"]));
+            assert_eq!(read_paths(&s.paths)["rvc"], s.exe.display().to_string());
         }
 
         #[test]
