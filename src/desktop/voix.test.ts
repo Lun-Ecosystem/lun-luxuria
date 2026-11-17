@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Session } from '../session.svelte.ts';
 import { DEFAULTS, type Settings, type VoiceService } from '../settings.ts';
 import {
-  addrOf,
   argsOf,
   changes,
   checkVoice,
@@ -28,11 +27,12 @@ beforeEach(() => {
 const READY: VoiceService = {
   ...DEFAULTS.voice.service,
   launch: true,
-  folder: 'D:\\voix',
   piper: 'D:\\v.onnx',
 };
+/** The service's folder is the window's: kept by it (`session.folders.voix`), never a setting of the page. */
 const withService = (launch: boolean, folder = 'D:\\voix', over: Partial<VoiceService> = {}) => {
   const session = new Session();
+  if (folder) session.folders.voix = folder;
   session.saveSettings({
     ...session.settings,
     voice: { ...session.settings.voice, service: { ...READY, launch, folder, ...over } },
@@ -76,14 +76,14 @@ describe('the fields of the service', () => {
   });
 
   it('say what is missing, first the folder', () => {
-    expect(missing(READY)).toBeNull();
-    expect(missing({ ...READY, folder: '' })).toMatch(/dossier du service/);
-    expect(missing({ ...READY, piper: '' })).toMatch(/fichier de la voix/);
-    expect(missing({ ...READY, piper: '', args: ['--tts', 'kokoro:a:b'] })).toBeNull();
-    expect(missing({ ...READY, stt: { ...READY.stt, kind: 'whisper-server', url: '' } })).toMatch(
-      /whisper-server/,
-    );
-    expect(missing({ ...READY, rvc: { ...READY.rvc, on: true, url: ' ' } })).toMatch(/RVC/);
+    const lacking = (over: Partial<VoiceService>, folder = 'D:\\voix') =>
+      missing(withService(true, folder, over));
+    expect(lacking({})).toBeNull();
+    expect(lacking({}, '')).toMatch(/dossier du service/);
+    expect(lacking({ piper: '' })).toMatch(/fichier de la voix/);
+    expect(lacking({ piper: '', args: ['--tts', 'kokoro:a:b'] })).toBeNull();
+    expect(lacking({ stt: { ...READY.stt, kind: 'whisper-server', url: '' } })).toMatch(/whisper-server/);
+    expect(lacking({ rvc: { ...READY.rvc, on: true, url: ' ' } })).toMatch(/RVC/);
   });
 
   it('the state of its programs: read from the service, nothing when it does not answer', async () => {
@@ -147,8 +147,8 @@ describe('startVoice', () => {
     const call = vi.fn(async () => 'C:\\logs\\voix.log');
     const answers = [false, false, false, true];
     await startVoice(session, async () => answers.shift()!, call, noSleep, noBricks);
+    // The window keeps the folder: the page sends the arguments alone.
     expect(call).toHaveBeenCalledWith('voice_start', {
-      dir: 'D:\\voix',
       args: ['--stt', 'faster:small', '--tts', 'piper:D:\\v.onnx'],
     });
     expect(session.voiceSaid).toMatch(/répond/);
@@ -158,7 +158,9 @@ describe('startVoice', () => {
   it('keeps the arguments the app started it with', async () => {
     const session = withService(true);
     const args = ['--stt', 'faster:small', '--tts', 'piper:D:\\v.onnx'];
-    const call = vi.fn(async (cmd: string) => (cmd === 'voice_running' ? args : 'C:\\logs\\voix.log'));
+    const call = vi.fn(async (cmd: string) =>
+      cmd === 'voice_running' ? { folder: 'D:\\voix', args } : 'C:\\logs\\voix.log',
+    );
     const answers = [false, true];
     await startVoice(session, async () => answers.shift()!, call, noSleep, noBricks);
     expect(session.voiceArgs).toEqual(args);
@@ -182,6 +184,102 @@ describe('startVoice', () => {
       noSleep,
     );
     expect(silent.voiceSaid).toMatch(/Journal : C:\\logs\\voix\.log/);
+  });
+});
+
+describe('the service’s folder, kept by the window', () => {
+  const FORMER = 'D:\\ancien\\voix';
+  const NOTICE = `Le dossier du service se choisit de nouveau, dans les réglages avancés de la voix : ${FORMER}.`;
+  const former = (session: Session) =>
+    session.saveSettings({
+      ...session.settings,
+      voice: {
+        ...session.settings.voice,
+        service: { ...session.settings.voice.service, formerFolder: FORMER },
+      },
+    } as Settings);
+
+  it('no setting of the page names a folder to send', () => {
+    expect(DEFAULTS.voice.service).not.toHaveProperty('folder');
+    expect(DEFAULTS.voice.service.formerFolder).toBe('');
+  });
+
+  it('voice_start and voice_restart get { args } alone, never a dir or any folder', async () => {
+    const session = withService(true);
+    former(session);
+    const call = vi.fn<(cmd: string, a?: Record<string, unknown>) => Promise<unknown>>(async (cmd) =>
+      cmd === 'voice_running'
+        ? { folder: 'D:\\voix', args: serviceArgs(session.settings.voice.service) }
+        : 'C:\\logs\\voix.log',
+    );
+    await startVoice(session, async () => false, call, noSleep, noBricks);
+    await restartVoice(session, async () => true, call, noSleep, noBricks);
+    const sent = call.mock.calls.filter(([c]) => c === 'voice_start' || c === 'voice_restart');
+    expect(sent.map(([c]) => c)).toEqual(['voice_start', 'voice_restart']);
+    for (const [, args] of sent) expect(Object.keys(args as object)).toEqual(['args']);
+    expect(JSON.stringify(call.mock.calls)).not.toContain('ancien');
+  });
+
+  it('no folder kept: nothing starts, and the page says what is missing', async () => {
+    const session = withService(true, '');
+    const call = vi.fn();
+    await startVoice(session, async () => false, call, noSleep, noBricks);
+    expect(call).not.toHaveBeenCalledWith('voice_start', expect.anything());
+    expect(session.voiceSaid).toMatch(/Il manque le dossier du service/);
+  });
+
+  it('missing: with an old folder waiting, the notice of the plan, word for word', () => {
+    const session = withService(true, '');
+    former(session);
+    expect(missing(session)).toBe(NOTICE);
+  });
+
+  it('missing: the old folder says nothing once the window keeps one', () => {
+    const session = withService(true);
+    former(session);
+    expect(missing(session)).toBeNull();
+  });
+
+  it('the notice goes to voiceSaid at the start, and nothing is started or sent', async () => {
+    const session = withService(true, '');
+    former(session);
+    const call = vi.fn();
+    await startVoice(session, async () => false, call, noSleep, noBricks);
+    expect(session.voiceSaid).toContain(NOTICE);
+    expect(call).not.toHaveBeenCalledWith('voice_start', expect.anything());
+  });
+
+  it('the same notice on a restart, and nothing is restarted', async () => {
+    const session = withService(true, '');
+    former(session);
+    const call = vi.fn();
+    await restartVoice(session, async () => true, call, noSleep, noBricks);
+    expect(session.voiceSaid).toBe(NOTICE);
+    expect(call).not.toHaveBeenCalledWith('voice_restart', expect.anything());
+  });
+
+  it('a folder changed since the service started waits for a restart, as arguments do', async () => {
+    const session = withService(true);
+    const args = serviceArgs(session.settings.voice.service);
+    const call = vi.fn(async (cmd: string) =>
+      cmd === 'voice_running' ? { folder: 'D:\\voix', args } : 'C:\\logs\\voix.log',
+    );
+    const answers = [false, true];
+    await startVoice(session, async () => answers.shift() ?? true, call, noSleep, noBricks);
+    expect(session.voiceStatus).toBe('up');
+    expect(changes(session)).toBe('none');
+    session.folders.voix = 'D:\\autre\\voix';
+    expect(changes(session)).toBe('restart');
+    session.folders.voix = 'D:\\voix';
+    expect(changes(session)).toBe('none');
+  });
+
+  it('a running folder the window did not say is not a change', () => {
+    const session = withService(true);
+    session.voiceStatus = 'up';
+    session.voiceArgs = serviceArgs(session.settings.voice.service);
+    session.folders.voix = 'D:\\autre\\voix';
+    expect(changes(session)).toBe('none');
   });
 });
 
@@ -236,10 +334,12 @@ describe('restartVoice', () => {
   it('restarts with the fields, then waits for its answer and says so', async () => {
     const session = withService(true);
     const args = serviceArgs(session.settings.voice.service);
-    const call = vi.fn(async (cmd: string) => (cmd === 'voice_running' ? args : 'C:\\logs\\voix.log'));
+    const call = vi.fn(async (cmd: string) =>
+      cmd === 'voice_running' ? { folder: 'D:\\voix', args } : 'C:\\logs\\voix.log',
+    );
     const answers = [false, true];
     await restartVoice(session, async () => answers.shift()!, call, noSleep, noBricks);
-    expect(call).toHaveBeenCalledWith('voice_restart', { dir: 'D:\\voix', args });
+    expect(call).toHaveBeenCalledWith('voice_restart', { args });
     expect(session.voiceStatus).toBe('up');
     expect(session.voiceArgs).toEqual(args);
   });
@@ -263,31 +363,38 @@ describe('whisper-server and RVC', () => {
       ...over,
     });
     session.programPaths = { ...PATHS };
+    // Confirmed with the window, as the draft is: the arguments of the field.
+    session.programArgs = { 'whisper-server': [...PROGRAM.args], rvc: [...PROGRAM.args] };
     return session;
   };
   const started = (log = 'C:\\logs\\rvc.log') => vi.fn(async () => ({ outcome: 'started', log }));
+  /**
+   * The follow's pauses, counted; past `most`, the pause throws, out of the follow: a program left followed fails
+   * the test instead of hanging it. A bound in `call` would not: the follow reads its error as a refusal.
+   */
+  const turns = (most = 5) => {
+    const at = { turn: 0 };
+    const sleep = async () => {
+      if (++at.turn > most) throw new Error(`still followed after ${most} turns`);
+    };
+    return { at, sleep };
+  };
 
-  it('the address to probe, with its default port', () => {
-    expect(addrOf('http://127.0.0.1:8080')).toBe('127.0.0.1:8080');
-    expect(addrOf('http://localhost')).toBe('localhost:80');
-    expect(addrOf('https://[::1]/x')).toBe('[::1]:443');
-    expect(addrOf('pas une adresse')).toBeNull();
-  });
-
-  it('the page never names the program: only its arguments and its address go to the window', async () => {
+  it('the page never names the program nor sends its arguments: only its name and the address of its field go to the window', async () => {
     const session = both();
     const call = started();
     expect(await startPrograms(session, call)).toBe(true);
     expect(call).toHaveBeenCalledWith('program_start', {
       name: 'whisper-server',
-      args: ['-m', 'small.bin'],
-      addr: '127.0.0.1:8080',
+      url: 'http://127.0.0.1:8080',
     });
-    expect(call).toHaveBeenCalledWith(
-      'program_start',
-      expect.objectContaining({ name: 'rvc', addr: 'localhost:18888' }),
-    );
+    expect(call).toHaveBeenCalledWith('program_start', { name: 'rvc', url: 'http://localhost:18888' });
+    for (const [cmd, args] of call.mock.calls as unknown as [string, object][]) {
+      if (cmd === 'program_start') expect(Object.keys(args)).not.toContain('args');
+    }
+    expect((call.mock.calls as unknown[][]).map(([cmd]) => cmd)).not.toContain('program_args');
     expect(JSON.stringify(call.mock.calls)).not.toContain('.exe');
+    expect(JSON.stringify(call.mock.calls)).not.toContain('addr');
     expect(session.programs['whisper-server']).toMatchObject({
       said: 'Lancé par l’appli : il se charge.',
       starting: true,
@@ -347,9 +454,123 @@ describe('whisper-server and RVC', () => {
     expect(session.programPaths.rvc).toBeUndefined();
     await readProgramPaths(
       session,
-      vi.fn(async () => ({ ...PATHS })),
+      vi.fn(async (cmd: string) => (cmd === 'program_paths' ? { ...PATHS } : {})),
     );
     expect(session.programPaths).toEqual(PATHS);
+  });
+
+  describe('the arguments the window keeps as confirmed', () => {
+    const CONFIRMED = { 'whisper-server': ['-m', 'small.bin'], rvc: [] };
+    const window_ = (over: Record<string, unknown> = {}) =>
+      vi.fn(async (cmd: string) => {
+        const answer = over[cmd];
+        if (answer instanceof Error) throw answer.message;
+        return cmd in over ? answer : cmd === 'program_arguments' ? { ...CONFIRMED } : null;
+      });
+
+    it('read with the paths: a missing key is never confirmed, an empty list is confirmed empty', async () => {
+      const session = both();
+      session.programArgs = {};
+      const call = window_({ program_paths: { ...PATHS } });
+      await readProgramPaths(session, call);
+      expect(call).toHaveBeenCalledWith('program_arguments', {});
+      expect(session.programArgs).toEqual(CONFIRMED);
+      expect(session.programArgs.rvc).toEqual([]);
+      const never = new Session();
+      await readProgramPaths(never, window_({ program_arguments: { rvc: [] } }));
+      expect(never.programArgs['whisper-server']).toBeUndefined();
+      expect(never.programArgs.rvc).toEqual([]);
+    });
+
+    it('an answer that is no object, or a refusal, leaves nothing confirmed', async () => {
+      for (const answer of [null, 'C:/logs/voix.log', new Error('Lecture refusée.')]) {
+        const session = both();
+        await readProgramPaths(session, window_({ program_arguments: answer }));
+        expect(session.programArgs).toEqual({});
+      }
+    });
+
+    it('« Oublier » reads them again: the window drops the arguments with the exe', async () => {
+      const session = both();
+      const call = window_({
+        program_forget: null,
+        program_arguments: { 'whisper-server': ['-m', 'small.bin'] },
+      });
+      await forgetProgram(session, 'rvc', call);
+      expect(call).toHaveBeenCalledWith('program_forget', { name: 'rvc' });
+      expect(call).toHaveBeenCalledWith('program_arguments', {});
+      expect(session.programArgs).toEqual({ 'whisper-server': ['-m', 'small.bin'] });
+    });
+
+    it('« Oublier » refused: nothing is read again, the words come back, and the program’s state is left as it was', async () => {
+      const session = both();
+      const call = window_({ program_forget: new Error('Oubli refusé.') });
+      expect(await forgetProgram(session, 'rvc', call)).toBe('Oubli refusé.');
+      expect(call.mock.calls.map(([cmd]) => cmd)).not.toContain('program_arguments');
+      expect(session.programs.rvc).toBeUndefined();
+      expect(session.programArgs).toEqual({
+        'whisper-server': ['-m', 'small.bin'],
+        rvc: ['-m', 'small.bin'],
+      });
+    });
+
+    it('« Choisir… » reads them again: another exe for a name drops its confirmation, on the window’s side', async () => {
+      const session = both();
+      const call = window_({
+        program_pick: 'D:\\other\\rvc-server.exe',
+        program_arguments: { 'whisper-server': ['-m', 'small.bin'] },
+      });
+      await pickProgram(session, 'rvc', call);
+      expect(call).toHaveBeenCalledWith('program_pick', { name: 'rvc' });
+      expect(call).toHaveBeenCalledWith('program_arguments', {});
+      expect(session.programArgs.rvc).toBeUndefined();
+    });
+
+    it('« Choisir… » refused: nothing is read again, the words come back, and the program’s state is left as it was', async () => {
+      const session = both();
+      const call = window_({ program_pick: new Error('Une boîte est déjà ouverte.') });
+      expect(await pickProgram(session, 'rvc', call)).toBe('Une boîte est déjà ouverte.');
+      expect(call.mock.calls.map(([cmd]) => cmd)).not.toContain('program_arguments');
+      expect(session.programs.rvc).toBeUndefined();
+      expect(session.programArgs.rvc).toEqual(['-m', 'small.bin']);
+    });
+  });
+
+  describe('at start, arguments never confirmed', () => {
+    const TO_CONFIRM = 'Ses arguments sont à confirmer, dans les réglages avancés de la voix.';
+
+    it('the program does not start, program_args is never called, and the screen says what to do', async () => {
+      const session = both();
+      session.programArgs = {};
+      const call = started();
+      expect(await startPrograms(session, call)).toBe(false);
+      expect(call).not.toHaveBeenCalled();
+      expect(session.programs['whisper-server']).toEqual({ said: TO_CONFIRM });
+      expect(session.programs.rvc).toEqual({ said: TO_CONFIRM });
+    });
+
+    it('confirmed empty is confirmed: it starts; the other, never confirmed, stays down', async () => {
+      const session = both();
+      session.programArgs = { 'whisper-server': [] };
+      const call = started();
+      expect(await startPrograms(session, call)).toBe(true);
+      expect(call.mock.calls).toEqual([
+        ['program_start', { name: 'whisper-server', url: 'http://127.0.0.1:8080' }],
+      ]);
+      expect(session.programs.rvc).toEqual({ said: TO_CONFIRM });
+      expect(session.programs['whisper-server']).toMatchObject({ starting: true });
+    });
+
+    it('a draft that differs from the confirmed arguments does not hold the start: the window runs the confirmed ones', async () => {
+      const session = both();
+      session.settings.voice.service.stt.program.args = ['--other'];
+      const call = started();
+      await startPrograms(session, call);
+      expect(call).toHaveBeenCalledWith('program_start', {
+        name: 'whisper-server',
+        url: 'http://127.0.0.1:8080',
+      });
+    });
   });
 
   it('followed until it answers, ends, or the wait runs out, and each is said with its log', async () => {
@@ -398,6 +619,26 @@ describe('whisper-server and RVC', () => {
     expect(session.programs['whisper-server']).toMatchObject({ said: 'whisper-server répond.', ok: true });
   });
 
+  it('« Choisir… » and « Oublier » refused while it starts are no state of it: the follow goes on, until « répond. »', async () => {
+    const session = both();
+    await launchProgram(session, 'whisper-server', started('C:\\logs\\whisper-server.log'));
+    const refused = vi.fn(async () => Promise.reject('Une boîte est déjà ouverte.'));
+    let naps = 0;
+    const sleep = async () => {
+      if (naps++ === 0) await pickProgram(session, 'whisper-server', refused);
+      else await forgetProgram(session, 'whisper-server', refused);
+    };
+    const states = ['starting', 'answering'];
+    await followPrograms(
+      session,
+      vi.fn(async () => states.shift()),
+      sleep,
+      noBricks,
+    );
+    expect(refused).toHaveBeenCalledTimes(2);
+    expect(session.programs['whisper-server']).toMatchObject({ said: 'whisper-server répond.', ok: true });
+  });
+
   it('switched off while it loads: followed until it answers all the same', async () => {
     const session = both();
     await launchProgram(session, 'rvc', started());
@@ -409,7 +650,69 @@ describe('whisper-server and RVC', () => {
       states.shift(),
     );
     await followPrograms(session, call, sleep, noBricks);
-    expect(call).toHaveBeenCalledWith('program_state', { name: 'rvc', addr: 'localhost:18888' });
+    expect(call).toHaveBeenCalledWith('program_state', { name: 'rvc', url: 'http://localhost:18888' });
+    expect(session.programs.rvc).toMatchObject({ said: 'RVC répond.', ok: true });
+  });
+
+  it('the address is the field as typed, empty or not: Rust refuses it and its words are shown', async () => {
+    const refusal = (u: string) => `Adresse refusée : ${u} (127.0.0.1, localhost ou [::1] seulement).`;
+    for (const url of ['', 'pas une adresse', 'http://example.com:80']) {
+      const session = both({ rvc: { ...READY.rvc, on: true, url, program: PROGRAM } });
+      const call = vi.fn(async () => Promise.reject(refusal(url)));
+      expect(await launchProgram(session, 'rvc', call)).toBe(false);
+      expect(call).toHaveBeenCalledWith('program_start', { name: 'rvc', url });
+      expect(session.programs.rvc).toEqual({ said: refusal(url) });
+    }
+  });
+
+  it('a refusal of program_state stops that program with Rust’s words, the other goes on in the same turn', async () => {
+    const session = both();
+    await launchProgram(session, 'whisper-server', started('C:\\logs\\whisper-server.log'));
+    await launchProgram(session, 'rvc', started('C:\\logs\\rvc.log'));
+    const refusal = 'Adresse refusée : http://127.0.0.1:8080 (127.0.0.1, localhost ou [::1] seulement).';
+    const states = ['starting', 'answering'];
+    const { at, sleep } = turns();
+    const probed: [unknown, number][] = [];
+    const call = vi.fn(async (_cmd: string, a?: Record<string, unknown>) => {
+      probed.push([a?.name, at.turn]);
+      if (a?.name === 'whisper-server') return Promise.reject(refusal);
+      return states.shift();
+    });
+    await followPrograms(session, call, sleep, noBricks);
+    expect(session.programs['whisper-server']?.said).toBe(refusal);
+    expect(session.programs['whisper-server']?.starting).toBeUndefined();
+    expect(session.programs['whisper-server']?.ok).toBeUndefined();
+    expect(session.programs.rvc).toMatchObject({ said: 'RVC répond.', ok: true });
+    expect(call).toHaveBeenCalledWith('program_state', { name: 'rvc', url: 'http://localhost:18888' });
+    // RVC right after the refusal, in the same turn; the refused one never again.
+    expect(probed).toEqual([
+      ['whisper-server', 1],
+      ['rvc', 1],
+      ['rvc', 2],
+    ]);
+    expect(JSON.stringify(call.mock.calls)).not.toContain('addr');
+  });
+
+  it('the address probed is the one it was launched with, whatever the field says meanwhile', async () => {
+    const session = both();
+    await launchProgram(session, 'rvc', started());
+    const { sleep } = turns();
+    // Saved at each key: an address half typed, which the window would refuse.
+    const typing = async () => {
+      await sleep();
+      session.settings.voice.service.rvc.url = 'http://127.0.0.1:';
+    };
+    const states = ['starting', 'answering'];
+    const call = vi.fn(async (_cmd: string, a?: Record<string, unknown>) =>
+      a?.url === 'http://localhost:18888'
+        ? states.shift()
+        : Promise.reject(`Adresse refusée : ${String(a?.url)}`),
+    );
+    await followPrograms(session, call, typing, noBricks);
+    expect(call.mock.calls).toEqual([
+      ['program_state', { name: 'rvc', url: 'http://localhost:18888' }],
+      ['program_state', { name: 'rvc', url: 'http://localhost:18888' }],
+    ]);
     expect(session.programs.rvc).toMatchObject({ said: 'RVC répond.', ok: true });
   });
 
@@ -433,9 +736,11 @@ describe('startAll', () => {
     const call = vi.fn(async (cmd: string) => {
       order.push(cmd);
       if (cmd === 'program_paths') return { rvc: 'D:/rvc.exe' };
+      if (cmd === 'program_arguments') return { rvc: [] };
+      if (cmd === 'folder_paths') return { corps: 'C:/corps', voix: 'D:/voix' };
       if (cmd === 'program_start') return { outcome: 'started', log: 'C:/logs/rvc.log' };
       if (cmd === 'program_state') return 'answering';
-      if (cmd === 'voice_running') return ['--stt', 'faster:small'];
+      if (cmd === 'voice_running') return { folder: 'D:/voix', args: ['--stt', 'faster:small'] };
       return 'C:/logs/voix.log';
     });
     const answers = [false, true];
@@ -447,7 +752,12 @@ describe('startAll', () => {
       async () => ({ stt: { kind: 'faster' as const, up: true }, rvc: { up: true } }),
     );
     expect(order[0]).toBe('program_paths');
+    expect(order.indexOf('program_arguments')).toBeLessThan(order.indexOf('program_start'));
     expect(order.indexOf('program_start')).toBeLessThan(order.indexOf('voice_start'));
+    // The folders the window keeps are known before the service starts.
+    expect(order).toContain('folder_paths');
+    expect(order.indexOf('folder_paths')).toBeLessThan(order.indexOf('voice_start'));
+    expect(session.folders).toEqual({ corps: 'C:/corps', voix: 'D:/voix' });
     expect(session.programs.rvc?.said).toBe('RVC répond.');
     expect(session.voiceStatus).toBe('up');
   });

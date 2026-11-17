@@ -4,6 +4,7 @@ import { Conversation } from './conversation.ts';
 import type { Brain, LiveEvent, Message, PresenceFlags } from './brain.ts';
 import { CoreClient } from './core.ts';
 import type { BodyView } from './desktop/corps.svelte.ts';
+import type { FolderName } from './desktop/dossiers.ts';
 import type { Bricks, ProgramName, ProgramState } from './desktop/voix.ts';
 import { inWindow, pageNet } from './desktop/net.ts';
 import { LocalBrain } from './local.ts';
@@ -114,10 +115,23 @@ export class Session {
   bricks = $state<Bricks | null>(null);
   /** The arguments of the voice service the window started; null: not started here, or not known. */
   voiceArgs = $state<string[] | null>(null);
+  /** The folder the window started it from; null: not started here, or not known. */
+  voiceFolder = $state<string | null>(null);
   /** whisper-server and RVC as the window last launched or followed them. */
   programs = $state<Partial<Record<ProgramName, ProgramState>>>({});
   /** The `.exe` the person picked for each, as the window keeps it: shown, never sent back. */
   programPaths = $state<Partial<Record<ProgramName, string>>>({});
+  /** The arguments the person confirmed for each, as the window keeps them: a name missing was never confirmed. */
+  programArgs = $state<Partial<Record<ProgramName, string[]>>>({});
+  /** The folders the person chose in the system's dialog, as the window keeps them: shown, never sent back. */
+  folders = $state<Partial<Record<FolderName, string>>>({});
+  /**
+   * The origins off this computer the person confirmed, as the window keeps them: Rust checks each request.
+   * Null until the window has answered: nothing is said blocked, nor confirmed, before.
+   */
+  hosts = $state<string[] | null>(null);
+  /** Why the window could not say which it keeps; the list is then none, on the closed side. */
+  hostsSaid = $state('');
   /** The action on the voice service under way, whatever screen started it: one at a time. */
   voiceBusy = $state<'check' | 'restart' | null>(null);
   /** One follow of the programs being launched, at most. */

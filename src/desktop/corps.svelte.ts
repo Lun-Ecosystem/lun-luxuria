@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import { untrack } from 'svelte';
 import type { Session } from '../session.svelte.ts';
 
 /** The thumbnail's framing of the face: a zoom, and the point kept in view, in percent of the image. */
@@ -64,20 +63,18 @@ export function readBodyFile(text: string): BodyFile | string {
 export type Call = (command: string, args: Record<string, unknown>) => Promise<unknown>;
 
 /**
- * The body from its folder. Anything missing, unreadable or refused gives the breath and says why; a missing
- * talking image only keeps the mouth still.
+ * The body from the folder the window keeps: the page never names it. Anything missing, unreadable or refused
+ * (no folder chosen included) gives the breath and says why; a missing talking image only keeps the mouth still.
  */
 export async function loadBody(
-  folder: string,
   call: Call = invoke,
   toUrl: (bytes: ArrayBuffer) => string = (b) => URL.createObjectURL(new Blob([b])),
 ): Promise<{ view: BodyView; said: string }> {
-  if (!folder.trim()) return { view: BREATH, said: 'Aucun dossier : le souffle.' };
   const reason = (err: unknown) =>
     typeof err === 'string' ? err : err instanceof Error ? err.message : String(err);
   let file: BodyFile | string;
   try {
-    file = readBodyFile((await call('body_config', { folder })) as string);
+    file = readBodyFile((await call('body_config', {})) as string);
   } catch (err) {
     return { view: BREATH, said: `${reason(err)} Le souffle en attendant.` };
   }
@@ -85,7 +82,7 @@ export async function loadBody(
   if (file.niveau === 'souffle') return { view: BREATH, said: 'Le souffle, comme le dit corps.json.' };
   let rest: string;
   try {
-    rest = toUrl((await call('body_image', { folder, name: file.repos })) as ArrayBuffer);
+    rest = toUrl((await call('body_image', { name: file.repos })) as ArrayBuffer);
   } catch (err) {
     return { view: BREATH, said: `${reason(err)} Le souffle en attendant.` };
   }
@@ -93,7 +90,7 @@ export async function loadBody(
   let said = 'Les images du dossier.';
   if (file.parole) {
     try {
-      talking = toUrl((await call('body_image', { folder, name: file.parole })) as ArrayBuffer);
+      talking = toUrl((await call('body_image', { name: file.parole })) as ArrayBuffer);
     } catch (err) {
       said = `${reason(err)} La bouche reste fermée.`;
     }
@@ -104,7 +101,7 @@ export async function loadBody(
 /** Reads the folder again, and lets the previous images go. */
 export async function reloadBody(session: Session, load = loadBody): Promise<void> {
   const mine = ++readings;
-  const { view, said } = await load(session.settings.body.folder);
+  const { view, said } = await load();
   // Two readings crossed (a double click on « Relire »): only the last one shows, the other lets its images go.
   const old = mine === readings ? session.bodyView : view;
   if (mine === readings) {
@@ -115,13 +112,7 @@ export async function reloadBody(session: Session, load = loadBody): Promise<voi
 }
 let readings = 0;
 
-/** In the window, the folder decides the body: read when the window opens and when the folder changes. */
+/** In the window, the body is read when it opens; then again after a folder chosen or forgotten, or « Relire ». */
 export function bodyFollows(session: Session): void {
-  // Saving any setting replaces the whole object: the derived value stops what did not change.
-  const folder = $derived(session.settings.body.folder);
-  $effect(() => {
-    void folder;
-    // Only the folder counts: the reading itself touches the body it replaces, which must not loop back here.
-    untrack(() => void reloadBody(session));
-  });
+  void reloadBody(session);
 }
