@@ -18,6 +18,8 @@ export default {
   nom: 'toux-verdict-tardif',
   source: "la toux jugée après que la parole d'après a commencé : elle ne reprend pas par-dessus ;",
   apport: 'I8 : un verdict qui tombe dans une phrase commencée ne relâche pas sa voix',
+  // Sans attente : avec elle, la reprise viendrait à 3724, à 20 ms de la tenue, et `debut-oublie` mordrait à peine.
+  reglages: { bargeIn: { resumeMs: 0 } },
   mecanismes: ['ecoute', 'essai', 'transcription', 'filtre', 'suspension', 'coupure', 'serveur', 'voix'],
   personne: [
     { a: 2016, dit: '(toux)', duree: 450, entendu: '', transcriptionMs: 800 },

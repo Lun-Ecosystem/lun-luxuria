@@ -8,6 +8,8 @@ import { Trace } from './trace.ts';
 const tick = async () => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r));
 };
+/** Her voice is back after the default wait (real timers: the tests that use fake ones advance them by it). */
+const resumed = () => new Promise((r) => setTimeout(r, DEFAULTS.bargeIn.resumeMs + 30));
 const AUDIO = new Float32Array(1);
 const CLIP: Clip = { samples: new Float32Array(1), rate: 16000 };
 const message = (id: number): Message => ({
@@ -284,6 +286,7 @@ describe('cutting it off', () => {
       const thinking = t.events.filter((e) => e.type === 'thinking').length;
       what(t);
       await tick();
+      await resumed();
       expect(t.calls).toEqual(['sound stop']);
       expect(t.sounds).toHaveLength(2);
       t.sounds[1]!.end();
@@ -356,6 +359,7 @@ describe('cutting it off', () => {
     aside.advance(20_000);
     aside.convo.onEndpoint(ended);
     await tick();
+    await resumed();
     expect(aside.calls).toEqual(['sound stop']);
     expect(aside.sounds).toHaveLength(2);
 
@@ -419,6 +423,7 @@ describe('cutting it off', () => {
     expect(over.sounds).toHaveLength(1);
     over.convo.onEndpoint(ended);
     await tick();
+    await resumed();
     expect(over.sounds).toHaveLength(2);
     expect(over.calls).toEqual(['sound stop']);
   });
@@ -677,6 +682,7 @@ describe('cutting it off', () => {
     // That sentence was only a noise: now nothing is said, and she goes on.
     t.convo.onEndpoint({ type: 'noise' });
     await tick();
+    await resumed();
     expect(t.sounds).toHaveLength(2);
   });
 
@@ -910,6 +916,213 @@ describe('cutting it off', () => {
     t.convo.silence();
     await tick();
     expect(t.calls).toContain('cut 50 "Une"');
+  });
+
+  describe('the wait before she resumes her voice', () => {
+    // A false clock: `tick` would wait on it, `flush` lets what is due happen, `later` moves it.
+    beforeEach(() => void vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+    afterEach(() => void vi.useRealTimers());
+    const flush = () => vi.advanceTimersByTimeAsync(0);
+    const later = (ms: number) => vi.advanceTimersByTimeAsync(ms);
+    const WAIT = 300;
+    /** The wait set on its own: `NO_TRY` for the sentences, `resumeMs` for her. */
+    const waits = (resumeMs = WAIT) => ({ ...NO_TRY, bargeIn: { ...DEFAULTS.bargeIn, resumeMs } });
+    const LONG = 'Une phrase assez longue pour être coupée.';
+    /** She is in the middle of a long reply, and a voice holds over hers. */
+    async function silenced(...args: Parameters<typeof setup>) {
+      const t = setup(...args);
+      t.say(50, LONG);
+      t.say(50, 'La suite.');
+      await flush();
+      t.convo.onEndpoint({ type: 'held' });
+      await flush();
+      expect(t.calls).toEqual(['sound stop']);
+      expect(t.sounds).toHaveLength(1);
+      return t;
+    }
+
+    it('the settings of the tests below are the real ones: the default wait is 300 ms', async () => {
+      const t = await silenced(NO_TRY);
+      t.convo.onEndpoint({ type: 'noise' });
+      await later(WAIT - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+    });
+
+    it('after a sound that was nothing she resumes resumeMs later; a start in that wait keeps her silent', async () => {
+      const t = await silenced(waits());
+      t.convo.onEndpoint({ type: 'noise' });
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      await later(WAIT - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+
+      // A sentence begins in the wait: no resumption, however long it lasts.
+      const over = await silenced(waits());
+      over.convo.onEndpoint({ type: 'noise' });
+      await later(100);
+      over.convo.onEndpoint({ type: 'start' });
+      await later(5 * WAIT);
+      expect(over.sounds).toHaveLength(1);
+      // It was only a noise: the wait starts over, from now.
+      over.convo.onEndpoint({ type: 'noise' });
+      await later(WAIT - 1);
+      expect(over.sounds).toHaveLength(1);
+      await later(1);
+      expect(over.sounds).toHaveLength(2);
+    });
+
+    it('a noise during the wait starts it again, and there is one timer only', async () => {
+      const t = await silenced(waits());
+      const base = vi.getTimerCount();
+      t.convo.onEndpoint({ type: 'noise' });
+      expect(vi.getTimerCount()).toBe(base + 1);
+      await later(200);
+      t.convo.onEndpoint({ type: 'noise' });
+      expect(vi.getTimerCount()).toBe(base + 1);
+      await later(WAIT - 200 + 1);
+      // The first wait would have ended by now.
+      expect(t.sounds).toHaveLength(1);
+      await later(199 - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+    });
+
+    it('resumeMs 0 resumes at once, as before, and arms nothing', async () => {
+      const t = await silenced(waits(0));
+      const base = vi.getTimerCount();
+      t.convo.onEndpoint({ type: 'noise' });
+      await flush();
+      expect(t.sounds).toHaveLength(2);
+      expect(vi.getTimerCount()).toBe(base);
+    });
+
+    it('the microphone stops: she resumes at once, in the wait too', async () => {
+      const t = await silenced(waits());
+      t.convo.stopListening();
+      await flush();
+      expect(t.sounds).toHaveLength(2);
+
+      const during = await silenced(waits());
+      during.convo.onEndpoint({ type: 'noise' });
+      await later(100);
+      const base = vi.getTimerCount();
+      during.convo.stopListening();
+      await flush();
+      expect(during.sounds).toHaveLength(2);
+      expect(vi.getTimerCount()).toBe(base - 1);
+      await later(WAIT);
+      expect(during.sounds).toHaveLength(2);
+    });
+
+    it('the button during the wait: nothing resumes, and its timer is cut', async () => {
+      const t = await silenced(waits());
+      const base = vi.getTimerCount();
+      t.convo.onEndpoint({ type: 'noise' });
+      expect(vi.getTimerCount()).toBe(base + 1);
+      t.convo.silence();
+      expect(vi.getTimerCount()).toBe(base);
+      await later(5 * WAIT);
+      expect(t.sounds).toHaveLength(1);
+      expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+    });
+
+    it('a sentence for her in the wait: nothing resumes, its timer is cut, a later suspension waits its own time', async () => {
+      const t = await silenced(waits());
+      const base = vi.getTimerCount();
+      t.convo.onEndpoint({ type: 'noise' });
+      expect(vi.getTimerCount()).toBe(base + 1);
+      await later(100);
+      // A word too short to hold her, said in the wait, and for her.
+      t.convo.onEndpoint(end(1000));
+      await flush();
+      expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+      t.say(110, 'Oui ?');
+      await flush();
+      expect(t.sounds).toHaveLength(2);
+      // The first wait would have ended at 300: it was cut with her voice.
+      await later(WAIT);
+      expect(t.sounds).toHaveLength(2);
+      expect(vi.getTimerCount()).toBe(base);
+      // Held over her answer, and nothing after it: she stays silent, however long.
+      t.convo.onEndpoint({ type: 'held' });
+      await later(5 * WAIT);
+    });
+
+    it('a reply held back is let out at once: only her own voice waits', async () => {
+      const t = setup(waits(), 'Bonjour toi');
+      t.convo.onEndpoint(end(1000));
+      await flush();
+      t.convo.onEndpoint({ type: 'held' });
+      t.say(110, 'Je réponds.');
+      await flush();
+      expect(t.sounds).toHaveLength(0);
+      t.convo.onEndpoint({ type: 'noise' });
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      expect(t.trace.events.filter((e) => e.name === 'relachee')).toHaveLength(1);
+      expect(t.calls).toEqual([]);
+    });
+
+    it('the sound that held it back was its own sentence: she still resumes resumeMs after the last verdict, not before, not never', async () => {
+      const v = verdicts();
+      const t = setup(waits(), v.stt);
+      t.say(50, LONG);
+      t.say(50, 'La suite.');
+      await flush();
+      t.convo.onEndpoint({ type: 'held' });
+      // S1 ends, its verdict pending; S2's voice holds S1 back (S1 has no reply yet); S2 ends.
+      t.convo.onEndpoint(end(1000));
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(2000));
+      v.give(1, ASIDE);
+      await flush();
+      await later(2 * WAIT);
+      expect(t.sounds).toHaveLength(1);
+      // S1, held back by S2's voice, is the last verdict: the path of « its own sentence ».
+      v.give(0, ASIDE);
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      await later(WAIT - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+      expect(t.calls).toEqual(['sound stop']);
+    });
+
+    it('a sentence already replaced, judged late while a cough suspended her: she resumes resumeMs after that verdict', async () => {
+      const v = verdicts();
+      const t = setup(waits(), v.stt);
+      // A is slow; B's voice holds it back, then B, for her, replaces it: its reply is 110.
+      t.convo.onEndpoint(end(1000));
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(2000));
+      v.give(1, 'Bonjour toi');
+      await flush();
+      t.say(110, LONG);
+      t.say(110, 'La suite.');
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      // A cough over it, judged nothing: A, still unjudged, keeps her silent.
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(3000));
+      v.give(2, ASIDE);
+      await flush();
+      await later(2 * WAIT);
+      expect(t.sounds).toHaveLength(1);
+      // A, replaced already, is judged for her at last: as if it had asked nothing, and the wait starts now.
+      v.give(0, 'Bonjour toi');
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      await later(WAIT - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+    });
   });
 });
 
@@ -1157,6 +1370,7 @@ describe('nothing waits without end: the guards', () => {
     t.convo.onEndpoint({ type: 'held' });
     t.convo.onEndpoint({ type: 'noise' });
     await flush();
+    await vi.advanceTimersByTimeAsync(DEFAULTS.bargeIn.resumeMs);
     expect(t.sounds).toHaveLength(2);
   });
 

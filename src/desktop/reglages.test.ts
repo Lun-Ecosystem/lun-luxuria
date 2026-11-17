@@ -1457,6 +1457,7 @@ describe('nothing disappears', () => {
       'L’interrompre à la voix',
       'Façon de l’interrompre',
       'Voix tenue avant de l’interrompre',
+      'Attente avant de reprendre',
       'Applis qui prennent le micro',
       'Applis ignorées',
       'Délai de retour',
@@ -1616,6 +1617,27 @@ describe('what reads', () => {
     expect(session.settings.endOfSpeech.silenceMs).toBe(800);
     expect(screen.getByRole('textbox', { name: 'Courte pause' })).toHaveValue('0,16');
     expect(screen.getByText(/Conseillé : -50 dB/)).toBeInTheDocument();
+  });
+
+  it('the wait before she resumes: 0,3 s by default, kept between 0 and 1 s', async () => {
+    const session = opened('ecoute');
+    const wait = screen.getByRole('textbox', { name: 'Attente avant de reprendre' });
+    expect(wait).toHaveValue('0,3');
+    for (const [typed, kept] of [
+      ['0,5', 500],
+      ['0', 0],
+      ['5', 1000],
+      ['-2', 0],
+      ['abc', 0],
+    ] as const) {
+      await fireEvent.change(wait, { target: { value: typed } });
+      expect(session.settings.bargeIn.resumeMs, typed).toBe(kept);
+    }
+    // A value that is not a number keeps the one before.
+    await fireEvent.change(wait, { target: { value: '0,7' } });
+    await fireEvent.change(wait, { target: { value: 'abc' } });
+    expect(session.settings.bargeIn.resumeMs).toBe(700);
+    expect(session.settings.bargeIn.holdMs).toBe(400);
   });
 
   it('every duration in seconds reads with a comma', () => {

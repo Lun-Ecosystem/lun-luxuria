@@ -200,3 +200,16 @@ describe('the body’s folder, which the window keeps now', () => {
     expect(both('C:\\corps')).not.toHaveProperty('folder');
   });
 });
+
+describe('the wait before she resumes her voice', () => {
+  it('is 300 ms by default, also for an older setting that has none', () => {
+    expect(DEFAULTS.bargeIn.resumeMs).toBe(300);
+    const older = readSettings(JSON.stringify({ bargeIn: { on: true, mode: 'soft', holdMs: 500 } }));
+    expect(older.bargeIn).toEqual({ on: true, mode: 'soft', holdMs: 500, resumeMs: 300 });
+  });
+
+  it('keeps a value the person set, 0 included', () => {
+    expect(readSettings(JSON.stringify({ bargeIn: { resumeMs: 0 } })).bargeIn.resumeMs).toBe(0);
+    expect(readSettings(JSON.stringify({ bargeIn: { resumeMs: 800 } })).bargeIn.resumeMs).toBe(800);
+  });
+});
