@@ -80,8 +80,8 @@
   "fragment-refuse": {
     "quoi": "fragment refusé laissé en vie",
     "fichier": "src/conversation.ts",
-    "motif": "    if (attempt.failed) {\n",
-    "par": "    if (attempt.failed && !attempt.failed) {\n",
+    "motif": "    if (attempt.failed !== undefined) this.#told(attempt, attempt.failed);\n",
+    "par": "    if (attempt.failed !== undefined && !attempt.failed) this.#told(attempt, attempt.failed);\n",
     "maillon": "retenue"
   },
   "taire-a-vide": {

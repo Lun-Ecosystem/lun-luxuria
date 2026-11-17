@@ -66,6 +66,9 @@ export const STT_TIMEOUT_MS = 20_000;
 /** From the send to the first sentence of its reply, or its end: past it, nothing will answer. */
 export const REPLY_TIMEOUT_MS = 60_000;
 
+const failure = (what: string, err: unknown) =>
+  `${what} : ${err instanceof Error ? err.message : String(err)}`;
+
 /** A fragment sent before the sentence was over: its words stay silent until it is. */
 interface Attempt {
   /** In the order he said them: a later sentence has a greater one. */
@@ -83,19 +86,14 @@ interface Attempt {
   /** Passed the filter as a fragment: it is for her only once the sentence ends on it. */
   passed?: boolean;
   /**
-   * Its send failed, or its reply did not come in time, and that was said. Before the sentence ended: the end treats
-   * it as a whole sentence whose send failed.
+   * Nothing more will come of its reply (it ended in error, its stream broke, its guard went off): what to tell, once.
+   * Before the sentence ended, its end tells it, as for a whole sentence; withdrawn, it is never told.
    */
-  failed?: boolean;
+  failed?: string;
   /** The guard of what it waits for now: its transcription, then the first sentence of its reply. */
   guard?: ReturnType<typeof setTimeout>;
   /** Its reply did not come in time: whatever comes of it now is thrown away. The message itself stays. */
   late?: boolean;
-  /**
-   * Its reply ended in error, said and written then. The end of its sentence still cuts what it suspended and releases
-   * its reply; the one before is the unheard one again, and nothing thinks.
-   */
-  errored?: boolean;
   /** The speaker talks again before its reply was heard: the reply waits for what that new sentence is. */
   heldBack?: boolean;
   /** That new sentence was for her: its reply is never said. The message itself stays. */
@@ -147,7 +145,7 @@ export class Conversation {
   }
 
   #fail(what: string, err: unknown): void {
-    this.#d.on({ type: 'failed', text: `${what} : ${err instanceof Error ? err.message : String(err)}` });
+    this.#d.on({ type: 'failed', text: failure(what, err) });
   }
 
   /** A turn the brain marked as spoken. */
@@ -503,27 +501,43 @@ export class Conversation {
         this.#onTurn(e, attempt),
       );
     } catch (err) {
-      // Its guard said it already.
-      if (!attempt.late) this.#sendFailed(attempt, err);
+      this.#over(attempt, failure('Sa réponse n’est pas venue', err));
     }
   }
 
-  /** Nothing will answer it: what this sentence suspended, or held back, goes on. */
-  #sendFailed(attempt: Attempt, err: unknown): void {
+  /**
+   * Nothing more will come of its reply: it ended in error, its stream broke, or its guard went off. What came of it is
+   * said, then the line goes on; the failure is told once, and only if its sentence ends on it.
+   */
+  #over(attempt: Attempt, text: string): void {
+    this.#answered(attempt);
+    // Withdrawn, replaced, past its guard, or over already: nobody waits for it, nothing is said of it.
+    if (attempt.dropped || attempt.superseded || attempt.late || attempt.failed !== undefined) return;
+    attempt.failed = text;
+    if (attempt.replyId !== undefined)
+      // Held back, its words would be said over him: they go. No end of speech will come for the others.
+      if (attempt.heldBack) this.#d.speaker.drop(attempt.replyId);
+      else this.#d.speaker.end(attempt.replyId);
+    // A fragment: its sentence may still go on.
+    if (attempt.committed) this.#told(attempt, text);
+  }
+
+  /** Nothing will answer it: as for a sentence that asked nothing, what it suspended, or held back, goes on. */
+  #told(attempt: Attempt, text: string): void {
     this.#d.on({ type: 'thinking', on: false });
-    attempt.failed = true;
-    if (attempt.committed) this.#noAnswer(attempt);
-    this.#fail('Sa réponse n’est pas venue', err);
+    // Not `#noAnswer`: this sentence was for her, the trace keeps its words.
+    this.#write('sans_reponse', this.#ref(attempt), { raison: 'erreur' });
+    this.#unlink(attempt);
+    this.#letGo(attempt);
+    this.#d.on({ type: 'failed', text });
   }
 
   /** The first sentence of its reply did not come in time: the server forgets it, and nothing will answer it. */
   #late(attempt: Attempt): void {
-    this.#unanswered.delete(attempt);
-    attempt.late = true;
     if (attempt.replyId !== undefined) this.#forget(attempt.replyId);
-    // Its send failed already, and said so: its turn only held her voice.
-    if (!attempt.failed)
-      this.#sendFailed(attempt, new Error(`aucune phrase en ${REPLY_TIMEOUT_MS / 1000} s`));
+    this.#over(attempt, `Sa réponse n’est pas venue : aucune phrase en ${REPLY_TIMEOUT_MS / 1000} s`);
+    // Whatever comes of it now is thrown away.
+    attempt.late = true;
   }
 
   /** What its guard waited for came, or nothing waits for it any more. */
@@ -548,16 +562,7 @@ export class Conversation {
     } else if (e.type === 'done') {
       this.#answered(attempt);
       this.#durations(e.message, this.#ref(attempt));
-    }
-    if (e.type === 'done' && e.message.status === 'error' && !attempt.late) {
-      attempt.errored = true;
-      // No word will come: a turn held back for it must not block the next ones.
-      this.#unlink(attempt);
-      if (this.#heldBack === attempt) this.#heldBack = null;
-      if (attempt.heldBack && attempt.replyId !== undefined) this.#d.speaker.drop(attempt.replyId);
-      this.#write('sans_reponse', this.#ref(attempt), { raison: 'erreur' });
-      this.#d.on({ type: 'thinking', on: false });
-      this.#d.on({ type: 'failed', text: e.message.error ?? 'Sa réponse a échoué.' });
+      if (e.message.status === 'error') this.#over(attempt, e.message.error ?? 'Sa réponse a échoué.');
     }
   }
 
@@ -593,15 +598,10 @@ export class Conversation {
       this.#d.on({ type: 'addressed' });
       this.#supersede(attempt);
     }
-    // The sentence was for her and what it suspended is cut, but nothing will answer it: as a whole sentence whose
-    // send failed, words already on their way still come out.
-    if (attempt.failed) {
-      this.#d.on({ type: 'thinking', on: false });
-      this.#noAnswer(attempt);
-    } else if (attempt.errored) {
-      // Through `#awaits` all the same, for `#supersede` needs its `before`; the one before is unheard again.
-      this.#unheard = attempt.before ?? null;
-    } else this.#d.on({ type: 'thinking', on: true });
+    // The sentence was for her and what it suspended is cut, but nothing will answer it: told now, as for a whole
+    // sentence; words already on their way still come out.
+    if (attempt.failed !== undefined) this.#told(attempt, attempt.failed);
+    else this.#d.on({ type: 'thinking', on: true });
     if (attempt.replyId !== undefined) {
       this.#waitingReply = attempt.replyId;
       this.#d.speaker.release(attempt.replyId);
