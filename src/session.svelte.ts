@@ -32,6 +32,8 @@ const SAID_KEY = 'luxuria.said';
 const FORGOTTEN = 'Ce poste n’est plus reconnu par le serveur : entre un nouveau code d’appairage.';
 const BEAT_MS = 30_000;
 const BUSY_POLL_MS = 3000;
+/** A server that does not answer the return must not hold her words: past it, the message leaves all the same. */
+const BACK_WAIT_MS = 3000;
 const SUBTITLE_STAYS_MS = 4000;
 const TRACE_STAYS_MS = 6000;
 /** The one clock of a turn, for the listening, the conversation and her voice: it never goes back, as `Date.now` may. */
@@ -171,6 +173,8 @@ export class Session {
   #busySince = 0;
   /** A question to the voice service about the microphone, still unanswered. */
   #asking = false;
+  /** The start of a return of the presence under way, `BACK_WAIT_MS` at most, failed or not; null once it answered. */
+  #back: Promise<void> | null = null;
 
   get state(): BodyState {
     return stateOf({
@@ -269,10 +273,17 @@ export class Session {
         this.turns,
       )),
       trace: this.turns,
-      settings: () => this.settings,
+      // Away and linked, nothing is tried at a pause: a fragment would leave before the presence is back. Alone, the
+      // presence is nothing to wait for.
+      settings: () =>
+        this.away && this.settings.brain === 'linked'
+          ? { ...this.settings, endOfSpeech: { ...this.settings.endOfSpeech, speculate: false } }
+          : this.settings,
       layout: () => this.layout,
       keyHeld: () => this.#keyHeld || this.#keyInPhrase,
       silenced: () => this.silenced,
+      // A start of a return under way: what she sends waits for it, in the order it came.
+      ready: () => this.#back,
       now: clock,
       on: (e) => {
         if (e.type === 'thinking') this.thinking = e.on;
@@ -368,16 +379,31 @@ export class Session {
   #announce = () => (this.away ? Promise.resolve() : this.#presence.announce());
   #beat = () => (this.away ? Promise.resolve() : this.#presence.beat());
 
-  /** Only what the server is told changes: listening and the mute stay as they are. */
+  /**
+   * What the server is told, and, back, what a message waits for: the start (`#back`). Listening and the mute stay as
+   * they are.
+   */
   async setAway(next: boolean): Promise<void> {
     if (next === this.away) return;
     this.away = next;
     if (!this.entered) return;
-    if (next) await this.brain.presence('stopped').catch(() => {});
-    else await this.#announce();
+    if (next) {
+      await this.brain.presence('stopped').catch(() => {});
+      return;
+    }
+    const back: Promise<void> = Promise.race([
+      this.#announce().catch(() => {}),
+      new Promise<void>((r) => setTimeout(r, BACK_WAIT_MS)),
+    ]).finally(() => {
+      if (this.#back === back) this.#back = null;
+    });
+    await (this.#back = back);
   }
 
-  /** A phrase sent, heard or written: the person is there, as with a key. Away, the presence comes back first. */
+  /**
+   * A phrase sent, heard or written: the person is there, as with a key. Away, the start of the presence leaves before
+   * its message. A fragment transcribed while the absence is noted leaves during the absence, before the start.
+   */
   #heard(): Promise<void> {
     this.heardAt = Date.now();
     return this.setAway(false);
@@ -610,6 +636,10 @@ export class Session {
     if (this.silenced) return;
     this.spoke = true;
     await this.#heard();
+    // A return a key or the mouse brought may still be under way.
+    await this.#back;
+    // Muted while it waited: nothing is sent.
+    if (this.silenced) return;
     try {
       await this.#convo?.write(text);
       // It went through: an older failure no longer holds.

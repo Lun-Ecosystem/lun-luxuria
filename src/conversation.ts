@@ -33,6 +33,8 @@ export interface ConversationDeps {
   keyHeld(): boolean;
   /** The desk mute: only a P0 may still be said. */
   silenced?(): boolean;
+  /** What leaves waits for it, when there is something to wait for: the presence coming back. */
+  ready?(): Promise<void> | null;
   now(): number;
   on(e: ConversationEvent): void;
   /** Where each decision is written; without it, nothing else changes. */
@@ -429,6 +431,22 @@ export class Conversation {
       // Not on the send itself: its stream may end, or break, and the words still come, or never.
       this.#unanswered.add(attempt);
       attempt.guard = setTimeout(() => this.#late(attempt), REPLY_TIMEOUT_MS);
+      const back = d.ready?.();
+      if (back) {
+        const from = d.now();
+        await back;
+        this.#write('attente_retour', this.#ref(attempt), { duree: d.now() - from });
+        // Muted, or taken back, while it waited: nothing leaves, nothing waits for a reply.
+        if (d.silenced?.()) attempt.dropped = true;
+        if (attempt.dropped) {
+          this.#answered(attempt);
+          if (attempt.committed) {
+            d.on({ type: 'thinking', on: false });
+            this.#noAnswer(attempt);
+          }
+          return;
+        }
+      }
       await d.brain.send(heard.text, { surface: 'voice', confidence: heard.confidence }, (e) =>
         this.#onTurn(e, attempt),
       );

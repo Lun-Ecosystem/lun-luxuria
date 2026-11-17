@@ -56,7 +56,9 @@ filtre, depuis le délai réglé (15 minutes par défaut, de 1 à 240, carte « 
 serveur. Une session verrouillée ne reçoit aucune saisie : elle compte aussi. La première saisie, ou la première
 phrase qui passe le filtre, la reprend, avec l'accueil s'il est actif ; un bruit ou une phrase filtrée ne comptent
 pas. Le temps sans saisie se lit toutes les 30 s, toutes les 3 s pendant l'absence. L'absence ne change que ce qui est
-annoncé : l'écoute et la sourdine restent ce qu'elles sont.
+annoncé et l'essai à la courte pause, qui ne part pas ; l'écoute et la sourdine restent ce qu'elles sont. Un message
+attend que le serveur ait répondu à l'annonce du retour, 3 s au plus : passé ce délai, ou sur un échec, il part quand
+même, et les messages gardent leur ordre ; la sourdine posée pendant l'attente le retient.
 
 Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des Réglages) :
 
