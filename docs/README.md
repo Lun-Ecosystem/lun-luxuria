@@ -107,8 +107,8 @@ Les champs du service voix, de whisper-server et de RVC sont dans Réglages › 
   bouton d'Entrée, puis « Confirmer », puis « Fermer », la réponse d'Échap : seul « Confirmer » confirme. Confirmés, ils
   sont gardés côté Rust dans `arguments.json` ; un autre exe choisi les fait tomber, « Oublier » aussi. Un caractère
   invisible ou de contrôle est refusé dans un argument comme dans le chemin de l'exe. L'appli ne lance que l'exe gardé,
-  avec ses arguments confirmés : au démarrage, un programme jamais confirmé ne part pas, l'écran dit de les confirmer,
-  et aucune boîte ne s'ouvre seule. Il part dans son dossier, sans shell ni console, et seulement si rien ne répond déjà
+  avec ses arguments confirmés : au démarrage, un programme jamais confirmé ne part pas, la scène et les réglages
+  avancés de la voix, ouverts d'eux-mêmes, disent de les confirmer, et aucune boîte ne s'ouvre seule. Il part dans son dossier, sans shell ni console, et seulement si rien ne répond déjà
   à son adresse : c'est Rust qui la sonde, celle du champ, sur 127.0.0.1, localhost ou [::1] seulement, une autre
   refusée. Sa sortie va dans `whisper-server.log` ou `rvc.log`, vidés à chaque lancement. Rattaché à un job Windows, il
   s'arrête avec l'appli, même si elle plante, avec ce qu'il a ouvert lui-même : une fenêtre, ou un navigateur qui
