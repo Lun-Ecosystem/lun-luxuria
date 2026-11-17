@@ -341,9 +341,9 @@ describe('the voice theme, after a change', () => {
     await vi.waitFor(() =>
       expect(screen.getByText('Il répond déjà à son adresse : rien n’a été lancé.')).toBeInTheDocument(),
     );
+    // The window runs the arguments it holds as confirmed: the page names none.
     expect(invoke).toHaveBeenCalledWith('program_start', {
       name: 'whisper-server',
-      args: ['-m', 'models/small.bin'],
       url: 'http://127.0.0.1:8080',
     });
     expect(screen.queryByRole('button', { name: 'Lancer RVC' })).toBeNull();
@@ -391,6 +391,258 @@ describe('the voice theme, after a change', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('the arguments of a program, confirmed in the window', () => {
+  const EXE = 'D:/whisper/whisper-server.exe';
+  const NAME = 'whisper-server';
+  const SAVED = ['-m', 'models/small.bin'];
+  /** What the window keeps as confirmed; `program_args` writes it, `program_arguments` reads it. */
+  let confirmed: Record<string, string[]> = {};
+  let args: (name: string, list: string[]) => unknown | Promise<unknown> = () => true;
+  let pick: () => Promise<unknown> | unknown = () => EXE;
+  let forget: () => Promise<unknown> | unknown = () => null;
+  beforeEach(() => {
+    confirmed = {};
+    args = (name, list) => ((confirmed[name] = list), true);
+    pick = () => EXE;
+    forget = () => null;
+    invoke.mockImplementation(async (cmd: string, a?: unknown) => {
+      const { name, args: list } = (a ?? {}) as { name: string; args: string[] };
+      if (cmd === 'program_arguments') return { ...confirmed };
+      if (cmd === 'program_args') return args(name, list);
+      if (cmd === 'program_pick') return pick();
+      if (cmd === 'program_forget') return forget();
+      return null;
+    });
+  });
+  const asked = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd);
+  const open = (over: { saved?: string[]; confirmed?: Record<string, string[]>; path?: boolean } = {}) => {
+    localStorage.setItem(
+      'luxuria.settings',
+      JSON.stringify({
+        voice: {
+          service: {
+            launch: true,
+            piper: 'D:/v.onnx',
+            stt: {
+              kind: NAME,
+              url: 'http://127.0.0.1:8080',
+              program: { args: over.saved ?? SAVED, launch: false },
+            },
+          },
+        },
+      }),
+    );
+    confirmed = { ...over.confirmed };
+    const session = new Session();
+    session.folders.voix = 'D:/voix';
+    if (over.path !== false) session.programPaths = { [NAME]: EXE };
+    session.programArgs = { ...over.confirmed };
+    render(Reglages, { session, close: () => {}, start: 'voix' });
+    return session;
+  };
+  const confirm = () => screen.getByRole('button', { name: /^Confirmer/ });
+  const draft = () => screen.getByRole('textbox', { name: `Arguments de ${NAME}` });
+  const choose = () => screen.getByRole('button', { name: `Choisir le programme de ${NAME}` });
+  const forgetButton = () => screen.getByRole('button', { name: `Oublier le programme de ${NAME}` });
+
+  it('never confirmed: the arguments saved by an older page are the first draft, nothing is migrated', () => {
+    const session = open();
+    expect(draft()).toHaveValue('-m\nmodels/small.bin');
+    expect(screen.getByText(/Pas encore confirmés/)).toBeInTheDocument();
+    expect(confirm()).toBeEnabled();
+    expect(session.programArgs).toEqual({});
+    expect(asked('program_args')).toHaveLength(0);
+  });
+
+  it('confirmed: « Confirmés : … » says them, and a draft equal to them offers no « Confirmer… »', () => {
+    open({ confirmed: { [NAME]: SAVED } });
+    expect(screen.getByText(/Confirmés/)).toHaveTextContent(/-m.*models\/small\.bin/);
+    expect(screen.queryByText(/Pas encore confirmés/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Confirmer/ })).toBeNull();
+  });
+
+  it('the button follows the draft: typing another one offers it, typing back takes it away', async () => {
+    open({ confirmed: { [NAME]: SAVED } });
+    await fireEvent.input(draft(), { target: { value: '-m\nmodels/large.bin' } });
+    expect(confirm()).toBeEnabled();
+    expect(screen.getByText(/Confirmés/)).toHaveTextContent(/small\.bin/);
+    await fireEvent.input(draft(), { target: { value: '-m\nmodels/small.bin\n' } });
+    expect(screen.queryByRole('button', { name: /^Confirmer/ })).toBeNull();
+  });
+
+  it('never confirmed is not confirmed empty: an empty draft still offers « Confirmer… », not once confirmed empty', async () => {
+    open({ saved: [] });
+    expect(screen.getByText(/Pas encore confirmés/)).toBeInTheDocument();
+    expect(confirm()).toBeEnabled();
+    cleanup();
+    open({ saved: [], confirmed: { [NAME]: [] } });
+    expect(screen.queryByText(/Pas encore confirmés/)).toBeNull();
+    expect(screen.getByText(/Confirmés/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Confirmer/ })).toBeNull();
+  });
+
+  it('« Confirmer… » sends the draft, one argument per line without the empty ones, and says it confirmed', async () => {
+    const session = open();
+    await fireEvent.input(draft(), {
+      target: { value: '  -m \n\n models/my model.bin\r\n  \n--port 8081\n' },
+    });
+    await fireEvent.click(confirm());
+    expect(invoke).toHaveBeenCalledWith('program_args', {
+      name: NAME,
+      args: ['-m', 'models/my model.bin', '--port 8081'],
+    });
+    await vi.waitFor(() => expect(screen.getByText(/Confirmés/)).toHaveTextContent(/my model\.bin/));
+    expect(session.programArgs[NAME]).toEqual(['-m', 'models/my model.bin', '--port 8081']);
+    expect(screen.queryByText(/Pas encore confirmés/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Confirmer/ })).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('refused by the window: its words on the line, nothing confirmed, the button back', async () => {
+    args = () => Promise.reject('Une boîte est déjà ouverte.');
+    const session = open();
+    await fireEvent.click(confirm());
+    await vi.waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Une boîte est déjà ouverte.'),
+    );
+    expect(session.programArgs).toEqual({});
+    expect(screen.getByText(/Pas encore confirmés/)).toBeInTheDocument();
+    await vi.waitFor(() => expect(confirm()).toBeEnabled());
+    expect(draft()).toHaveValue('-m\nmodels/small.bin');
+  });
+
+  it('refused in the dialog (false): said on the line, nothing changes', async () => {
+    args = () => false;
+    const session = open({ confirmed: { [NAME]: ['-m', 'old.bin'] } });
+    await fireEvent.click(confirm());
+    await vi.waitFor(() => expect(screen.getByRole('alert').textContent?.trim()).not.toBe(''));
+    expect(session.programArgs).toEqual({ [NAME]: ['-m', 'old.bin'] });
+    expect(screen.getByText(/Confirmés/)).toHaveTextContent(/old\.bin/);
+    expect(draft()).toHaveValue('-m\nmodels/small.bin');
+    await vi.waitFor(() => expect(confirm()).toBeEnabled());
+  });
+
+  it('a new try clears the old refusal', async () => {
+    args = () => Promise.reject('Une boîte est déjà ouverte.');
+    open();
+    await fireEvent.click(confirm());
+    await vi.waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    args = (name, list) => ((confirmed[name] = list), true);
+    await fireEvent.click(await screen.findByRole('button', { name: /^Confirmer/ }));
+    await vi.waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('« Oublier » reads the confirmed arguments again, after the window forgot', async () => {
+    forget = () => ((confirmed = {}), null);
+    const session = open({ confirmed: { [NAME]: SAVED } });
+    await fireEvent.click(forgetButton());
+    expect(invoke).toHaveBeenCalledWith('program_forget', { name: NAME });
+    await vi.waitFor(() => expect(asked('program_arguments').length).toBeGreaterThan(0));
+    const order = invoke.mock.calls.map(([c]) => c);
+    expect(order.indexOf('program_arguments')).toBeGreaterThan(order.indexOf('program_forget'));
+    await vi.waitFor(() => expect(session.programArgs).toEqual({}));
+  });
+
+  it('« Choisir… » reads them again: another exe, and the window dropped its confirmation', async () => {
+    pick = () => ((confirmed = {}), 'D:/other/whisper-server.exe');
+    const session = open({ confirmed: { [NAME]: SAVED } });
+    await fireEvent.click(choose());
+    expect(invoke).toHaveBeenCalledWith('program_pick', { name: NAME });
+    await vi.waitFor(() => expect(screen.getByText('D:/other/whisper-server.exe')).toBeInTheDocument());
+    await vi.waitFor(() => expect(screen.getByText(/Pas encore confirmés/)).toBeInTheDocument());
+    expect(session.programArgs).toEqual({});
+    expect(asked('program_arguments').length).toBeGreaterThan(0);
+  });
+
+  it('after « Oublier » worked, the focus goes to « Choisir… », whose neighbour just went', async () => {
+    forget = () => ((confirmed = {}), null);
+    open({ confirmed: { [NAME]: SAVED } });
+    await fireEvent.click(forgetButton());
+    await vi.waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Oublier le programme/ })).toBeNull(),
+    );
+    await vi.waitFor(() => expect(choose()).toHaveFocus());
+  });
+
+  it('after « Confirmer… » worked, it is gone and the focus does not fall to the page', async () => {
+    open();
+    confirm().focus();
+    await fireEvent.click(confirm());
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: /^Confirmer/ })).toBeNull());
+    await vi.waitFor(() => expect(document.body).not.toHaveFocus());
+    expect(document.activeElement).not.toBeNull();
+  });
+
+  describe('one call at a time', () => {
+    const later = () => {
+      const at: { done: (v: unknown) => void } = { done: () => {} };
+      const wait = () => new Promise((r) => (at.done = r));
+      return { at, wait };
+    };
+
+    it('two clicks on « Choisir… » make one call, and « Oublier » and « Confirmer… » wait meanwhile', async () => {
+      const { at, wait } = later();
+      pick = wait;
+      open({ confirmed: { [NAME]: SAVED }, saved: ['-x'] });
+      await fireEvent.click(choose());
+      await fireEvent.click(choose());
+      expect(asked('program_pick')).toHaveLength(1);
+      expect(forgetButton()).toBeDisabled();
+      await fireEvent.click(forgetButton());
+      expect(asked('program_forget')).toHaveLength(0);
+      expect(confirm()).toBeDisabled();
+      await fireEvent.click(confirm());
+      expect(asked('program_args')).toHaveLength(0);
+      at.done(null);
+      await vi.waitFor(() => expect(forgetButton()).toBeEnabled());
+      expect(confirm()).toBeEnabled();
+    });
+
+    it('two clicks on « Confirmer… » make one call, and the other two buttons wait meanwhile', async () => {
+      const { at, wait } = later();
+      args = wait;
+      open();
+      const button = confirm();
+      await fireEvent.click(button);
+      await fireEvent.click(button);
+      expect(asked('program_args')).toHaveLength(1);
+      expect(choose()).toBeDisabled();
+      expect(forgetButton()).toBeDisabled();
+      at.done(true);
+      await vi.waitFor(() => expect(choose()).toBeEnabled());
+      expect(asked('program_args')).toHaveLength(1);
+    });
+
+    it('two clicks on « Oublier » make one call, and the other two buttons wait meanwhile', async () => {
+      const { at, wait } = later();
+      forget = wait;
+      open({ saved: ['-x'] });
+      const button = forgetButton();
+      await fireEvent.click(button);
+      await fireEvent.click(button);
+      expect(asked('program_forget')).toHaveLength(1);
+      expect(choose()).toBeDisabled();
+      expect(confirm()).toBeDisabled();
+      at.done(null);
+      await vi.waitFor(() => expect(asked('program_arguments').length).toBeGreaterThan(0));
+      expect(asked('program_forget')).toHaveLength(1);
+    });
+
+    it('a refusal gives every button back, or nothing could be tried again', async () => {
+      args = () => Promise.reject('Une boîte est déjà ouverte.');
+      forget = () => Promise.reject('Oubli refusé.');
+      open();
+      await fireEvent.click(confirm());
+      await vi.waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+      await vi.waitFor(() => expect(forgetButton()).toBeEnabled());
+      await fireEvent.click(forgetButton());
+      await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Oubli refusé.'));
+      await vi.waitFor(() => expect(choose()).toBeEnabled());
+      expect(confirm()).toBeEnabled();
+    });
   });
 });
 

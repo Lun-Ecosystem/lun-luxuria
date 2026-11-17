@@ -363,6 +363,8 @@ describe('whisper-server and RVC', () => {
       ...over,
     });
     session.programPaths = { ...PATHS };
+    // Confirmed with the window, as the draft is: the arguments of the field.
+    session.programArgs = { 'whisper-server': [...PROGRAM.args], rvc: [...PROGRAM.args] };
     return session;
   };
   const started = (log = 'C:\\logs\\rvc.log') => vi.fn(async () => ({ outcome: 'started', log }));
@@ -378,19 +380,19 @@ describe('whisper-server and RVC', () => {
     return { at, sleep };
   };
 
-  it('the page never names the program: only its arguments and the address of its field go to the window', async () => {
+  it('the page never names the program nor sends its arguments: only its name and the address of its field go to the window', async () => {
     const session = both();
     const call = started();
     expect(await startPrograms(session, call)).toBe(true);
     expect(call).toHaveBeenCalledWith('program_start', {
       name: 'whisper-server',
-      args: ['-m', 'small.bin'],
       url: 'http://127.0.0.1:8080',
     });
-    expect(call).toHaveBeenCalledWith(
-      'program_start',
-      expect.objectContaining({ name: 'rvc', url: 'http://localhost:18888' }),
-    );
+    expect(call).toHaveBeenCalledWith('program_start', { name: 'rvc', url: 'http://localhost:18888' });
+    for (const [cmd, args] of call.mock.calls as unknown as [string, object][]) {
+      if (cmd === 'program_start') expect(Object.keys(args)).not.toContain('args');
+    }
+    expect((call.mock.calls as unknown[][]).map(([cmd]) => cmd)).not.toContain('program_args');
     expect(JSON.stringify(call.mock.calls)).not.toContain('.exe');
     expect(JSON.stringify(call.mock.calls)).not.toContain('addr');
     expect(session.programs['whisper-server']).toMatchObject({
@@ -452,9 +454,123 @@ describe('whisper-server and RVC', () => {
     expect(session.programPaths.rvc).toBeUndefined();
     await readProgramPaths(
       session,
-      vi.fn(async () => ({ ...PATHS })),
+      vi.fn(async (cmd: string) => (cmd === 'program_paths' ? { ...PATHS } : {})),
     );
     expect(session.programPaths).toEqual(PATHS);
+  });
+
+  describe('the arguments the window keeps as confirmed', () => {
+    const CONFIRMED = { 'whisper-server': ['-m', 'small.bin'], rvc: [] };
+    const window_ = (over: Record<string, unknown> = {}) =>
+      vi.fn(async (cmd: string) => {
+        const answer = over[cmd];
+        if (answer instanceof Error) throw answer.message;
+        return cmd in over ? answer : cmd === 'program_arguments' ? { ...CONFIRMED } : null;
+      });
+
+    it('read with the paths: a missing key is never confirmed, an empty list is confirmed empty', async () => {
+      const session = both();
+      session.programArgs = {};
+      const call = window_({ program_paths: { ...PATHS } });
+      await readProgramPaths(session, call);
+      expect(call).toHaveBeenCalledWith('program_arguments', {});
+      expect(session.programArgs).toEqual(CONFIRMED);
+      expect(session.programArgs.rvc).toEqual([]);
+      const never = new Session();
+      await readProgramPaths(never, window_({ program_arguments: { rvc: [] } }));
+      expect(never.programArgs['whisper-server']).toBeUndefined();
+      expect(never.programArgs.rvc).toEqual([]);
+    });
+
+    it('an answer that is no object, or a refusal, leaves nothing confirmed', async () => {
+      for (const answer of [null, 'C:/logs/voix.log', new Error('Lecture refusée.')]) {
+        const session = both();
+        await readProgramPaths(session, window_({ program_arguments: answer }));
+        expect(session.programArgs).toEqual({});
+      }
+    });
+
+    it('« Oublier » reads them again: the window drops the arguments with the exe', async () => {
+      const session = both();
+      const call = window_({
+        program_forget: null,
+        program_arguments: { 'whisper-server': ['-m', 'small.bin'] },
+      });
+      await forgetProgram(session, 'rvc', call);
+      expect(call).toHaveBeenCalledWith('program_forget', { name: 'rvc' });
+      expect(call).toHaveBeenCalledWith('program_arguments', {});
+      expect(session.programArgs).toEqual({ 'whisper-server': ['-m', 'small.bin'] });
+    });
+
+    it('« Oublier » refused: nothing is read again, the words are said', async () => {
+      const session = both();
+      const call = window_({ program_forget: new Error('Oubli refusé.') });
+      await forgetProgram(session, 'rvc', call);
+      expect(call.mock.calls.map(([cmd]) => cmd)).not.toContain('program_arguments');
+      expect(session.programs.rvc).toEqual({ said: 'Oubli refusé.' });
+      expect(session.programArgs).toEqual({
+        'whisper-server': ['-m', 'small.bin'],
+        rvc: ['-m', 'small.bin'],
+      });
+    });
+
+    it('« Choisir… » reads them again: another exe for a name drops its confirmation, on the window’s side', async () => {
+      const session = both();
+      const call = window_({
+        program_pick: 'D:\\other\\rvc-server.exe',
+        program_arguments: { 'whisper-server': ['-m', 'small.bin'] },
+      });
+      await pickProgram(session, 'rvc', call);
+      expect(call).toHaveBeenCalledWith('program_pick', { name: 'rvc' });
+      expect(call).toHaveBeenCalledWith('program_arguments', {});
+      expect(session.programArgs.rvc).toBeUndefined();
+    });
+
+    it('« Choisir… » refused: nothing is read again, the words are said', async () => {
+      const session = both();
+      const call = window_({ program_pick: new Error('Une boîte est déjà ouverte.') });
+      await pickProgram(session, 'rvc', call);
+      expect(call.mock.calls.map(([cmd]) => cmd)).not.toContain('program_arguments');
+      expect(session.programs.rvc).toEqual({ said: 'Une boîte est déjà ouverte.' });
+      expect(session.programArgs.rvc).toEqual(['-m', 'small.bin']);
+    });
+  });
+
+  describe('at start, arguments never confirmed', () => {
+    const TO_CONFIRM = 'Ses arguments sont à confirmer, dans les réglages avancés de la voix.';
+
+    it('the program does not start, program_args is never called, and the screen says what to do', async () => {
+      const session = both();
+      session.programArgs = {};
+      const call = started();
+      expect(await startPrograms(session, call)).toBe(false);
+      expect(call).not.toHaveBeenCalled();
+      expect(session.programs['whisper-server']).toEqual({ said: TO_CONFIRM });
+      expect(session.programs.rvc).toEqual({ said: TO_CONFIRM });
+    });
+
+    it('confirmed empty is confirmed: it starts; the other, never confirmed, stays down', async () => {
+      const session = both();
+      session.programArgs = { 'whisper-server': [] };
+      const call = started();
+      expect(await startPrograms(session, call)).toBe(true);
+      expect(call.mock.calls).toEqual([
+        ['program_start', { name: 'whisper-server', url: 'http://127.0.0.1:8080' }],
+      ]);
+      expect(session.programs.rvc).toEqual({ said: TO_CONFIRM });
+      expect(session.programs['whisper-server']).toMatchObject({ starting: true });
+    });
+
+    it('a draft that differs from the confirmed arguments does not hold the start: the window runs the confirmed ones', async () => {
+      const session = both();
+      session.settings.voice.service.stt.program.args = ['--other'];
+      const call = started();
+      await startPrograms(session, call);
+      expect(call).toHaveBeenCalledWith('program_start', {
+        name: 'whisper-server',
+        url: 'http://127.0.0.1:8080',
+      });
+    });
   });
 
   it('followed until it answers, ends, or the wait runs out, and each is said with its log', async () => {
@@ -524,7 +640,7 @@ describe('whisper-server and RVC', () => {
       const session = both({ rvc: { ...READY.rvc, on: true, url, program: PROGRAM } });
       const call = vi.fn(async () => Promise.reject(refusal(url)));
       expect(await launchProgram(session, 'rvc', call)).toBe(false);
-      expect(call).toHaveBeenCalledWith('program_start', { name: 'rvc', args: PROGRAM.args, url });
+      expect(call).toHaveBeenCalledWith('program_start', { name: 'rvc', url });
       expect(session.programs.rvc).toEqual({ said: refusal(url) });
     }
   });
@@ -600,6 +716,7 @@ describe('startAll', () => {
     const call = vi.fn(async (cmd: string) => {
       order.push(cmd);
       if (cmd === 'program_paths') return { rvc: 'D:/rvc.exe' };
+      if (cmd === 'program_arguments') return { rvc: [] };
       if (cmd === 'folder_paths') return { corps: 'C:/corps', voix: 'D:/voix' };
       if (cmd === 'program_start') return { outcome: 'started', log: 'C:/logs/rvc.log' };
       if (cmd === 'program_state') return 'answering';
@@ -615,6 +732,7 @@ describe('startAll', () => {
       async () => ({ stt: { kind: 'faster' as const, up: true }, rvc: { up: true } }),
     );
     expect(order[0]).toBe('program_paths');
+    expect(order.indexOf('program_arguments')).toBeLessThan(order.indexOf('program_start'));
     expect(order.indexOf('program_start')).toBeLessThan(order.indexOf('voice_start'));
     // The folders the window keeps are known before the service starts.
     expect(order).toContain('folder_paths');
