@@ -401,3 +401,75 @@ describe('an urgency goes first', () => {
     expect(t.speaker.stop()).toEqual({ id: 7, said: 'Une phrase' });
   });
 });
+
+describe('the end of a turn that is over, or that showed nothing', () => {
+  const silents = (t: ReturnType<typeof setup>) => t.events.filter((e) => e.type === 'silent');
+
+  it('an end after the turn is gone creates nothing: she does not fall silent a second time', async () => {
+    const t = setup();
+    t.speaker.add(1, 'Un.');
+    t.speaker.end(1);
+    await tick();
+    t.sounds[0]!.end();
+    await tick();
+    expect(silents(t)).toHaveLength(1);
+    t.speaker.end(1);
+    await tick();
+    expect(silents(t)).toHaveLength(1);
+    expect(t.speaker.speaking).toBe(false);
+    // And it is no turn waiting in front of the next one.
+    t.speaker.add(2, 'Deux.');
+    t.speaker.end(2);
+    await tick();
+    expect(t.subtitles()).toEqual(['Un.', 'Deux.']);
+  });
+
+  it('an empty turn that ends alone shows nothing: no silent', async () => {
+    const t = setup();
+    t.speaker.release(1);
+    t.speaker.end(1);
+    await tick();
+    expect(silents(t)).toEqual([]);
+    expect(t.speaker.speaking).toBe(false);
+  });
+
+  it('an empty turn that ends behind a turn said: one silent, once the first is done', async () => {
+    const t = setup();
+    t.speaker.add(1, 'Un.');
+    t.speaker.end(1);
+    t.speaker.release(2);
+    t.speaker.end(2);
+    await tick();
+    expect(silents(t)).toEqual([]);
+    t.sounds[0]!.end();
+    await tick();
+    expect(silents(t)).toHaveLength(1);
+  });
+
+  it('an empty turn that ends after the silence: nothing was shown since, no second silent', async () => {
+    const t = setup();
+    t.speaker.add(1, 'Un.');
+    t.speaker.end(1);
+    await tick();
+    t.sounds[0]!.end();
+    await tick();
+    expect(silents(t)).toHaveLength(1);
+    t.speaker.release(2);
+    t.speaker.end(2);
+    await tick();
+    expect(silents(t)).toHaveLength(1);
+    expect(t.speaker.speaking).toBe(false);
+  });
+
+  it('words shown without a voice count as shown: the empty turn behind them still lets her fall silent', async () => {
+    const t = setup(async () => {
+      throw new Error('voix en panne');
+    });
+    t.speaker.add(1, 'Un.');
+    t.speaker.end(1);
+    t.speaker.release(2);
+    t.speaker.end(2);
+    await new Promise((r) => setTimeout(r, readingMs('Un.') + 50));
+    expect(silents(t)).toHaveLength(1);
+  });
+});
