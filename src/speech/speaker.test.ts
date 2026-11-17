@@ -461,6 +461,60 @@ describe('the end of a turn that is over, or that showed nothing', () => {
     expect(t.speaker.speaking).toBe(false);
   });
 
+  it.each([
+    ['empty, out at once', false],
+    ['out once its sentence was said', true],
+  ])(
+    'words for a turn already out (%s), then their end: nothing sounds, and the line goes on',
+    async (_, spoke) => {
+      const t = setup();
+      if (spoke) t.speaker.add(1, 'Un.');
+      else t.speaker.release(1);
+      t.speaker.end(1);
+      await tick();
+      t.sounds[0]?.end();
+      await tick();
+      t.speaker.add(1, 'Trop tard.');
+      t.speaker.end(1);
+      await tick();
+      expect(t.sounds).toHaveLength(spoke ? 1 : 0);
+      expect(t.speaker.speaking).toBe(false);
+      t.speaker.add(2, 'Deux.');
+      t.speaker.end(2);
+      await tick();
+      expect(t.subtitles()).toEqual(spoke ? ['Un.', 'Deux.'] : ['Deux.']);
+    },
+  );
+
+  it('words for a turn whose end came, still sounding: they are not said', async () => {
+    const t = setup();
+    t.speaker.add(1, 'Un.');
+    t.speaker.end(1);
+    await tick();
+    t.speaker.add(1, 'Trop tard.');
+    t.sounds[0]!.end();
+    await tick();
+    expect(t.subtitles()).toEqual(['Un.']);
+    expect(silents(t)).toHaveLength(1);
+  });
+
+  it('a hold, then a release, for a turn already out: nothing is made again, the next turn sounds', async () => {
+    const t = setup();
+    t.speaker.release(1);
+    t.speaker.end(1);
+    await tick();
+    t.speaker.hold(1);
+    t.speaker.release(1);
+    t.speaker.add(2, 'Deux.');
+    t.speaker.end(2);
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    t.sounds[0]!.end();
+    await tick();
+    expect(t.speaker.speaking).toBe(false);
+    expect(silents(t)).toHaveLength(1);
+  });
+
   it('words shown without a voice count as shown: the empty turn behind them still lets her fall silent', async () => {
     const t = setup(async () => {
       throw new Error('voix en panne');

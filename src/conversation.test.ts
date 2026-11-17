@@ -883,30 +883,60 @@ describe('cutting it off', () => {
     events.filter((e) => e.type === 'thinking').at(-1) ?? { type: 'thinking', on: false };
   /** Which of the replies, in the order they were sent, end in error: none, all, the first, or the one of the last sentence. */
   const WHICH = ['none', 'all', 'first', 'last'] as const;
+  /** How: its done in error; the same, then its words and their end, late (two connections); or its stream breaks. */
+  const HOW = ['done', 'late', 'throws'] as const;
+  // As soon as sent, the last sentence for her is not known yet: `last` would only replay `soon: false`.
   const errorRuns = [true, false].flatMap((soon) =>
-    WHICH.flatMap((which) => lastVerdicts.map((c) => ({ ...c, which, soon }))).filter(
-      (c) => !(c.which === 'none' && c.soon),
+    WHICH.filter((which) => !soon || (which !== 'none' && which !== 'last')).flatMap((which) =>
+      (which === 'none' ? HOW.slice(0, 1) : HOW).flatMap((how) =>
+        lastVerdicts.map((c) => ({ ...c, which, how, soon })),
+      ),
     ),
   );
 
   it.each(errorRuns)(
     'the reply of a sentence ends in error: nothing stays held, the last one for her still answers, and each ' +
-      'error is said at most once (ahead $ahead, $said, errors on $which, $soon, every order, a cough anywhere)',
-    async ({ ahead, said, which, soon }) => {
+      'error is said at most once, that of the last one for her once (ahead $ahead, $said, errors on $which, ' +
+      'by $how, $soon, every order, a cough anywhere)',
+    async ({ ahead, said, which, how, soon }) => {
       const settle = () => new Promise<void>((ok) => setImmediate(ok));
       for (const line of timelines())
         for (let cough = -1; cough < line.length; cough++) {
           const name = `${line.join(' ')}, cough before ${line[cough] ?? 'nothing'}`;
           const v = verdicts();
-          const t = setup(NO_TRY, v.stt);
+          // Each stream numbers its reply and stays open, until it breaks or never.
+          const breaks: ((err: Error) => void)[] = [];
+          const t = setup(
+            NO_TRY,
+            v.stt,
+            () => false,
+            undefined,
+            undefined,
+            Array.from({ length: 5 }, () => async (on: (e: SendEvent) => void, id: number) => {
+              on({ type: 'user', message: message(id) });
+              on({ type: 'reply', id: id + 100 });
+              return new Promise<void>((_, reject) => breaks.push(reject));
+            }),
+          );
           const sent: number[] = [];
           const errored = new Set<number>();
+          /** What the calls were when each reply erred: nothing after cuts it. */
+          const callsAt = new Map<number, number>();
+          const told = (r: number) =>
+            how === 'throws' ? `Sa réponse n’est pas venue : flux coupé ${r}` : `Plafond atteint ${r}`;
           const fail = (r: number) => {
             errored.add(r);
-            t.sends[r]!.on({
-              type: 'done',
-              message: { ...message(10 + r), status: 'error', error: 'Plafond atteint' },
-            });
+            callsAt.set(r, t.calls.length);
+            if (how === 'throws') breaks[r]!(new Error(`flux coupé ${r}`));
+            else
+              t.sends[r]!.on({
+                type: 'done',
+                message: { ...message(10 + r), status: 'error', error: `Plafond atteint ${r}` },
+              });
+            if (how === 'late') {
+              t.say(110 + r, 'Trop tard.');
+              t.convo.onLive({ type: 'speech-end', id: 110 + r, why: 'reply' });
+            }
           };
           /** Whether the reply sent as `r` (of the `sent.length` so far) is one that errs. */
           const errs = (r: number, last: boolean) =>
@@ -962,9 +992,19 @@ describe('cutting it off', () => {
               ).toBe(true);
           }
           if (lastReply >= 0 && !errored.has(lastReply)) expect(sounded(), name).toContain(110 + lastReply);
-          // At most one message for each reply that erred.
-          const messages = t.events.filter((e) => e.type === 'failed' && e.text === 'Plafond atteint');
-          expect(messages.length, name).toBeLessThanOrEqual(errored.size);
+          // Each error is told at most once; that of the last sentence for her, which nothing replaced, exactly once.
+          // Nothing of a reply sounded after its error, so nothing cuts it.
+          for (const r of errored) {
+            const messages = t.events.filter((e) => e.type === 'failed' && e.text === told(r));
+            expect(messages.length, `${name}, reply ${r} told`).toBe(
+              r === lastReply ? 1 : Math.min(messages.length, 1),
+            );
+            const after = t.calls.slice(callsAt.get(r));
+            expect(
+              after.filter((c) => c.startsWith(`cut ${110 + r} `)),
+              `${name}, reply ${r} cut`,
+            ).toEqual([]);
+          }
           // Nothing is held, nothing waits: a sentence for her, once everything is over, is answered at once.
           expect(t.speaker.speaking, name).toBe(false);
           const before = t.sends.length;
@@ -1844,21 +1884,93 @@ describe('a reply that ends in error: one gesture, once nothing more will come o
     },
   );
 
-  it('a stream that breaks after its number: the next reply sounds at once, and one message is said', async () => {
-    const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, [
-      async (on, id) => {
+  /** After it, nothing blocks the line: her own words sound, then the reply to the next sentence; 110 is never cut. */
+  const lineGoesOn = async (t: T) => {
+    const n = t.sounds.length;
+    t.convo.onLive({ type: 'speech', id: 51, n: 1, text: 'Au fait.', why: 'spontaneous' });
+    t.convo.onLive({ type: 'speech-end', id: 51, why: 'spontaneous' });
+    await flush();
+    expect(t.sounds).toHaveLength(n + 1);
+    t.sounds.at(-1)!.end();
+    await flush();
+    await sentence(t);
+    t.say(111, 'Je réponds.');
+    await flush();
+    expect(t.sounds).toHaveLength(n + 2);
+    expect(t.calls.filter((c) => c.startsWith('cut 110 '))).toEqual([]);
+  };
+  /** Its words, and their end, come after its error: the live stream and the send are two connections. */
+  const late = async (t: T, text = 'Trop tard.') => {
+    t.say(110, text);
+    t.convo.onLive({ type: 'speech-end', id: 110, why: 'reply' });
+    await flush();
+  };
+
+  it.each([
+    [
+      'its stream breaks after its number',
+      async (on: (e: SendEvent) => void, id: number) => {
         on({ type: 'user', message: message(id) });
         on({ type: 'reply', id: id + 100 });
         throw new Error('flux coupé');
       },
-    ]);
+    ],
+    ['it ends in error, with no word', undefined],
+  ] as [string, ((on: (e: SendEvent) => void, id: number) => Promise<void>) | undefined][])(
+    '%s, then its words and their end come: nothing of it sounds, and the line goes on',
+    async (_, stream) => {
+      const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, stream ? [stream] : []);
+      await sentence(t);
+      if (!stream) await errs(t, 0);
+      expect(failed(t)).toHaveLength(1);
+      await late(t);
+      expect(t.sounds).toHaveLength(0);
+      expect(t.speaker.speaking).toBe(false);
+      await lineGoesOn(t);
+    },
+  );
+
+  it.each([
+    ['its first sentence still sounding', true],
+    ['its first sentence over', false],
+  ])(
+    'it ends in error after a sentence said, the next comes after the error (%s): only the first is said',
+    async (_, sounding) => {
+      const t = setup();
+      await sentence(t);
+      t.say(110, 'Une phrase.');
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      await errs(t, 0);
+      if (!sounding) {
+        t.sounds[0]!.end();
+        await flush();
+      }
+      await late(t, 'La suite.');
+      if (sounding) {
+        t.sounds[0]!.end();
+        await flush();
+      }
+      expect(t.sounds).toHaveLength(1);
+      expect(said(t)).toHaveLength(1);
+      expect(t.speaker.speaking).toBe(false);
+      await lineGoesOn(t);
+    },
+  );
+
+  it('an empty reply, without error, then a cough: its turn is not made again, and the line goes on', async () => {
+    const t = setup();
     await sentence(t);
-    await sentence(t);
-    t.say(111, 'Je réponds.');
+    t.sends[0]!.on({ type: 'done', message: message(110) });
+    t.convo.onLive({ type: 'speech-end', id: 110, why: 'reply' });
     await flush();
-    expect(t.sounds).toHaveLength(1);
-    expect(failed(t)).toHaveLength(1);
-    expect(named(t, 'sans_reponse')).toHaveLength(1);
+    // Never heard, it is the one a cough holds back, then lets go.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'noise' });
+    await flush();
+    await vi.advanceTimersByTimeAsync(DEFAULTS.bargeIn.resumeMs);
+    expect(t.speaker.speaking).toBe(false);
+    await lineGoesOn(t);
   });
 
   it('a withdrawn fragment whose reply ends in error says nothing, writes nothing, lights nothing', async () => {

@@ -117,24 +117,31 @@ export class Speaker {
     return turn;
   }
 
+  /** Thrown away, or over: a turn is never made again, it would wait for an end that came already. */
+  #past(id: number): boolean {
+    return this.#gone.has(id) || this.#ended.has(id);
+  }
+
   /** Must come before its first sentence. */
   hold(id: number): void {
-    if (this.#gone.has(id)) return;
+    if (this.#past(id)) return;
     this.#turn(id).held = true;
   }
 
   release(id: number): void {
-    if (this.#gone.has(id)) return;
+    if (this.#past(id)) return;
     this.#turn(id).held = false;
     this.#pump();
   }
 
   /** `urgent`: this turn goes in front of the ones that wait. */
   add(id: number, text: string, urgent = false): void {
-    if (this.#gone.has(id)) return;
+    if (this.#past(id)) return;
     // One at a time: a voice conversion takes one call at a time, and order matters more than speed.
     // shortcut: an urgency waits for the sentences already being made, give it its own lane if that is heard.
     const turn = this.#turn(id, urgent);
+    // Its end came: words after it are of a reply that ended in error, its message spoke for them.
+    if (turn.ended) return;
     const rang = turn.pieces.length + 1;
     const clip = this.#chain.then(() => this.#oneClip(text, id, rang));
     this.#chain = clip;
@@ -143,7 +150,7 @@ export class Speaker {
   }
 
   end(id: number): void {
-    if (this.#gone.has(id) || this.#ended.has(id)) return;
+    if (this.#past(id)) return;
     this.#turn(id).ended = true;
     this.#pump();
   }
