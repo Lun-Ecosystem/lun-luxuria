@@ -14,9 +14,9 @@ fn call(t: &TestApp, cmd: &str) -> Result<Value, String> {
         .map_err(text)
 }
 
-/// Tauri's own refusal by the ACL, not an argument the empty body lacks.
+/// Tauri's own refusal by the ACL: not an argument the empty body lacks, nor a command or plugin that does not exist.
 fn by_acl(e: &str) -> bool {
-    e.contains("not allowed")
+    e.contains("not allowed") && e.contains("Permissions associated with this command")
 }
 
 /// Every command the page calls, with the page's own text that calls it (read from `src/`, never from the
@@ -50,7 +50,18 @@ fn page_source() -> String {
             } else if (name.ends_with(".ts") || name.ends_with(".svelte"))
                 && !name.contains(".test.")
             {
-                out.push_str(&std::fs::read_to_string(&p).unwrap());
+                let src = std::fs::read_to_string(&p).unwrap();
+                // Only the files that reach Tauri: `ctx.close()` of the audio is not the window's.
+                if [
+                    "@tauri-apps/api/window",
+                    "@tauri-apps/api/event",
+                    "data-tauri-drag-region",
+                ]
+                .iter()
+                .any(|m| src.contains(m))
+                {
+                    out.push_str(&src);
+                }
             }
         }
     }
@@ -70,7 +81,7 @@ fn the_page_has_no_door_to_an_image_a_tray_a_menu_a_path_or_a_webview() {
         "plugin:tray|new",
         "plugin:menu|new",
         "plugin:path|resolve_directory",
-        "plugin:webview|create_webview_window",
+        "plugin:webview|get_all_webviews",
     ]
     .iter()
     .filter_map(|cmd| match call(&t, cmd) {
@@ -79,14 +90,7 @@ fn the_page_has_no_door_to_an_image_a_tray_a_menu_a_path_or_a_webview() {
         Ok(v) => Some(format!("{cmd}: should be refused, got {v}")),
     })
     .collect();
-    assert!(
-        wrong.is_empty(),
-        "{}",
-        wrong.join(
-            "
-"
-        )
-    );
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 /// The witness: a command the page never calls is refused by the ACL in the very words `by_acl` looks for.
@@ -116,4 +120,30 @@ fn every_admitted_command_is_a_call_the_page_makes() {
     for (cmd, text) in PAGE_CALLS {
         assert!(src.contains(text), "{cmd}: `{text}` is nowhere in src/");
     }
+}
+
+/// The `core:*` permissions of `capabilities/default.json`, as the commands they allow.
+fn commands_of_default_json() -> std::collections::BTreeSet<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities/default.json");
+    let json: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    json["permissions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p.as_str()?.strip_prefix("core:"))
+        .map(|id| {
+            let (plugin, perm) = id.split_once(':').unwrap();
+            let cmd = perm.strip_prefix("allow-").unwrap_or_else(|| {
+                panic!("core:{id} is not a single command: name `allow-*` permissions only")
+            });
+            format!("plugin:{plugin}|{}", cmd.replace('-', "_"))
+        })
+        .collect()
+}
+
+#[test]
+fn the_capability_names_exactly_the_calls_the_page_makes() {
+    let page: std::collections::BTreeSet<String> =
+        PAGE_CALLS.iter().map(|(c, _)| c.to_string()).collect();
+    assert_eq!(commands_of_default_json(), page);
 }
