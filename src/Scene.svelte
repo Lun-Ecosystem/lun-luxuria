@@ -12,6 +12,7 @@
   import { Mouth, STATE_LABELS, type BodyState } from './body/body.ts';
   import { formerWaiting } from './desktop/dossiers.ts';
   import { inWindow } from './desktop/net.ts';
+  import { PROGRAMS, unconfirmed } from './desktop/voix.ts';
   import Fil from './Fil.svelte';
   import { Badge, Button, IconButton, Kbd, type Tone } from './lib/ui/index.ts';
   import type { Session } from './session.svelte.ts';
@@ -61,6 +62,10 @@
     if (formerWaiting(session, 'corps')) return 'corps';
     return s.voice.service.launch && formerWaiting(session, 'voix') ? 'voix' : null;
   });
+  // In the window, the programs its start left down, by name; in the small mode, after the folders: one line at a time.
+  const toConfirm = $derived(
+    inWindow && !(small && waits) ? unconfirmed(session).map((n) => PROGRAMS[n]) : [],
+  );
   let controls: HTMLDivElement;
   /** The instruction's button goes with what it did: the focus goes to the same control, at the top. */
   async function thenFocus(act: () => void, label: string) {
@@ -148,6 +153,12 @@
       <span class="echec" role="status">
         Les dossiers se choisissent de nouveau, dans les réglages.
         <button class="reprise" onclick={() => openSettings(waits)}>Choisir les dossiers</button>
+      </span>
+    {/if}
+    {#if toConfirm.length}
+      <span class="echec" role="status">
+        Les arguments de {toConfirm.join(' et de ')} sont à confirmer.
+        <button class="reprise" onclick={() => openSettings('voix')}>Confirmer les arguments</button>
       </span>
     {/if}
   </div>

@@ -284,16 +284,20 @@ function inUse(v: VoiceService): { name: ProgramName; url: string; program: Prog
 }
 
 /** The arguments the person confirmed, as the window keeps them; unreadable, none is confirmed. */
-async function readProgramArgs(session: Session, call: Call): Promise<void> {
+async function readProgramArgs(call: Call): Promise<Session['programArgs']> {
   const args = await Promise.resolve(call('program_arguments', {})).catch(() => null);
-  session.programArgs = args && typeof args === 'object' ? (args as Session['programArgs']) : {};
+  return args && typeof args === 'object' ? (args as Session['programArgs']) : {};
 }
 
-/** The `.exe` the person picked, and the arguments confirmed for each, as the window keeps them. */
+/**
+ * The `.exe` the person picked, and the arguments confirmed for each, as the window keeps them. Both set together,
+ * once both answered: an exe beside arguments not read yet would say them unconfirmed, or another's confirmed.
+ */
 export async function readProgramPaths(session: Session, call: Call = invoke): Promise<void> {
   const paths = await Promise.resolve(call('program_paths', {})).catch(() => null);
+  const args = await readProgramArgs(call);
   session.programPaths = paths && typeof paths === 'object' ? (paths as Session['programPaths']) : {};
-  await readProgramArgs(session, call);
+  session.programArgs = args;
 }
 
 /**
@@ -308,9 +312,10 @@ export async function pickProgram(
   try {
     const path = await call('program_pick', { name });
     if (typeof path !== 'string') return false;
+    // Another exe for this name drops its confirmation, on the window's side: both change together.
+    const args = await readProgramArgs(call);
     session.programPaths[name] = path;
-    // Another exe for this name drops its confirmation, on the window's side.
-    await readProgramArgs(session, call);
+    session.programArgs = args;
     return true;
   } catch (err) {
     return String(err);
@@ -325,8 +330,9 @@ export async function forgetProgram(
 ): Promise<true | string> {
   try {
     await call('program_forget', { name });
+    const args = await readProgramArgs(call);
     delete session.programPaths[name];
-    await readProgramArgs(session, call);
+    session.programArgs = args;
     return true;
   } catch (err) {
     return String(err);
@@ -392,17 +398,25 @@ export async function launchProgram(
   }
 }
 
+/** Each program in use, picked and asked to launch with the app. */
+const asked = (session: Session) =>
+  inUse(session.settings.voice.service).filter((p) => p.program.launch && session.programPaths[p.name]);
+
+/** Those the app's start leaves down, their arguments never confirmed: the scene says so. */
+export const unconfirmed = (session: Session): ProgramName[] =>
+  asked(session)
+    .filter((p) => session.programArgs[p.name] === undefined)
+    .map((p) => p.name);
+
 /**
  * At the window's start: each program in use, picked and asked to launch. One whose arguments were never confirmed
  * stays down: no dialog opens by itself, in the middle of a turn.
  */
 export async function startPrograms(session: Session, call: Call = invoke): Promise<boolean> {
-  const asked = inUse(session.settings.voice.service).filter(
-    (p) => p.program.launch && session.programPaths[p.name],
-  );
+  const waiting = unconfirmed(session);
   const started = await Promise.all(
-    asked.map(async (p) => {
-      if (session.programArgs[p.name] !== undefined) return launchProgram(session, p.name, call);
+    asked(session).map(async (p) => {
+      if (!waiting.includes(p.name)) return launchProgram(session, p.name, call);
       session.programs[p.name] = {
         said: 'Ses arguments sont à confirmer, dans les réglages avancés de la voix.',
       };

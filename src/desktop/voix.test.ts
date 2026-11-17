@@ -526,6 +526,53 @@ describe('whisper-server and RVC', () => {
       expect(session.programArgs.rvc).toBeUndefined();
     });
 
+    /** `first` answers at once; `program_arguments` waits for `answer`. */
+    const held = (first: string, value: unknown) => {
+      const at: { answer?: (v: unknown) => void } = {};
+      const call = vi.fn((cmd: string) =>
+        cmd === first ? Promise.resolve(value) : new Promise((r) => (at.answer = r)),
+      );
+      return { at, call };
+    };
+
+    it('at start, the exes and the arguments set together, once both answered', async () => {
+      const session = both();
+      session.programPaths = {};
+      session.programArgs = {};
+      const start = held('program_paths', { ...PATHS });
+      const reading = readProgramPaths(session, start.call);
+      await vi.waitFor(() => expect(start.at.answer).toBeDefined());
+      expect(session.programPaths).toEqual({});
+      start.at.answer!({ ...CONFIRMED });
+      await reading;
+      expect(session.programPaths).toEqual(PATHS);
+      expect(session.programArgs).toEqual(CONFIRMED);
+    });
+
+    it('« Choisir… »: never the new exe beside the old one’s confirmation, both change once read again', async () => {
+      const session = both();
+      const pick = held('program_pick', 'D:\\other\\rvc-server.exe');
+      const picking = pickProgram(session, 'rvc', pick.call);
+      await vi.waitFor(() => expect(pick.at.answer).toBeDefined());
+      expect(session.programPaths.rvc).toBe(PATHS.rvc);
+      pick.at.answer!({ 'whisper-server': ['-m', 'small.bin'] });
+      expect(await picking).toBe(true);
+      expect(session.programPaths.rvc).toBe('D:\\other\\rvc-server.exe');
+      expect(session.programArgs.rvc).toBeUndefined();
+    });
+
+    it('« Oublier »: the exe goes with its arguments, once they are read again', async () => {
+      const session = both();
+      const forget = held('program_forget', null);
+      const forgetting = forgetProgram(session, 'rvc', forget.call);
+      await vi.waitFor(() => expect(forget.at.answer).toBeDefined());
+      expect(session.programPaths.rvc).toBe(PATHS.rvc);
+      forget.at.answer!({ 'whisper-server': ['-m', 'small.bin'] });
+      expect(await forgetting).toBe(true);
+      expect(session.programPaths.rvc).toBeUndefined();
+      expect(session.programArgs).toEqual({ 'whisper-server': ['-m', 'small.bin'] });
+    });
+
     it('« Choisir… » refused: nothing is read again, the words come back, and the program’s state is left as it was', async () => {
       const session = both();
       const call = window_({ program_pick: new Error('Une boîte est déjà ouverte.') });

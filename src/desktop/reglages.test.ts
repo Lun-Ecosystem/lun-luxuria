@@ -39,6 +39,7 @@ vi.mock('@tauri-apps/api/core', async (real) => ({
 const { default: Reglages } = await import('../Reglages.svelte');
 const { toasts, dismissAll } = await import('../lib/ui/toasts.svelte.ts');
 const { Session } = await import('../session.svelte.ts');
+const { readProgramPaths } = await import('./voix.ts');
 
 beforeEach(() => {
   localStorage.clear();
@@ -438,7 +439,9 @@ describe('the arguments of a program, confirmed in the window', () => {
     });
   });
   const asked = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd);
-  const open = (over: { saved?: string[]; confirmed?: Record<string, string[]>; path?: boolean } = {}) => {
+  const open = (
+    over: { saved?: string[]; confirmed?: Record<string, string[]>; path?: boolean; launch?: boolean } = {},
+  ) => {
     localStorage.setItem(
       'luxuria.settings',
       JSON.stringify({
@@ -449,7 +452,7 @@ describe('the arguments of a program, confirmed in the window', () => {
             stt: {
               kind: NAME,
               url: 'http://127.0.0.1:8080',
-              program: { args: over.saved ?? SAVED, launch: false },
+              program: { args: over.saved ?? SAVED, launch: over.launch ?? false },
             },
           },
         },
@@ -475,6 +478,54 @@ describe('the arguments of a program, confirmed in the window', () => {
     expect(confirm()).toBeEnabled();
     expect(session.programArgs).toEqual({});
     expect(asked('program_args')).toHaveLength(0);
+  });
+
+  it('launched with the app, never confirmed: the folded block opens on them, said without an alert', async () => {
+    open({ launch: true });
+    await waitFor(() => expect(advanced()).toHaveAttribute('open'));
+    const notice = within(advanced()).getByText(/Pas encore confirmés/);
+    // A fixed text: an alert would be announced each time the screen opens.
+    expect(notice.closest('[role="alert"]')).toBeNull();
+  });
+
+  it('never confirmed but not launched with the app: nothing blocks, the block stays folded', () => {
+    open();
+    expect(screen.getByText(/Pas encore confirmés/)).toBeInTheDocument();
+    expect(advanced()).not.toHaveAttribute('open');
+  });
+
+  it('at the window’s start, the screen open: folded while the arguments are read, open only if they really miss', async () => {
+    for (const [kept, opens] of [
+      [{ [NAME]: SAVED }, false],
+      [{}, true],
+    ] as const) {
+      const session = open({ launch: true, path: false });
+      const at: { answer?: (v: unknown) => void } = {};
+      invoke.mockImplementation((cmd: string) =>
+        cmd === 'program_paths'
+          ? Promise.resolve({ [NAME]: EXE })
+          : cmd === 'program_arguments'
+            ? new Promise((r) => (at.answer = r))
+            : Promise.resolve(null),
+      );
+      const reading = readProgramPaths(session);
+      await vi.waitFor(() => expect(at.answer).toBeDefined());
+      // The observer of the folded block answers after the page's changes.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(advanced()).not.toHaveAttribute('open');
+      at.answer!(kept);
+      await reading;
+      await new Promise((r) => setTimeout(r, 0));
+      expect(advanced().hasAttribute('open')).toBe(opens);
+      cleanup();
+    }
+  });
+
+  it('a confirmation the window no longer keeps, while the screen is open: the block opens then', async () => {
+    const session = open({ launch: true, confirmed: { [NAME]: SAVED } });
+    expect(advanced()).not.toHaveAttribute('open');
+    session.programArgs = {};
+    await waitFor(() => expect(advanced()).toHaveAttribute('open'));
   });
 
   it('confirmed: « Confirmés : … » says them, and a draft equal to them offers no « Confirmer… »', () => {
