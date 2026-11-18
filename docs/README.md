@@ -56,7 +56,29 @@ filtre, depuis le délai réglé (15 minutes par défaut, de 1 à 240, carte « 
 serveur. Une session verrouillée ne reçoit aucune saisie : elle compte aussi. La première saisie, ou la première
 phrase qui passe le filtre, la reprend, avec l'accueil s'il est actif ; un bruit ou une phrase filtrée ne comptent
 pas. Le temps sans saisie se lit toutes les 30 s, toutes les 3 s pendant l'absence. L'absence ne change que ce qui est
-annoncé : l'écoute et la sourdine restent ce qu'elles sont.
+annoncé et l'essai à la courte pause, qui ne part pas ; l'écoute et la sourdine restent ce qu'elles sont. Un message
+attend que le serveur ait répondu à l'annonce du retour, 3 s au plus : passé ce délai, ou sur un échec, il part quand
+même, et les messages gardent leur ordre ; la sourdine posée pendant l'attente le retient.
+
+**Les messages d'échec.** Le message d'un service qui ne répond plus s'efface quand ce service répond de nouveau, sans
+rien annoncer ; une réponse ne compte que si sa requête est partie après le message. Le service voix (transcription,
+synthèse) : son sondage, `GET /voix/micro`, que la détection d'une autre appli utilise aussi, toutes les 3 s. Un
+sondage sans réponse en 3 s est coupé, et le tour qui tombe à ce moment ne part pas : un service figé est interrogé
+toutes les 6 s. Tout statut d'erreur autre que 404 (dont le 502 du mandataire de Vite), ou aucune réponse, dit « Le
+service voix ne répond plus. », une fois par panne, et seulement si rien d'autre n'est affiché. Une réponse efface tout
+message du service voix ; un 404, un service qui répond sans détection, n'efface que celui du sondage. Détection
+coupée, le sondage tourne quand même tant qu'un message du service voix est affiché, pour son seul retour : il ne
+touche ni à la détection ni au micro, et s'arrête quand le message part. Le serveur : le retour du flux `live`, un
+battement ou un démarrage de la présence qui répondent ; un message du serveur posé pendant une absence part donc au
+retour, quand le démarrage répond. Compte comme une panne du serveur ce qui ne lui parvient pas ou n'en revient pas :
+une phrase dont l'envoi échoue, quel qu'en soit le statut, ou dont le flux casse, aucune phrase de la réponse en 60 s,
+une coupure ou un retrait non transmis, un message écrit arrêté par le réseau, par le transport de la fenêtre ou par
+un statut 500 ou plus. Compte comme un refus ce que le serveur répond en erreur (une réponse finie en erreur, dont le
+plafond ; un statut 4xx à un message écrit) et, seul, ce que le modèle répond en erreur. Un refus, le micro et le
+modèle qui reconnaît la voix n'ont pas de service à attendre. Tout message part
+aussi quand une phrase est dite d'une réponse reçue après lui, jamais de la sienne, ou quand un message écrit passe.
+Seul, sans flux ni battement, un message du serveur (un modèle figé jusqu'à la garde) reste jusqu'à la prochaine
+réponse. Sous la sourdine, le sondage et le battement continuent : ce qu'elle ne dit pas n'efface rien.
 
 Ce qui change dans la fenêtre, et seulement là (carte « La fenêtre » des Réglages) :
 
@@ -132,6 +154,17 @@ phrase est transcrite et envoyée, et sa réponse **se prépare sans se dire**. 
 retirée (`withdraw`). À la fin réelle, la réponse sort. Une prise de parole de plus de 400 ms pendant la réponse l'arrête,
 et ce qui a été entendu remonte (`cut`).
 
+Si ce n'était pas pour elle (une toux, une phrase pour quelqu'un d'autre), elle reprend, et une réponse que cette parole
+retenait sort : seulement quand toutes les phrases finies ont leur verdict et qu'aucune n'est en cours. Un bruit qui
+commence une phrase retarde la reprise jusqu'à sa fin, le silence de fin, 0,7 s par défaut.
+
+Sa voix ne reprend pas aussitôt : elle attend « Attente avant de reprendre » (Réglages › Écoute, réglages avancés),
+0,3 s par défaut, de 0 à 1 s, 0 pour reprendre aussitôt. Une phrase qui commence dans ce temps la garde muette ; un
+nouveau bruit relance l'attente. Une réponse retenue est relâchée sans attendre, mais derrière une voix suspendue,
+elle ne sonne qu'après la reprise de cette voix. Quand le micro s'arrête, sa voix reprend tout de suite ; le bouton qui
+la fait taire annule l'attente. Sa limite : l'attente déplace la falaise à environ 1 s après le bruit, elle ne la
+supprime pas. Une parole qui commence après l'attente est encore couverte jusqu'à sa tenue (lun-luxuria#63).
+
 Le filtre ne regarde qu'une phrase transcrite localement : refusée, elle ne part jamais.
 
 « Autour de toi » (Réglages › Écoute) a trois préréglages : « Pièce calme », « Normal », les valeurs par défaut, et
@@ -161,6 +194,9 @@ le fil le garde écrit. Le plafond est vérifié avant l'appel : la réponse qui
 terme, la suivante est refusée. Le fil ne garde que le jour courant. Une clé ne part jamais en clair hors du poste.
 
 **Relié** (`src/core.ts`), entrant : `speech { id, n, text, why }` et `speech-end { id, why }` sur `GET /api/live`.
+Le corps en dépend : un numéro de réponse ne sert qu'une fois, et rien ne suit sa fin de parole (des mots venus après
+elle sont ignorés). Une réponse que son `done` dit menée à bout se dit par le live, même si le flux de son envoi casse
+ensuite.
 Sortant :
 
 | Quand | Appel |

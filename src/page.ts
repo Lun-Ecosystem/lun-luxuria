@@ -22,12 +22,13 @@ export function watchPage(leave: () => void, back: () => void, shown: () => void
 
 /**
  * The starts and beats of a presence. A refused beat announces again, unless an announce began after
- * that beat left: a return from the history cache sends both, and the refusal may land last.
+ * that beat left: a return from the history cache sends both, and the refusal may land last. A beat
+ * gives back its answer, undefined when it had none.
  */
-export function presenceKeeper(
+export function presenceKeeper<T>(
   start: () => Promise<void>,
-  beat: () => Promise<unknown>,
-): { announce: () => Promise<void>; beat: () => Promise<void> } {
+  beat: () => Promise<T>,
+): { announce: () => Promise<void>; beat: () => Promise<T | undefined> } {
   let starts = 0;
   const announce = single(() => {
     starts++;
@@ -39,6 +40,7 @@ export function presenceKeeper(
       const before = starts;
       const answer = await beat().catch(() => undefined);
       if (answer === 'gone' && starts === before) await announce();
+      return answer;
     },
   };
 }

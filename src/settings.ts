@@ -22,7 +22,8 @@ export interface Settings {
   key: { on: boolean; code: string };
   busy: { on: boolean; ignored: string[]; returnSeconds: number };
   traceIgnored: boolean;
-  bargeIn: { on: boolean; mode: 'soft' | 'now'; holdMs: number };
+  /** `resumeMs`: after a sound that was not for her, she waits this long before resuming; 0, at once. */
+  bargeIn: { on: boolean; mode: 'soft' | 'now'; holdMs: number; resumeMs: number };
   endOfSpeech: {
     silenceMs: number;
     /** Sends at the first pause, and takes it back if the speaker goes on. Off: waits for the end. */
@@ -96,7 +97,7 @@ export const DEFAULTS: Settings = {
   key: { on: true, code: 'F9' },
   busy: { on: true, ignored: ['obs64.exe'], returnSeconds: 5 },
   traceIgnored: true,
-  bargeIn: { on: true, mode: 'now', holdMs: 400 },
+  bargeIn: { on: true, mode: 'now', holdMs: 400, resumeMs: 300 },
   endOfSpeech: { silenceMs: 700, speculate: true, pauseMs: 160, model: true, floorDb: -50, minSpeechMs: 250 },
   speak: { ritual: true, p0: true, spontaneous: true },
   voice: {
@@ -195,6 +196,8 @@ export function readSettings(raw: string | null): Settings {
     // Only the type is checked by the merge: an unknown transcription comes back to the local one.
     const stt = settings.voice.service.stt;
     if (stt.kind !== 'faster' && stt.kind !== 'whisper-server') stt.kind = 'faster';
+    // Bounded as the screen bounds it: a value written by hand never holds her voice for long.
+    settings.bargeIn.resumeMs = Math.min(1000, Math.max(0, settings.bargeIn.resumeMs));
     return settings;
   } catch {
     return structuredClone(DEFAULTS);

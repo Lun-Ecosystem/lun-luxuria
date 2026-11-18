@@ -8,6 +8,8 @@ import { delays, Trace, type TraceEvent } from './trace.ts';
 
 /** The trace each mechanism of the page writes, case by case. */
 
+/** Her voice is back after the default wait. */
+const resumed = () => new Promise((r) => setTimeout(r, DEFAULTS.bargeIn.resumeMs + 30));
 const tick = async () => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r));
 };
@@ -222,6 +224,7 @@ describe('the trace of a turn', () => {
     t.advance(300);
     t.hear({ type: 'noise' });
     await tick();
+    await resumed();
     expect(seq(t.trace.events)).toEqual([
       'phrase_recue r50',
       'synthese:debut r50',
@@ -285,6 +288,7 @@ describe('the trace of a turn', () => {
     t.hear({ type: 'held' });
     t.hear({ type: 'noise' });
     await tick();
+    await resumed();
     expect(find(t, 'son').map((e) => [e['etape'], e['rang']])).toEqual([
       ['debut', 1],
       ['fin', undefined],

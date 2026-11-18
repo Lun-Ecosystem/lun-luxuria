@@ -1,7 +1,8 @@
 /**
  * The version of the file's format: the scenarios read these names, a change of meaning is a new version.
  * 2: `retenue`, `relachee`, `oubliee` added; `verdict` says by which rule (`par`) a sentence passed; `son` at its
- * start says which sentence of the reply sounds (`rang`).
+ * start says which sentence of the reply sounds (`rang`). `attente_retour` added since, on the same version: no name
+ * changed its meaning.
  */
 export const TRACE_FORMAT = 2;
 
@@ -18,6 +19,8 @@ export type TraceName =
   | 'transcrite'
   | 'verdict'
   | 'envoyee'
+  // Its send waited for the presence coming back (`duree`): written when the wait ends, before it leaves or not.
+  | 'attente_retour'
   | 'numero'
   | 'retiree'
   | 'confirmee'

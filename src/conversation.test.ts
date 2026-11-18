@@ -8,6 +8,8 @@ import { Trace } from './trace.ts';
 const tick = async () => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r));
 };
+/** Her voice is back after the default wait (real timers: the tests that use fake ones advance them by it). */
+const resumed = () => new Promise((r) => setTimeout(r, DEFAULTS.bargeIn.resumeMs + 30));
 const AUDIO = new Float32Array(1);
 const CLIP: Clip = { samples: new Float32Array(1), rate: 16000 };
 const message = (id: number): Message => ({
@@ -29,6 +31,8 @@ function setup(
   throws?: string,
   /** One per send, in order, in place of its stream: `id` numbers its message, `id + 100` its reply. */
   streams: ((on: (e: SendEvent) => void, id: number) => Promise<void>)[] = [],
+  /** The server answers a cut with this error: the call is made all the same. */
+  cutFails?: string,
 ) {
   let clock = 1000;
   const trace = new Trace(() => clock);
@@ -44,6 +48,11 @@ function setup(
       return { stop: () => calls.push('sound stop'), heard: () => s.ratio };
     },
   };
+  const speaker = new Speaker(
+    async () => CLIP,
+    out,
+    (e) => convo.onSpeaker(e),
+  );
   const convo: Conversation = new Conversation({
     brain: {
       send: async (text, opts, on) => {
@@ -56,7 +65,10 @@ function setup(
         on({ type: 'reply', id: id + 100 });
         if (refuse) on({ type: 'done', message: { ...message(id), status: 'error', error: refuse } });
       },
-      cut: async (id, said) => void calls.push(`cut ${id} "${said}"`),
+      cut: async (id, said) => {
+        calls.push(`cut ${id} "${said}"`);
+        if (cutFails) throw new Error(cutFails);
+      },
       withdraw: async (id) => void calls.push(`withdraw ${id}`),
     },
     stt: async (_, signal) => {
@@ -64,11 +76,7 @@ function setup(
       if (heard instanceof Error) throw heard;
       return { text: typeof heard === 'string' ? heard : (heard.shift() ?? ''), confidence: 0.9 };
     },
-    speaker: new Speaker(
-      async () => CLIP,
-      out,
-      (e) => convo.onSpeaker(e),
-    ),
+    speaker,
     settings: () => ({ ...DEFAULTS, ...over }),
     layout: () => 'scene',
     keyHeld: () => false,
@@ -79,7 +87,7 @@ function setup(
   });
   const say = (id: number, text: string) => convo.onLive({ type: 'speech', id, n: 1, text, why: 'reply' });
   const advance = (ms: number) => (clock += ms);
-  return { convo, calls, events, sounds, sends, say, advance, trace };
+  return { convo, calls, events, sounds, sends, say, advance, trace, speaker };
 }
 
 describe('addressed: a phrase for her, said once the sentence is over', () => {
@@ -284,6 +292,7 @@ describe('cutting it off', () => {
       const thinking = t.events.filter((e) => e.type === 'thinking').length;
       what(t);
       await tick();
+      await resumed();
       expect(t.calls).toEqual(['sound stop']);
       expect(t.sounds).toHaveLength(2);
       t.sounds[1]!.end();
@@ -356,6 +365,7 @@ describe('cutting it off', () => {
     aside.advance(20_000);
     aside.convo.onEndpoint(ended);
     await tick();
+    await resumed();
     expect(aside.calls).toEqual(['sound stop']);
     expect(aside.sounds).toHaveLength(2);
 
@@ -404,10 +414,14 @@ describe('cutting it off', () => {
 
   it('she does not resume while a sentence that ended may still be for her, nor over one he holds', async () => {
     const FILTERED = { filter: { scene: true, small: true } };
-    const cough = await suspended();
+    const v = verdicts();
+    const cough = await suspended({}, v.stt);
     cough.convo.onEndpoint(ended);
     cough.convo.onEndpoint({ type: 'noise' });
+    // Its verdict comes only after the wait could have ended: what may still be for her keeps her silent all along.
+    await resumed();
     expect(cough.sounds).toHaveLength(1);
+    v.give(0, 'Bonjour toi');
     await tick();
     expect(cough.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
 
@@ -416,9 +430,11 @@ describe('cutting it off', () => {
     over.convo.onEndpoint(ended);
     over.convo.onEndpoint({ type: 'held' });
     await tick();
+    await resumed();
     expect(over.sounds).toHaveLength(1);
     over.convo.onEndpoint(ended);
     await tick();
+    await resumed();
     expect(over.sounds).toHaveLength(2);
     expect(over.calls).toEqual(['sound stop']);
   });
@@ -459,6 +475,7 @@ describe('cutting it off', () => {
     t.convo.silence();
     t.convo.onEndpoint({ type: 'noise' });
     await tick();
+    await resumed();
     expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
     expect(t.sounds).toHaveLength(1);
   });
@@ -591,6 +608,430 @@ describe('cutting it off', () => {
     expect(t.calls).toEqual(['cut 110 ""']);
   });
 
+  /** Each transcription waits for `give`, numbered from 0 in the order of the sentences that ended; an error fails it. */
+  function verdicts() {
+    const waiting: ((text: string | Error) => void)[] = [];
+    const stt = (): Promise<Heard> =>
+      new Promise((ok, fail) =>
+        waiting.push((text) => (text instanceof Error ? fail(text) : ok({ text, confidence: 0.9 }))),
+      );
+    return { stt, give: (i: number, text: string | Error) => waiting[i]!(text) };
+  }
+  const ASIDE = 'Sous-titres par Amara.org';
+
+  /** Her reply 110 is on its way; sentences A then B both end before either has a verdict. */
+  async function twoEnded() {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    v.give(0, 'Bonjour toi');
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(3000));
+    return { ...v, t };
+  }
+
+  it('a reply held back waits for every sentence that ended: the later one for her forgets it', async () => {
+    const { t, give } = await twoEnded();
+    give(1, ASIDE);
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    expect(t.calls).toEqual([]);
+    give(2, 'Bonjour toi');
+    await tick();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(t.sounds).toHaveLength(0);
+  });
+
+  it('the later one asks nothing too: it comes out once, after the last verdict', async () => {
+    const { t, give } = await twoEnded();
+    give(1, ASIDE);
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    give(2, ASIDE);
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual([]);
+    expect(t.trace.events.filter((e) => e.name === 'relachee')).toHaveLength(1);
+  });
+
+  it('the sound that held it back was its own sentence: the next sentence still holds a reply back', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    // Held while its own sentence is still transcribed: it had no reply to hold.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    v.give(0, ASIDE);
+    await tick();
+    // The next sentence asks (its reply is 110: the first send), and a third voice must hold it back in its turn.
+    t.convo.onEndpoint({ type: 'held' });
+    v.give(1, 'Bonjour toi');
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    t.convo.onEndpoint(end(5000));
+    v.give(2, ASIDE);
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual([]);
+  });
+
+  it('a verdict after the next sentence began does not resume her over it', async () => {
+    const t = await suspended({}, ASIDE);
+    t.convo.onEndpoint(ended);
+    t.convo.onEndpoint({ type: 'start' });
+    await tick();
+    await resumed();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.calls).toEqual(['sound stop']);
+    // That sentence was only a noise: now nothing is said, and she goes on.
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    await resumed();
+    expect(t.sounds).toHaveLength(2);
+  });
+
+  it('held back by its own sound, a sentence for her still answers once the later one asked nothing', async () => {
+    const aside = verdicts();
+    const later = setup(NO_TRY, aside.stt);
+    later.convo.onEndpoint(end(1000));
+    later.convo.onEndpoint({ type: 'held' });
+    later.convo.onEndpoint(end(2000));
+    aside.give(1, ASIDE);
+    await tick();
+    aside.give(0, 'Bonjour toi');
+    await tick();
+    later.say(110, 'Je réponds.');
+    await tick();
+    expect(later.sounds).toHaveLength(1);
+
+    // The later sound was only a noise.
+    const cough = verdicts();
+    const noise = setup(NO_TRY, cough.stt);
+    noise.convo.onEndpoint(end(1000));
+    noise.convo.onEndpoint({ type: 'held' });
+    noise.convo.onEndpoint({ type: 'noise' });
+    cough.give(0, 'Bonjour toi');
+    await tick();
+    noise.say(110, 'Je réponds.');
+    await tick();
+    expect(noise.sounds).toHaveLength(1);
+  });
+
+  it('a sentence begun after the last verdict still holds the reply back, until it is only a noise', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    v.give(0, 'Bonjour toi');
+    await tick();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    t.convo.onEndpoint({ type: 'start' });
+    v.give(1, ASIDE);
+    await tick();
+    t.say(110, 'Je réponds.');
+    await tick();
+    expect(t.sounds).toHaveLength(0);
+    t.convo.onEndpoint({ type: 'noise' });
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    // The sentence that asked nothing does not time the reply, even though a noise let it out.
+    expect(t.events.filter((e) => e.type === 'latency')).toEqual([]);
+  });
+
+  it('a late verdict for a sentence already replaced takes back nothing said since', async () => {
+    // C judged before A, or after.
+    for (const cLast of [false, true]) {
+      // A is for her and slow; B holds it back and is judged for her first (110); C holds 110 back and asks nothing.
+      const v = verdicts();
+      const t = setup(NO_TRY, v.stt);
+      t.convo.onEndpoint(end(1000));
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(2000));
+      v.give(1, 'Bonjour toi');
+      await tick();
+      t.convo.onEndpoint({ type: 'start' });
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(3000));
+      const late: [number, string][] = [
+        [2, ASIDE],
+        [0, 'Bonjour toi'],
+      ];
+      for (const [i, text] of cLast ? late.reverse() : late) {
+        v.give(i, text);
+        await tick();
+      }
+      t.say(110, 'Pour B.');
+      t.say(111, 'Pour A.');
+      await tick();
+      expect(t.sounds, `C last: ${cLast}`).toHaveLength(1);
+      expect(t.calls, `C last: ${cLast}`).toEqual(['cut 111 ""']);
+    }
+  });
+
+  it('nor does it stop the clock of the newer sentence: its reply is still timed', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    v.give(1, 'Bonjour toi');
+    await tick();
+    // A cough holds 110 back while A is still transcribed.
+    for (const type of ['start', 'held', 'noise'] as const) t.convo.onEndpoint({ type });
+    v.give(0, 'Bonjour toi');
+    await tick();
+    t.say(110, 'Pour B.');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    expect(t.events.filter((e) => e.type === 'latency')).toHaveLength(1);
+  });
+
+  it('nor does it cut the newer reply as it sounds', async () => {
+    const v = verdicts();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(end(1000));
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint(end(2000));
+    v.give(1, 'Bonjour toi');
+    await tick();
+    t.say(110, 'Pour B.');
+    await tick();
+    expect(t.sounds).toHaveLength(1);
+    v.give(0, 'Bonjour toi');
+    await tick();
+    expect(t.calls).toEqual(['cut 111 ""']);
+  });
+
+  /** Sentences 0 to 2 are said (`said`) in order, each judged (`judged`) after it ended, in any order between them. */
+  function timelines(): string[][] {
+    const out: string[][] = [];
+    const grow = (line: string[], said: number, judged: number[]) => {
+      if (line.length === 6) return void out.push(line);
+      if (said < 3) grow([...line, `said${said}`], said + 1, judged);
+      for (const k of [0, 1, 2])
+        if (k < said && !judged.includes(k)) grow([...line, `judged${k}`], said, [...judged, k]);
+    };
+    grow([], 0, []);
+    return out;
+  }
+  const HEARD = { elle: 'Bonjour toi', rien: ASIDE, panne: new Error('panne') };
+  type Heard3 = keyof typeof HEARD;
+  const kinds = Object.keys(HEARD) as Heard3[];
+  /** A reply already on its way, or not; what each of the three sentences turns out to be. */
+  const lastVerdicts = [false, true].flatMap((ahead) =>
+    kinds.flatMap((a) => kinds.flatMap((b) => kinds.map((c) => ({ ahead, said: [a, b, c] })))),
+  );
+
+  it.each(lastVerdicts)(
+    'after the last verdict, nothing open: the last sentence for her answers, and every reply sounds or is ' +
+      'forgotten (ahead $ahead, $said, every order of verdicts, a cough anywhere)',
+    async ({ ahead, said }) => {
+      // Nothing here waits on a timer: the turn of the loop after every promise is enough.
+      const settle = () => new Promise<void>((ok) => setImmediate(ok));
+      for (const line of timelines())
+        for (let cough = -1; cough < line.length; cough++) {
+          const name = `${line.join(' ')}, cough before ${line[cough] ?? 'nothing'}`;
+          const v = verdicts();
+          const t = setup(NO_TRY, v.stt);
+          // The sentences for her, in the order they were sent; -1 is the reply already on its way.
+          const sent: number[] = [];
+          let n = 0;
+          if (ahead) {
+            t.convo.onEndpoint(end(500));
+            v.give(n++, 'Bonjour toi');
+            sent.push(-1);
+            await settle();
+          }
+          const first = n;
+          for (const [i, step] of line.entries()) {
+            if (cough === i)
+              for (const type of ['start', 'held', 'noise'] as const) t.convo.onEndpoint({ type });
+            const k = Number(step.at(-1));
+            if (step.startsWith('said')) {
+              for (const type of ['start', 'held'] as const) t.convo.onEndpoint({ type });
+              t.convo.onEndpoint(end(1000 * (k + 1)));
+            } else {
+              v.give(first + k, HEARD[said[k]!]);
+              if (said[k] === 'elle') sent.push(k);
+            }
+            await settle();
+          }
+          for (let r = 0; r < t.sends.length; r++) {
+            t.say(110 + r, `Réponse ${r}.`);
+            t.convo.onLive({ type: 'speech-end', id: 110 + r, why: 'reply' });
+          }
+          await settle();
+          for (let s = 0; s < t.sounds.length; s++) {
+            t.sounds[s]!.end();
+            await settle();
+          }
+          expect(t.sends, name).toHaveLength(sent.length);
+          const cut = t.calls.filter((c) => c.startsWith('cut ')).length;
+          expect(t.sounds.length + cut, name).toBe(t.sends.length);
+          if (sent.length === 0) continue;
+          const sounded = t.trace.events.filter((e) => e.name === 'premier_son').map((e) => e.reponse);
+          expect(sounded, name).toContain(110 + sent.indexOf(Math.max(...sent)));
+        }
+    },
+  );
+
+  const thinkingOf = (events: ConversationEvent[]) =>
+    events.filter((e) => e.type === 'thinking').at(-1) ?? { type: 'thinking', on: false };
+  /** Which of the replies, in the order they were sent, end in error: none, all, the first, or the one of the last sentence. */
+  const WHICH = ['none', 'all', 'first', 'last'] as const;
+  /** How: its done in error; the same, then its words and their end, late (two connections); or its stream breaks. */
+  const HOW = ['done', 'late', 'throws'] as const;
+  // As soon as sent, the last sentence for her is not known yet: `last` would only replay `soon: false`.
+  // Halved twice, on what found nothing more: no reply already on its way (the runs above play it), and one order of
+  // the verdicts in two. Every way and every mode stays played; the mutations of the memory and of `#over` still die.
+  const errorRuns = [true, false].flatMap((soon) =>
+    WHICH.filter((which) => !soon || (which !== 'none' && which !== 'last')).flatMap((which) =>
+      (which === 'none' ? HOW.slice(0, 1) : HOW).flatMap((how) =>
+        lastVerdicts.filter((c) => !c.ahead).map((c) => ({ ...c, which, how, soon })),
+      ),
+    ),
+  );
+  const someLines = timelines().filter((_, i) => i % 2 === 0);
+
+  it.each(errorRuns)(
+    'the reply of a sentence ends in error: nothing stays held, the last one for her still answers, and each ' +
+      'error is said at most once, that of the last one for her once (ahead $ahead, $said, errors on $which, ' +
+      'by $how, $soon, one order in two, a cough anywhere)',
+    async ({ ahead, said, which, how, soon }) => {
+      const settle = () => new Promise<void>((ok) => setImmediate(ok));
+      for (const line of someLines)
+        for (let cough = -1; cough < line.length; cough++) {
+          const name = `${line.join(' ')}, cough before ${line[cough] ?? 'nothing'}`;
+          const v = verdicts();
+          // Each stream numbers its reply and stays open, until it breaks or never.
+          const breaks: ((err: Error) => void)[] = [];
+          const t = setup(
+            NO_TRY,
+            v.stt,
+            () => false,
+            undefined,
+            undefined,
+            Array.from({ length: 5 }, () => async (on: (e: SendEvent) => void, id: number) => {
+              on({ type: 'user', message: message(id) });
+              on({ type: 'reply', id: id + 100 });
+              return new Promise<void>((_, reject) => breaks.push(reject));
+            }),
+          );
+          const sent: number[] = [];
+          const errored = new Set<number>();
+          /** What the calls were when each reply erred: nothing after cuts it. */
+          const callsAt = new Map<number, number>();
+          const told = (r: number) =>
+            how === 'throws' ? `Sa réponse n’est pas venue : flux coupé ${r}` : `Plafond atteint ${r}`;
+          const fail = (r: number) => {
+            errored.add(r);
+            callsAt.set(r, t.calls.length);
+            if (how === 'throws') breaks[r]!(new Error(`flux coupé ${r}`));
+            else
+              t.sends[r]!.on({
+                type: 'done',
+                message: { ...message(10 + r), status: 'error', error: `Plafond atteint ${r}` },
+              });
+            if (how === 'late') {
+              t.say(110 + r, 'Trop tard.');
+              t.convo.onLive({ type: 'speech-end', id: 110 + r, why: 'reply' });
+            }
+          };
+          /** Whether the reply sent as `r` (of the `sent.length` so far) is one that errs. */
+          const errs = (r: number, last: boolean) =>
+            which === 'all' || (which === 'first' ? r === 0 : which === 'last' && last);
+          let n = 0;
+          if (ahead) {
+            t.convo.onEndpoint(end(500));
+            v.give(n++, 'Bonjour toi');
+            sent.push(-1);
+            await settle();
+            if (soon && errs(0, false)) fail(0);
+          }
+          const first = n;
+          for (const [i, step] of line.entries()) {
+            if (cough === i)
+              for (const type of ['start', 'held', 'noise'] as const) t.convo.onEndpoint({ type });
+            const k = Number(step.at(-1));
+            if (step.startsWith('said')) {
+              for (const type of ['start', 'held'] as const) t.convo.onEndpoint({ type });
+              t.convo.onEndpoint(end(1000 * (k + 1)));
+            } else {
+              v.give(first + k, HEARD[said[k]!]);
+              if (said[k] === 'elle') sent.push(k);
+            }
+            await settle();
+            // Its error comes as soon as it is sent; whether it is the last for her is only known at the end.
+            if (soon && step.startsWith('judged') && said[k] === 'elle' && errs(sent.length - 1, false))
+              fail(sent.length - 1);
+          }
+          const lastReply = sent.length ? sent.indexOf(Math.max(...sent)) : -1;
+          for (let r = 0; r < t.sends.length; r++) {
+            if (errored.has(r)) continue;
+            if (errs(r, r === lastReply)) fail(r);
+            else {
+              t.say(110 + r, `Réponse ${r}.`);
+              t.convo.onLive({ type: 'speech-end', id: 110 + r, why: 'reply' });
+            }
+          }
+          await settle();
+          for (let s = 0; s < t.sounds.length; s++) {
+            t.sounds[s]!.end();
+            await settle();
+          }
+          const sounded = () => t.trace.events.filter((e) => e.name === 'premier_son').map((e) => e.reponse);
+          expect(t.sends, name).toHaveLength(sent.length);
+          // Each reply that does not err sounds or is forgotten; one that errs never sounds.
+          for (let r = 0; r < t.sends.length; r++) {
+            if (errored.has(r)) expect(sounded(), `${name}, reply ${r} errs`).not.toContain(110 + r);
+            else
+              expect(
+                sounded().includes(110 + r) || t.calls.some((c) => c.startsWith(`cut ${110 + r} `)),
+                `${name}, reply ${r} sounds or is forgotten`,
+              ).toBe(true);
+          }
+          if (lastReply >= 0 && !errored.has(lastReply)) expect(sounded(), name).toContain(110 + lastReply);
+          // Each error is told at most once; that of the last sentence for her, which nothing replaced, exactly once.
+          // Nothing of a reply sounded after its error, so nothing cuts it.
+          for (const r of errored) {
+            const messages = t.events.filter((e) => e.type === 'failed' && e.text === told(r));
+            expect(messages.length, `${name}, reply ${r} told`).toBe(
+              r === lastReply ? 1 : Math.min(messages.length, 1),
+            );
+            const after = t.calls.slice(callsAt.get(r));
+            expect(
+              after.filter((c) => c.startsWith(`cut ${110 + r} `)),
+              `${name}, reply ${r} cut`,
+            ).toEqual([]);
+          }
+          // Nothing is held, nothing waits: a sentence for her, once everything is over, is answered at once.
+          expect(t.speaker.speaking, name).toBe(false);
+          const before = t.sends.length;
+          for (const type of ['start', 'held'] as const) t.convo.onEndpoint({ type });
+          t.convo.onEndpoint(end(9000));
+          v.give(first + 3, 'Bonjour toi');
+          await settle();
+          expect(t.sends, name).toHaveLength(before + 1);
+          t.say(110 + before, 'Et ensuite.');
+          t.convo.onLive({ type: 'speech-end', id: 110 + before, why: 'reply' });
+          await settle();
+          expect(sounded(), `${name}, the next sentence is answered`).toContain(110 + before);
+          t.sounds.at(-1)!.end();
+          await settle();
+          expect(thinkingOf(t.events), name).toEqual({ type: 'thinking', on: false });
+        }
+    },
+  );
+
   it('a reply already heard is never taken back afterwards', async () => {
     const t = setup(NO_TRY);
     t.convo.onEndpoint(end(1000));
@@ -636,6 +1077,230 @@ describe('cutting it off', () => {
     t.convo.silence();
     await tick();
     expect(t.calls).toContain('cut 50 "Une"');
+  });
+
+  describe('the wait before she resumes her voice', () => {
+    // A false clock: `tick` would wait on it, `flush` lets what is due happen, `later` moves it.
+    beforeEach(() => void vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+    afterEach(() => void vi.useRealTimers());
+    const flush = () => vi.advanceTimersByTimeAsync(0);
+    const later = (ms: number) => vi.advanceTimersByTimeAsync(ms);
+    const WAIT = 300;
+    /** The wait set on its own: `NO_TRY` for the sentences, `resumeMs` for her. */
+    const waits = (resumeMs = WAIT) => ({ ...NO_TRY, bargeIn: { ...DEFAULTS.bargeIn, resumeMs } });
+    const LONG = 'Une phrase assez longue pour être coupée.';
+    /** She is in the middle of a long reply, and a voice holds over hers. */
+    async function silenced(...args: Parameters<typeof setup>) {
+      const t = setup(...args);
+      t.say(50, LONG);
+      t.say(50, 'La suite.');
+      await flush();
+      t.convo.onEndpoint({ type: 'held' });
+      await flush();
+      expect(t.calls).toEqual(['sound stop']);
+      expect(t.sounds).toHaveLength(1);
+      return t;
+    }
+
+    it('the settings of the tests below are the real ones: the default wait is 300 ms', async () => {
+      const t = await silenced(NO_TRY);
+      t.convo.onEndpoint({ type: 'noise' });
+      await later(WAIT - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+    });
+
+    it('after a sound that was nothing she resumes resumeMs later; a start in that wait keeps her silent', async () => {
+      const t = await silenced(waits());
+      t.convo.onEndpoint({ type: 'noise' });
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      await later(WAIT - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+
+      // A sentence begins in the wait: no resumption, however long it lasts.
+      const over = await silenced(waits());
+      over.convo.onEndpoint({ type: 'noise' });
+      await later(100);
+      over.convo.onEndpoint({ type: 'start' });
+      await later(5 * WAIT);
+      expect(over.sounds).toHaveLength(1);
+      // It was only a noise: the wait starts over, from now.
+      over.convo.onEndpoint({ type: 'noise' });
+      await later(WAIT - 1);
+      expect(over.sounds).toHaveLength(1);
+      await later(1);
+      expect(over.sounds).toHaveLength(2);
+    });
+
+    it('a noise during the wait starts it again, and there is one timer only', async () => {
+      const t = await silenced(waits());
+      const base = vi.getTimerCount();
+      t.convo.onEndpoint({ type: 'noise' });
+      expect(vi.getTimerCount()).toBe(base + 1);
+      await later(200);
+      t.convo.onEndpoint({ type: 'noise' });
+      expect(vi.getTimerCount()).toBe(base + 1);
+      await later(WAIT - 200 + 1);
+      // The first wait would have ended by now.
+      expect(t.sounds).toHaveLength(1);
+      await later(199 - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+    });
+
+    it('resumeMs 0 resumes at once, as before, and arms nothing', async () => {
+      const t = await silenced(waits(0));
+      const base = vi.getTimerCount();
+      t.convo.onEndpoint({ type: 'noise' });
+      // Before the flush: a timer of 0 ms would be gone after it.
+      expect(vi.getTimerCount()).toBe(base);
+      await flush();
+      expect(t.sounds).toHaveLength(2);
+      expect(vi.getTimerCount()).toBe(base);
+    });
+
+    it('resumeMs 0: she still does not resume while a sentence that ended waits for its verdict', async () => {
+      const v = verdicts();
+      const t = await silenced(waits(0), v.stt);
+      t.convo.onEndpoint(end(1000));
+      t.convo.onEndpoint({ type: 'noise' });
+      await later(5 * WAIT);
+      expect(t.sounds).toHaveLength(1);
+      v.give(0, ASIDE);
+      await flush();
+      expect(t.sounds).toHaveLength(2);
+      expect(t.calls).toEqual(['sound stop']);
+    });
+
+    it('the microphone stops: she resumes at once, in the wait too', async () => {
+      const t = await silenced(waits());
+      t.convo.stopListening();
+      await flush();
+      expect(t.sounds).toHaveLength(2);
+
+      const during = await silenced(waits());
+      during.convo.onEndpoint({ type: 'noise' });
+      await later(100);
+      const base = vi.getTimerCount();
+      during.convo.stopListening();
+      await flush();
+      expect(during.sounds).toHaveLength(2);
+      expect(vi.getTimerCount()).toBe(base - 1);
+      await later(WAIT);
+      expect(during.sounds).toHaveLength(2);
+    });
+
+    it('the button during the wait: nothing resumes, and its timer is cut', async () => {
+      const t = await silenced(waits());
+      const base = vi.getTimerCount();
+      t.convo.onEndpoint({ type: 'noise' });
+      expect(vi.getTimerCount()).toBe(base + 1);
+      t.convo.silence();
+      expect(vi.getTimerCount()).toBe(base);
+      await later(5 * WAIT);
+      expect(t.sounds).toHaveLength(1);
+      expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+    });
+
+    it('a sentence for her in the wait: nothing resumes, its timer is cut, a later suspension waits its own time', async () => {
+      const t = await silenced(waits());
+      const base = vi.getTimerCount();
+      t.convo.onEndpoint({ type: 'noise' });
+      expect(vi.getTimerCount()).toBe(base + 1);
+      await later(100);
+      // A word too short to hold her, said in the wait, and for her.
+      t.convo.onEndpoint(end(1000));
+      await flush();
+      expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"']);
+      t.say(110, 'Oui ?');
+      await flush();
+      expect(t.sounds).toHaveLength(2);
+      // The first wait would have ended at 300: it was cut with her voice.
+      await later(WAIT);
+      expect(t.sounds).toHaveLength(2);
+      expect(vi.getTimerCount()).toBe(base);
+      // Held over her answer, and nothing after it: she stays silent, however long.
+      t.convo.onEndpoint({ type: 'held' });
+      await later(5 * WAIT);
+      expect(t.sounds).toHaveLength(2);
+      expect(t.calls).toEqual(['sound stop', 'cut 50 "Une phrase assez"', 'sound stop']);
+    });
+
+    it('a reply held back is let out at once: only her own voice waits', async () => {
+      const t = setup(waits(), 'Bonjour toi');
+      t.convo.onEndpoint(end(1000));
+      await flush();
+      t.convo.onEndpoint({ type: 'held' });
+      t.say(110, 'Je réponds.');
+      await flush();
+      expect(t.sounds).toHaveLength(0);
+      t.convo.onEndpoint({ type: 'noise' });
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      expect(t.trace.events.filter((e) => e.name === 'relachee')).toHaveLength(1);
+      expect(t.calls).toEqual([]);
+    });
+
+    it('the sound that held it back was its own sentence: she still resumes resumeMs after the last verdict, not before, not never', async () => {
+      const v = verdicts();
+      const t = setup(waits(), v.stt);
+      t.say(50, LONG);
+      t.say(50, 'La suite.');
+      await flush();
+      t.convo.onEndpoint({ type: 'held' });
+      // S1 ends, its verdict pending; S2's voice holds S1 back (S1 has no reply yet); S2 ends.
+      t.convo.onEndpoint(end(1000));
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(2000));
+      v.give(1, ASIDE);
+      await flush();
+      await later(2 * WAIT);
+      expect(t.sounds).toHaveLength(1);
+      // S1, held back by S2's voice, is the last verdict: the path of « its own sentence ».
+      v.give(0, ASIDE);
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      await later(WAIT - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+      expect(t.calls).toEqual(['sound stop']);
+    });
+
+    it('a sentence already replaced, judged late while a cough suspended her: she resumes resumeMs after that verdict', async () => {
+      const v = verdicts();
+      const t = setup(waits(), v.stt);
+      // A is slow; B's voice holds it back, then B, for her, replaces it: its reply is 110.
+      t.convo.onEndpoint(end(1000));
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(2000));
+      v.give(1, 'Bonjour toi');
+      await flush();
+      t.say(110, LONG);
+      t.say(110, 'La suite.');
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      // A cough over it, judged nothing: A, still unjudged, keeps her silent.
+      t.convo.onEndpoint({ type: 'held' });
+      t.convo.onEndpoint(end(3000));
+      v.give(2, ASIDE);
+      await flush();
+      await later(2 * WAIT);
+      expect(t.sounds).toHaveLength(1);
+      // A, replaced already, is judged for her at last: as if it had asked nothing, and the wait starts now.
+      v.give(0, 'Bonjour toi');
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      await later(WAIT - 1);
+      expect(t.sounds).toHaveLength(1);
+      await later(1);
+      expect(t.sounds).toHaveLength(2);
+    });
   });
 });
 
@@ -726,6 +1391,7 @@ describe('what is said aloud', () => {
     expect(t.events).toContainEqual({
       type: 'failed',
       text: 'Ta phrase n’a pas pu être transcrite : le service voix ne répond pas',
+      service: 'voix',
     });
   });
 });
@@ -843,7 +1509,7 @@ describe('nothing waits without end: the guards', () => {
     expect(t.sounds).toHaveLength(0);
   });
 
-  it('a fragment whose stream breaks after its number holds her voice no longer than the guard', async () => {
+  it('a fragment whose stream breaks after its number: the next reply sounds at once, not after the guard', async () => {
     const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, [
       async (on, id) => {
         on({ type: 'user', message: message(id) });
@@ -856,8 +1522,12 @@ describe('nothing waits without end: the guards', () => {
     await sentence(t);
     t.say(111, 'Je réponds.');
     await flush();
-    await vi.advanceTimersByTimeAsync(60_000);
     expect(t.sounds).toHaveLength(1);
+    // Its guard is off: nothing is said, written or cut a minute later.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.events.filter((e) => e.type === 'failed')).toHaveLength(1);
+    expect(named(t, 'sans_reponse')).toHaveLength(1);
+    expect(t.calls).toEqual([]);
   });
 
   it('a sentence held back while it is transcribed, then replaced: it still fails at 20 s, and she goes on', async () => {
@@ -876,6 +1546,9 @@ describe('nothing waits without end: the guards', () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(named(t, 'transcrite').filter((e) => e['echec'])).toHaveLength(1);
     expect(signals[0]?.aborted).toBe(true);
+    // Replaced by the second, whose reply is on its way: the failure says nothing and does not put out the thinking.
+    expect(t.events.filter((e) => e.type === 'failed')).toEqual([]);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: true });
     // Her reply to the second, a cough over it: nothing waits on the first any more, she goes on.
     t.say(110, 'Une phrase assez longue pour être coupée.');
     t.say(110, 'La suite.');
@@ -883,6 +1556,7 @@ describe('nothing waits without end: the guards', () => {
     t.convo.onEndpoint({ type: 'held' });
     t.convo.onEndpoint({ type: 'noise' });
     await flush();
+    await vi.advanceTimersByTimeAsync(DEFAULTS.bargeIn.resumeMs);
     expect(t.sounds).toHaveLength(2);
   });
 
@@ -1093,6 +1767,551 @@ describe('nothing waits without end: the guards', () => {
       expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
       expect(named(t, 'retenue')).toHaveLength(1);
     });
+  });
+});
+
+describe('a reply that ends in error: one gesture, once nothing more will come of it', () => {
+  // A false clock: `flush` lets what is due happen, and the guards are moved by their own durations.
+  beforeEach(() => void vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+  afterEach(() => void vi.useRealTimers());
+  const flush = () => vi.advanceTimersByTimeAsync(0);
+  const pause = { type: 'pause', audio: AUDIO } as const;
+  const ended = { type: 'end', audio: AUDIO, lastVoiceAt: 1000 } as const;
+  const NO_TRY = { endOfSpeech: { ...DEFAULTS.endOfSpeech, speculate: false } };
+  type T = ReturnType<typeof setup>;
+  const named = (t: T, name: string) => t.trace.events.filter((e) => e.name === name);
+  const thinking = (t: T) => t.events.filter((e) => e.type === 'thinking');
+  const failed = (t: T) => t.events.filter((e) => e.type === 'failed');
+  const said = (t: T) => t.events.filter((e) => e.type === 'said');
+  /** A fragment at the pause, then the end of its sentence. */
+  const sentence = async (t: T) => {
+    t.convo.onEndpoint(pause);
+    await flush();
+    t.convo.onEndpoint(ended);
+    await flush();
+  };
+  /** The reply to the `k`-th send ends in error, with no word and no end of speech: the server said nothing more. */
+  const errs = async (t: T, k: number) => {
+    t.sends[k]!.on({
+      type: 'done',
+      message: { ...message(10 + k), status: 'error', error: 'Plafond atteint' },
+    });
+    await flush();
+  };
+  /** A stream that numbers its reply, then ends in error, then breaks. */
+  const errorThenBreak = async (on: (e: SendEvent) => void, id: number) => {
+    on({ type: 'user', message: message(id) });
+    on({ type: 'reply', id: id + 100 });
+    on({ type: 'done', message: { ...message(id), status: 'error', error: 'Plafond atteint' } });
+    throw new Error('flux coupé');
+  };
+
+  it('Q7: after its turn was released, with no end of speech, the next reply sounds', async () => {
+    const t = setup();
+    await sentence(t);
+    await errs(t, 0);
+    await sentence(t);
+    t.say(111, 'Je réponds.');
+    await flush();
+    expect(t.sounds).toHaveLength(1);
+  });
+
+  it('what it said is said, then the turn is over: she falls silent once, and its late end changes nothing', async () => {
+    const t = setup();
+    await sentence(t);
+    t.say(110, 'Une phrase.');
+    await flush();
+    expect(t.sounds).toHaveLength(1);
+    await errs(t, 0);
+    t.sounds[0]!.end();
+    await flush();
+    expect(said(t)).toHaveLength(1);
+    expect(t.speaker.speaking).toBe(false);
+    // Its end of speech comes after all: the turn is gone, nothing is made of it.
+    t.convo.onLive({ type: 'speech-end', id: 110, why: 'reply' });
+    await flush();
+    expect(said(t)).toHaveLength(1);
+    expect(t.speaker.speaking).toBe(false);
+  });
+
+  it('a reply said, then an empty turn in error behind it: one silent, and she is not speaking', async () => {
+    const t = setup();
+    await sentence(t);
+    t.say(110, 'Une phrase.');
+    t.convo.onLive({ type: 'speech-end', id: 110, why: 'reply' });
+    await flush();
+    await sentence(t);
+    await errs(t, 1);
+    t.sounds[0]!.end();
+    await flush();
+    expect(said(t)).toHaveLength(1);
+    expect(t.speaker.speaking).toBe(false);
+    t.convo.onLive({ type: 'speech-end', id: 111, why: 'reply' });
+    await flush();
+    expect(said(t)).toHaveLength(1);
+  });
+
+  it('an empty turn in error alone: no silent, nothing shown, and she is not speaking', async () => {
+    const t = setup();
+    await sentence(t);
+    await errs(t, 0);
+    expect(said(t)).toEqual([]);
+    expect(t.speaker.speaking).toBe(false);
+  });
+
+  it('its end of speech comes late, after the error and with nothing said: still no silent', async () => {
+    const t = setup();
+    await sentence(t);
+    await errs(t, 0);
+    t.convo.onLive({ type: 'speech-end', id: 110, why: 'reply' });
+    await flush();
+    expect(said(t)).toEqual([]);
+    expect(t.speaker.speaking).toBe(false);
+    // And nothing waits in front of the next reply.
+    await sentence(t);
+    t.say(111, 'Je réponds.');
+    await flush();
+    expect(t.sounds).toHaveLength(1);
+  });
+
+  it.each([
+    ['a fragment tried at the pause', {}],
+    ['the sentence sent whole at its end', NO_TRY],
+  ] as [string, Partial<Settings>][])(
+    'Q8: an error, then a stream that throws (%s): one message, one sans_reponse, and nothing thinks',
+    async (_, over) => {
+      const t = setup(over, 'Bonjour toi', () => false, undefined, undefined, [errorThenBreak]);
+      if (over === NO_TRY) {
+        t.convo.onEndpoint(ended);
+        await flush();
+      } else await sentence(t);
+      expect(failed(t)).toHaveLength(1);
+      expect(named(t, 'sans_reponse')).toHaveLength(1);
+      expect(thinking(t).at(-1) ?? { type: 'thinking', on: false }).toEqual({ type: 'thinking', on: false });
+      // Its guard is off: a minute later nothing more is said, written or cut.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(failed(t)).toHaveLength(1);
+      expect(named(t, 'sans_reponse')).toHaveLength(1);
+      expect(t.calls).toEqual([]);
+    },
+  );
+
+  /** After it, nothing blocks the line: her own words sound, then the reply to the next sentence; 110 is never cut. */
+  const lineGoesOn = async (t: T) => {
+    const n = t.sounds.length;
+    t.convo.onLive({ type: 'speech', id: 51, n: 1, text: 'Au fait.', why: 'spontaneous' });
+    t.convo.onLive({ type: 'speech-end', id: 51, why: 'spontaneous' });
+    await flush();
+    expect(t.sounds).toHaveLength(n + 1);
+    t.sounds.at(-1)!.end();
+    await flush();
+    await sentence(t);
+    t.say(111, 'Je réponds.');
+    await flush();
+    expect(t.sounds).toHaveLength(n + 2);
+    expect(t.calls.filter((c) => c.startsWith('cut 110 '))).toEqual([]);
+  };
+  /** Its words, and their end, come after its error: the live stream and the send are two connections. */
+  const late = async (t: T, text = 'Trop tard.') => {
+    t.say(110, text);
+    t.convo.onLive({ type: 'speech-end', id: 110, why: 'reply' });
+    await flush();
+  };
+
+  it.each([
+    [
+      'its stream breaks after its number',
+      async (on: (e: SendEvent) => void, id: number) => {
+        on({ type: 'user', message: message(id) });
+        on({ type: 'reply', id: id + 100 });
+        throw new Error('flux coupé');
+      },
+    ],
+    ['it ends in error, with no word', undefined],
+  ] as [string, ((on: (e: SendEvent) => void, id: number) => Promise<void>) | undefined][])(
+    '%s, then its words and their end come: nothing of it sounds, and the line goes on',
+    async (_, stream) => {
+      const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, stream ? [stream] : []);
+      await sentence(t);
+      if (!stream) await errs(t, 0);
+      expect(failed(t)).toHaveLength(1);
+      await late(t);
+      expect(t.sounds).toHaveLength(0);
+      expect(t.speaker.speaking).toBe(false);
+      await lineGoesOn(t);
+    },
+  );
+
+  it.each([
+    ['its first sentence still sounding', true],
+    ['its first sentence over', false],
+  ])(
+    'it ends in error after a sentence said, the next comes after the error (%s): only the first is said',
+    async (_, sounding) => {
+      const t = setup();
+      await sentence(t);
+      t.say(110, 'Une phrase.');
+      await flush();
+      expect(t.sounds).toHaveLength(1);
+      await errs(t, 0);
+      if (!sounding) {
+        t.sounds[0]!.end();
+        await flush();
+      }
+      await late(t, 'La suite.');
+      if (sounding) {
+        t.sounds[0]!.end();
+        await flush();
+      }
+      expect(t.sounds).toHaveLength(1);
+      expect(said(t)).toHaveLength(1);
+      expect(t.speaker.speaking).toBe(false);
+      await lineGoesOn(t);
+    },
+  );
+
+  it('an empty reply, without error, then a cough: its turn is not made again, and the line goes on', async () => {
+    const t = setup();
+    await sentence(t);
+    t.sends[0]!.on({ type: 'done', message: message(110) });
+    t.convo.onLive({ type: 'speech-end', id: 110, why: 'reply' });
+    await flush();
+    // Never heard, it is the one a cough holds back, then lets go.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'noise' });
+    await flush();
+    await vi.advanceTimersByTimeAsync(DEFAULTS.bargeIn.resumeMs);
+    expect(t.speaker.speaking).toBe(false);
+    await lineGoesOn(t);
+  });
+
+  /** A stream that numbers its reply, sees it to its end, then breaks: its reading broke, not the reply. */
+  const doneThenBreak = async (on: (e: SendEvent) => void, id: number) => {
+    on({ type: 'user', message: message(id) });
+    on({ type: 'reply', id: id + 100 });
+    on({ type: 'done', message: message(id) });
+    throw new Error('réseau');
+  };
+
+  it.each([
+    ['a fragment tried at the pause', {}],
+    ['the sentence sent whole at its end', NO_TRY],
+  ] as [string, Partial<Settings>][])(
+    'its done came, then its stream breaks (%s): its words come by the live and are said, nothing is told',
+    async (_, over) => {
+      const t = setup(over, 'Bonjour toi', () => false, undefined, undefined, [doneThenBreak]);
+      if (over === NO_TRY) {
+        t.convo.onEndpoint(ended);
+        await flush();
+      } else await sentence(t);
+      await late(t, 'Je réponds.');
+      expect(t.sounds).toHaveLength(1);
+      expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+      t.sounds[0]!.end();
+      await flush();
+      expect(said(t)).toHaveLength(1);
+      // Its guard went with its done: a minute later, still nothing is told.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(failed(t)).toEqual([]);
+      expect(named(t, 'sans_reponse')).toEqual([]);
+      await lineGoesOn(t);
+    },
+  );
+
+  it('a withdrawn fragment whose reply ends in error says nothing, writes nothing, lights nothing', async () => {
+    const t = setup();
+    t.convo.onEndpoint(pause);
+    await flush();
+    t.convo.onEndpoint({ type: 'resume' });
+    await flush();
+    expect(t.calls).toEqual(['withdraw 10']);
+    const before = t.events.length;
+    await errs(t, 0);
+    expect(t.events.slice(before)).toEqual([]);
+    expect(named(t, 'sans_reponse')).toEqual([]);
+    // Its words, had it any, never sound; and the sentence that follows is answered.
+    await sentence(t);
+    t.say(111, 'Je réponds.');
+    await flush();
+    expect(t.sounds).toHaveLength(1);
+  });
+
+  it('a withdrawn fragment whose stream then breaks says nothing either', async () => {
+    let breaks!: () => void;
+    const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, [
+      async (on, id) => {
+        on({ type: 'user', message: message(id) });
+        on({ type: 'reply', id: id + 100 });
+        await new Promise<void>((ok) => (breaks = ok));
+        throw new Error('flux coupé');
+      },
+    ]);
+    t.convo.onEndpoint(pause);
+    await flush();
+    t.convo.onEndpoint({ type: 'resume' });
+    await flush();
+    const before = t.events.length;
+    breaks();
+    await flush();
+    expect(t.events.slice(before)).toEqual([]);
+    expect(named(t, 'sans_reponse')).toEqual([]);
+  });
+
+  it('a replaced reply that ends in error says nothing, and the thinking of the new one stays on', async () => {
+    const t = setup(NO_TRY);
+    t.convo.onEndpoint(ended);
+    await flush();
+    // He talks again while she is silent: reply 110 is held back, then replaced by the sentence for her.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 4000 });
+    await flush();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: true });
+    const before = t.events.length;
+    await errs(t, 0);
+    expect(t.events.slice(before)).toEqual([]);
+    expect(named(t, 'sans_reponse')).toEqual([]);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: true });
+    // Its own reply still sounds.
+    t.say(111, 'La bonne.');
+    await flush();
+    expect(t.sounds).toHaveLength(1);
+  });
+
+  it('a fragment refused, then the sentence goes on and is answered: nothing is ever said of the refusal', async () => {
+    const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, [
+      async () => {
+        throw new Error('refusé');
+      },
+    ]);
+    t.convo.onEndpoint(pause);
+    await flush();
+    expect(failed(t)).toEqual([]);
+    t.convo.onEndpoint({ type: 'resume' });
+    await flush();
+    await sentence(t);
+    t.say(111, 'Je réponds.');
+    await flush();
+    expect(t.sounds).toHaveLength(1);
+    expect(failed(t)).toEqual([]);
+    expect(named(t, 'sans_reponse')).toEqual([]);
+  });
+
+  it('a fragment refused, then its sentence ends: the refusal is said once, at the end, and nothing thinks', async () => {
+    const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, [
+      async () => {
+        throw new Error('refusé');
+      },
+    ]);
+    t.convo.onEndpoint(pause);
+    await flush();
+    expect(failed(t)).toEqual([]);
+    expect(named(t, 'sans_reponse')).toEqual([]);
+    t.convo.onEndpoint(ended);
+    await flush();
+    expect(failed(t)).toEqual([
+      { type: 'failed', text: 'Sa réponse n’est pas venue : refusé', service: 'serveur' },
+    ]);
+    expect(named(t, 'sans_reponse')).toHaveLength(1);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(failed(t)).toHaveLength(1);
+  });
+
+  const GUARD = 'Sa réponse n’est pas venue : aucune phrase en 60 s';
+  /** The line goes on: nothing is held, and the next sentence for her is answered. */
+  const goesOn = async (t: T) => {
+    await sentence(t);
+    t.say(111, 'Je réponds.');
+    await flush();
+    expect(t.sounds).toHaveLength(1);
+  };
+
+  it("the guard's cut fails: its message stays the only one (case 1)", async () => {
+    const t = setup(
+      {},
+      'Bonjour toi',
+      () => false,
+      undefined,
+      undefined,
+      undefined,
+      'Le serveur a répondu 404.',
+    );
+    await sentence(t);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flush();
+    // The cut was sent, and refused: that is for the server to know, not for her to be told.
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(failed(t)).toEqual([{ type: 'failed', text: GUARD, service: 'serveur' }]);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: false });
+    await goesOn(t);
+  });
+
+  it('a number that comes after the guard, its cut refused: still the one message of the guard', async () => {
+    const t = setup(
+      {},
+      'Bonjour toi',
+      () => false,
+      undefined,
+      undefined,
+      [
+        async (on, id) => {
+          on({ type: 'user', message: message(id) });
+          return new Promise<never>(() => {});
+        },
+      ],
+      'Le serveur a répondu 404.',
+    );
+    await sentence(t);
+    await vi.advanceTimersByTimeAsync(60_000);
+    t.sends[0]!.on({ type: 'reply', id: 110 });
+    await flush();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(failed(t)).toEqual([{ type: 'failed', text: GUARD, service: 'serveur' }]);
+  });
+
+  it('a reply replaced by a new sentence, its cut refused: that is still said', async () => {
+    const t = setup(
+      NO_TRY,
+      'Bonjour toi',
+      () => false,
+      undefined,
+      undefined,
+      [],
+      'Le serveur a répondu 404.',
+    );
+    t.convo.onEndpoint(ended);
+    await flush();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 4000 });
+    await flush();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(failed(t)).toEqual([
+      { type: 'failed', text: 'Coupure non transmise : Le serveur a répondu 404.', service: 'serveur' },
+    ]);
+  });
+
+  it('a reply replaced before its number comes, its cut refused: that is still said', async () => {
+    const t = setup(
+      NO_TRY,
+      'Bonjour toi',
+      () => false,
+      undefined,
+      undefined,
+      [
+        async (on, id) => {
+          on({ type: 'user', message: message(id) });
+          return new Promise<never>(() => {});
+        },
+      ],
+      'Le serveur a répondu 404.',
+    );
+    t.convo.onEndpoint(ended);
+    await flush();
+    // Its number has not come yet: held back, then replaced by the sentence for her, nothing to cut so far.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 4000 });
+    await flush();
+    expect(t.calls).toEqual([]);
+    t.sends[0]!.on({ type: 'reply', id: 110 });
+    await flush();
+    expect(t.calls).toEqual(['cut 110 ""']);
+    expect(failed(t)).toEqual([
+      { type: 'failed', text: 'Coupure non transmise : Le serveur a répondu 404.', service: 'serveur' },
+    ]);
+  });
+
+  it.each([
+    [
+      'broke',
+      async (on: (e: SendEvent) => void, id: number) => {
+        on({ type: 'user', message: message(id) });
+        on({ type: 'reply', id: id + 100 });
+        throw new Error('flux coupé');
+      },
+      'Sa réponse n’est pas venue : flux coupé',
+      'serveur',
+    ],
+    // A refusal names no service.
+    ['ended in error, then broke', errorThenBreak, 'Plafond atteint', undefined],
+  ])('R2: a stream that %s, then its guard: one message', async (_, stream, text, service) => {
+    const t = setup({}, 'Bonjour toi', () => false, undefined, undefined, [stream]);
+    await sentence(t);
+    expect(failed(t)).toEqual([{ type: 'failed', text, service }]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(failed(t)).toEqual([{ type: 'failed', text, service }]);
+    expect(t.calls).toEqual([]);
+    await goesOn(t);
+  });
+
+  /** Each transcription waits to be given, numbered from 0 in the order of the sentences that ended. */
+  const given = () => {
+    const waiting: ((h: Heard | Error) => void)[] = [];
+    const stt = () =>
+      new Promise<Heard>((ok, fail) => waiting.push((h) => (h instanceof Error ? fail(h) : ok(h))));
+    return { stt, give: (i: number, h: Heard | Error) => waiting[i]!(h) };
+  };
+  const FOR: Heard = { text: 'Bonjour toi', confidence: 0.9 };
+
+  it('a sentence replaced, its transcription then fails: nothing is said, the thinking of the next stays on, the line goes on', async () => {
+    const v = given();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(ended);
+    await flush();
+    // He talks again while A is transcribed: A is held back, then B, for her, replaces it.
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 4000 });
+    v.give(1, FOR);
+    await flush();
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: true });
+    const before = t.events.length;
+    v.give(0, new Error('en panne'));
+    await flush();
+    expect(t.events.slice(before)).toEqual([]);
+    expect(named(t, 'transcrite').filter((e) => e['echec'])).toHaveLength(1);
+    // The trace says what became of it.
+    expect(named(t, 'sans_reponse').map((e) => e['raison'])).toEqual(['remplacee']);
+    // Her reply to B sounds; a cough over it, and she resumes: A no longer keeps anything open.
+    t.say(110, 'Une phrase assez longue pour être coupée.');
+    t.say(110, 'La suite.');
+    await flush();
+    expect(t.sounds).toHaveLength(1);
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'noise' });
+    await flush();
+    await vi.advanceTimersByTimeAsync(DEFAULTS.bargeIn.resumeMs);
+    expect(t.sounds).toHaveLength(2);
+    expect(failed(t)).toEqual([]);
+  });
+
+  it('a sentence replaced, its transcription failing while the reply of the next is held back: it still comes out', async () => {
+    const v = given();
+    const t = setup(NO_TRY, v.stt);
+    t.convo.onEndpoint(ended);
+    await flush();
+    t.convo.onEndpoint({ type: 'held' });
+    t.convo.onEndpoint({ type: 'end', audio: AUDIO, lastVoiceAt: 4000 });
+    v.give(1, FOR);
+    await flush();
+    // He talks again: B's reply, not heard yet, is held back; A fails meanwhile.
+    t.convo.onEndpoint({ type: 'start' });
+    t.convo.onEndpoint({ type: 'held' });
+    await flush();
+    // First A, replaced by B's verdict; now B's reply.
+    expect(named(t, 'retenue')).toHaveLength(2);
+    v.give(0, new Error('en panne'));
+    await flush();
+    expect(failed(t)).toEqual([]);
+    expect(thinking(t).at(-1)).toEqual({ type: 'thinking', on: true });
+    // It was only a cough: nothing is open any more, B's reply is let out and sounds.
+    t.convo.onEndpoint({ type: 'noise' });
+    await flush();
+    expect(named(t, 'relachee')).toHaveLength(1);
+    t.say(110, 'Pour B.');
+    await flush();
+    expect(t.sounds).toHaveLength(1);
+    // A's end came before B's: the chronometer of B is kept, and its latency is measured.
+    expect(t.events.filter((e) => e.type === 'latency')).toHaveLength(1);
   });
 });
 

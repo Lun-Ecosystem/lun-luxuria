@@ -6,8 +6,10 @@
 //   « Demain matin il fera frais, », synthèse → son 2428, 27 car. × 60 = 1620 ms.
 // - la toux, parole 2, 3008 → 3458 (450 ms) : tenue 3008 + 384 = 3392 → suspendue, son arrêté.
 //   Dernière trame 3456 ; pause 3616 → essai, transcrite vide 3766 → bruit ; fin 3456 + 704 = 4160 → sans
-//   réponse → reprise : la phrase 1 est redite depuis son début à 4160.
-//   Le blanc, de l'arrêt à la phrase redite : 4160 − 3392 = 768 (dernière trame 448 après le début, + 704, − 384).
+//   réponse → reprise : la phrase 1 est redite depuis son début.
+//   La reprise attend `bargeIn.resumeMs`, 300 ms par défaut : la phrase 1 est redite à 4160 + 300 = 4460.
+//   Le blanc, de l'arrêt à la phrase redite : 4460 − 3392 = 1068 (dernière trame 448 après le début, + 704, − 384,
+//   + 300).
 import type { Scenario } from '../scenario.ts';
 
 export default {
@@ -104,8 +106,8 @@ export default {
         },
       },
       depuis: { attendu: 'arrete' },
-      // 4160 − 3392 = 768, une trame de marge
-      entre: [768, 800],
+      // 4460 − 3392 = 1068, une trame de marge
+      entre: [1068, 1100],
     },
   ],
 } satisfies Scenario;

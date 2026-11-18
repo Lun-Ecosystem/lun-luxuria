@@ -42,6 +42,9 @@ interface Turn {
 /** A synthesis longer than this is given up: the sentence is shown without a voice. */
 export const SYNTH_TIMEOUT_MS = 5000;
 
+/** How many turns over the speaker remembers, so that their late end recreates none. */
+const ENDED_KEPT = 64;
+
 /** How long words without a voice stay on screen before the next sentence: enough to read them. */
 export const readingMs = (text: string) => Math.max(1500, 60 * text.length);
 
@@ -59,6 +62,8 @@ export class Speaker {
   #turns: Turn[] = [];
   /** Words of these turns may still be on their way: they stay unheard. */
   #gone = new Set<number>();
+  /** Turns that went out of the line at their end, the last ones only: an end that comes after makes nothing. */
+  #ended = new Set<number>();
   #playing: { turn: Turn; piece: Piece; sound: Playing } | null = null;
   #waiting = false;
   /** Words shown without a voice, for the time to read them. */
@@ -112,24 +117,31 @@ export class Speaker {
     return turn;
   }
 
+  /** Thrown away, or over: a turn is never made again, it would wait for an end that came already. */
+  #past(id: number): boolean {
+    return this.#gone.has(id) || this.#ended.has(id);
+  }
+
   /** Must come before its first sentence. */
   hold(id: number): void {
-    if (this.#gone.has(id)) return;
+    if (this.#past(id)) return;
     this.#turn(id).held = true;
   }
 
   release(id: number): void {
-    if (this.#gone.has(id)) return;
+    if (this.#past(id)) return;
     this.#turn(id).held = false;
     this.#pump();
   }
 
   /** `urgent`: this turn goes in front of the ones that wait. */
   add(id: number, text: string, urgent = false): void {
-    if (this.#gone.has(id)) return;
+    if (this.#past(id)) return;
     // One at a time: a voice conversion takes one call at a time, and order matters more than speed.
     // shortcut: an urgency waits for the sentences already being made, give it its own lane if that is heard.
     const turn = this.#turn(id, urgent);
+    // Its end came: words after it are ignored, of a reply that ended in error or of a server that broke the order.
+    if (turn.ended) return;
     const rang = turn.pieces.length + 1;
     const clip = this.#chain.then(() => this.#oneClip(text, id, rang));
     this.#chain = clip;
@@ -138,7 +150,7 @@ export class Speaker {
   }
 
   end(id: number): void {
-    if (this.#gone.has(id)) return;
+    if (this.#past(id)) return;
     this.#turn(id).ended = true;
     this.#pump();
   }
@@ -179,7 +191,11 @@ export class Speaker {
     if (!piece) {
       if (!turn.ended) return;
       this.#turns.shift();
-      if (this.#turns.length === 0) this.#on({ type: 'silent' });
+      this.#ended.add(turn.id);
+      // A late end comes right after the turn it ends: the last few are enough, and the set stays small.
+      if (this.#ended.size > ENDED_KEPT) this.#ended.delete(this.#ended.values().next().value!);
+      // As `stop()`: a turn that showed nothing does not end her speaking, nor reopen the window of the filter.
+      if (this.#turns.length === 0 && this.#shown) this.#on({ type: 'silent' });
       this.#pump();
       return;
     }

@@ -37,6 +37,21 @@ function linked(extra: object = {}) {
   return { s, sent };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
+/** The timers of the page simulated: a held start never meets the real bound of its wait. No `flush` after it. */
+const fakeClock = () => vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+/** From now on, the start of the presence answers only on the call it returns. */
+function holdStart(s: Session, sent: string[]): () => void {
+  let arrive: () => void = () => {};
+  s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+    sent.push(state);
+    if (state === 'started') await new Promise<void>((r) => (arrive = r));
+    return undefined;
+  }) as typeof s.core.presence;
+  return () => arrive();
+}
+/** The conversation reached the send this many times: the trace writes it just before. */
+const reachedSend = (s: Session) => s.turns.events.filter((e) => e.name === 'envoyee').length;
+const waits = (s: Session) => s.turns.events.filter((e) => e.name === 'attente_retour');
 
 beforeEach(() => {
   localStorage.clear();
@@ -143,6 +158,41 @@ describe('the session, away and back', () => {
     expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
   });
 
+  it('written while away, muted during the wait: nothing is sent, and no failure is shown', async () => {
+    const { s, sent } = linked();
+    s.core.send = vi.fn(async () => void sent.push('send'));
+    await s.enter();
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    const writing = s.write('je suis là');
+    expect(sent.at(-1)).toBe('started');
+    s.toggleMute();
+    arrive();
+    await writing;
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(sent).not.toContain('send');
+    expect(s.failure).toBe('');
+  });
+
+  it('written while a return by a key is under way: it waits for that start', async () => {
+    const { s, sent } = linked();
+    s.core.send = vi.fn(async () => void sent.push('send'));
+    await s.enter();
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    void s.setAway(false); // the first input, as `awayFollows` reads it
+    const writing = s.write('je suis là');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sent).not.toContain('send');
+    arrive();
+    await writing;
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
   it('away before entering: nothing is announced until the first input', async () => {
     const { s, sent } = linked();
     s.setAway(true);
@@ -156,12 +206,12 @@ describe('the session, away and back', () => {
 
 describe('a phrase heard', () => {
   /** Talks into the microphone: loud frames, then silence, 32 ms each, as the worklet gives them. */
-  function say(loudFrames: number, holding?: Session) {
+  function say(loudFrames: number, holding?: Session, quietFrames = 40) {
     const onFrame = (mic.open.mock.calls.at(-1) as unknown as [unknown, (f: Float32Array) => void])[1];
     const loud = new Float32Array(512).fill(0.3);
     const quiet = new Float32Array(512);
     let at = Date.now();
-    for (let i = 0; i < loudFrames + 40; i++) {
+    for (let i = 0; i < loudFrames + quietFrames; i++) {
       vi.setSystemTime((at += 32));
       holding?.holdKey(i < loudFrames);
       onFrame(i < loudFrames ? loud : quiet);
@@ -178,10 +228,8 @@ describe('a phrase heard', () => {
   }
 
   it('a phrase sent counts as an input, and brings the presence back', async () => {
-    // Without the attempt on a pause: a fragment sent early leaves before the sentence is known to be for it.
-    const { s, sent } = await heard('bonjour', {
-      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
-    });
+    // The attempt on a pause is on (the default): away, the session holds it back.
+    const { s, sent } = await heard('bonjour');
     s.setAway(true);
     say(20);
     await vi.waitFor(() => expect(sent).toContain('send'));
@@ -189,6 +237,226 @@ describe('a phrase heard', () => {
     expect(s.away).toBe(false);
     expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
     expect(s.spoke).toBe(true); // the scene's instruction goes
+  });
+
+  it('a phrase heard while away, the attempt off: the presence comes back before it leaves', async () => {
+    const { s, sent } = await heard('bonjour', {
+      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
+    });
+    s.setAway(true);
+    say(20);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
+  });
+
+  it('away, the attempt on: no fragment leaves at the pause, the presence then the message at the end', async () => {
+    const { s, sent, stt } = await heard('bonjour');
+    s.setAway(true);
+    say(20, undefined, 8); // 256 ms of silence: past the pause (160 ms), short of the end (700 ms)
+    await flush();
+    await flush();
+    expect(stt).not.toHaveBeenCalled();
+    expect(sent).not.toContain('send');
+    say(0, undefined, 40);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-3)).toEqual(['stopped', 'started', 'send']);
+  });
+
+  it('present, the attempt on: the fragment leaves at the pause, as before', async () => {
+    const { sent } = await heard('bonjour');
+    say(20, undefined, 8);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent).not.toContain('stopped');
+  });
+
+  it('the start is held: nothing is sent before it answers', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    sent.length = 0; // the arrival and the stop are behind
+    let arrive: () => void = () => {};
+    s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+      sent.push(state);
+      if (state === 'started') await new Promise<void>((r) => (arrive = r));
+      return undefined;
+    }) as typeof s.core.presence;
+    fakeClock();
+    say(20);
+    await vi.waitFor(() => expect(sent).toContain('started'));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sent).not.toContain('send');
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
+  // The plan says nothing of it: supposed, the message goes anyway.
+  it('the start fails: the message leaves all the same', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    s.core.presence = vi.fn(async (state: 'started' | 'beat' | 'stopped') => {
+      sent.push(state);
+      if (state === 'started') throw new Error('down');
+      return undefined;
+    }) as typeof s.core.presence;
+    say(20);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
+  /** Each transcription its own text, and each send says which: `phrase 0`, `phrase 1`… */
+  function numbered(s: Session, sent: string[]): void {
+    let n = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ text: `phrase ${n++}`, confidence: 0.9 })),
+    );
+    s.core.send = vi.fn(async (text: string) => void sent.push(`send:${text}`)) as typeof s.core.send;
+  }
+
+  it('away, the start held, two phrases: none leaves before it answers, and the first leaves first', async () => {
+    const { s, sent } = await heard('', {
+      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
+    });
+    numbered(s, sent);
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(2));
+    expect(sent.filter((x) => x.startsWith('send'))).toEqual([]);
+    arrive();
+    await vi.waitFor(() => expect(sent.filter((x) => x.startsWith('send'))).toHaveLength(2));
+    expect(sent.slice(-3)).toEqual(['started', 'send:phrase 0', 'send:phrase 1']);
+  });
+
+  it('back by a key or the mouse, the start held: a phrase waits for it', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    void s.setAway(false); // the first input, as `awayFollows` reads it
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBeGreaterThan(0));
+    expect(sent).not.toContain('send');
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
+  it('the attempt off by the person, the start held: nothing is sent before it answers', async () => {
+    const { s, sent } = await heard('bonjour', {
+      endOfSpeech: { ...DEFAULTS.endOfSpeech, model: false, speculate: false },
+    });
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    expect(sent).not.toContain('send');
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(sent.slice(-2)).toEqual(['started', 'send']);
+  });
+
+  it('a start that never answers: the message leaves at 3 s, once, and no failure is shown', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    holdStart(s, sent); // never let go
+    fakeClock();
+    say(20);
+    // Each check moves the clock 50 ms at most: the wait has run less than 3 s here.
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    await vi.advanceTimersByTimeAsync(2900);
+    expect(sent).not.toContain('send');
+    await vi.advanceTimersByTimeAsync(200);
+    expect(sent.filter((x) => x === 'send')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sent.filter((x) => x === 'send')).toHaveLength(1);
+    expect(s.failure).toBe('');
+  });
+
+  it('muted during the wait: nothing is sent, she stops thinking, and no guard rings at 61 s', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    s.toggleMute();
+    arrive();
+    await vi.advanceTimersByTimeAsync(61_000); // past the guard of the reply
+    expect(sent).not.toContain('send');
+    expect(s.failure).toBe('');
+    expect(s.thinking).toBe(false);
+    expect(s.turns.events.at(-1)?.name).toBe('sans_reponse');
+  });
+
+  it('back by a key, a fragment taken back during the wait: it never leaves', async () => {
+    const { s, sent } = await heard('');
+    numbered(s, sent);
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    fakeClock();
+    void s.setAway(false); // the first input
+    say(20, undefined, 8); // a fragment at the pause: `phrase 0`
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    say(10); // he goes on: taken back; the whole sentence is `phrase 1`
+    await vi.waitFor(() => expect(s.turns.events.some((e) => e.name === 'retiree')).toBe(true));
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send:phrase 1'));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sent.filter((x) => x.startsWith('send'))).toEqual(['send:phrase 1']);
+  });
+
+  it('the wait is in the trace, with how long it lasted; nothing is written when nothing waits', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    await flush();
+    const arrive = holdStart(s, sent);
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'performance'] });
+    say(20);
+    await vi.waitFor(() => expect(reachedSend(s)).toBe(1));
+    expect(waits(s)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(500);
+    arrive();
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    const envoyee = s.turns.events.find((e) => e.name === 'envoyee')!;
+    expect(waits(s)).toEqual([
+      expect.objectContaining({ phrase: envoyee.phrase, essai: envoyee.essai, duree: expect.any(Number) }),
+    ]);
+    expect(waits(s)[0]!['duree']).toBeGreaterThanOrEqual(500);
+    expect(waits(s)[0]!['duree']).toBeLessThan(3000);
+    say(20); // present now: nothing to wait for
+    await vi.waitFor(() => expect(sent.filter((x) => x === 'send')).toHaveLength(2));
+    expect(waits(s)).toHaveLength(1);
+  });
+
+  it('alone on a model, away: the fragment is still tried at the pause, nothing to wait for', async () => {
+    const { s, stt } = await heard('bonjour', { brain: 'alone' });
+    s.setAway(true);
+    say(20, undefined, 8); // past the pause, short of the end
+    await vi.waitFor(() => expect(stt).toHaveBeenCalled());
+  });
+
+  it('back again: the next phrase is tried at its pause', async () => {
+    const { s, sent } = await heard('bonjour');
+    s.setAway(true);
+    say(20);
+    await vi.waitFor(() => expect(sent).toContain('send'));
+    expect(s.away).toBe(false);
+    const first = sent.filter((x) => x === 'send').length;
+    say(20, undefined, 8);
+    await vi.waitFor(() => expect(sent.filter((x) => x === 'send').length).toBeGreaterThan(first));
   });
 
   it('a noise does not count', async () => {
