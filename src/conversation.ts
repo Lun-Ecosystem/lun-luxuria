@@ -84,7 +84,7 @@ const failure = (what: string, err: unknown) =>
 interface Attempt {
   /** In the order he said them: a later sentence has a greater one. */
   made: number;
-  /** Set when the transcription came back and went to the core. */
+  /** Set when the transcription came back and went to the brain. */
   sent?: Promise<void>;
   userId?: number;
   replyId?: number;
@@ -532,7 +532,8 @@ export class Conversation {
 
   /**
    * Nothing more will come of its reply: it ended in error, its stream broke before its end, or its guard went off.
-   * What came of it is said, then the line goes on; the failure is told once, and only if its sentence ends on it.
+   * What came of it is said, or dropped if it was held back, then the line goes on; the failure is told once, and
+   * only if its sentence ends on it.
    */
   #over(attempt: Attempt, failed: Failed): void {
     this.#answered(attempt);
