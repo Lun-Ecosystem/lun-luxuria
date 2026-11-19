@@ -61,10 +61,10 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
   son dossier : aujourd'hui `src/listen/silero/silero_vad.onnx` seul. Le contrôle, lun-docs cloné à côté :
   `node ../lun-docs/tools/check-repo.mjs --public .`.
 - La latence se mesure sur la machine réelle. Un chiffre pris ailleurs ne compte pas.
-- L'écoute se rejoue : `npm run banc` passe chaque WAV de `../banc-sons` (ou `BANC_DIR`), sauf ceux de `gestes/`, qui
-  ont leur banc, dans la détection de voix, par le niveau puis par le modèle, et écrit `releve.md` dans ce dossier, avec
-  à côté `deroule.jsonl`, le déroulé daté de sa chaîne (`src/trace.ts`). Aucun enregistrement de voix ni déroulé n'entre
-  dans le dépôt.
+- L'écoute se rejoue : `npm run banc` passe chaque WAV de `../banc-sons` (ou `BANC_DIR`), sauf `gestes/`, `chaine/` et
+  `scenarios/`, aux autres bancs, dans la détection de voix, par le niveau puis par le modèle, et écrit `releve.md` dans
+  ce dossier, avec `deroule.jsonl`, le déroulé daté de sa chaîne (`src/trace.ts`). Aucun enregistrement de voix
+  ni déroulé n'entre dans le dépôt.
 - La présence se joue en scénarios (`src/presence/scenarios/`, données seules) sur les vrais mécanismes et des briques
   fausses, en temps virtuel, dans `npm test` ; un écart du code devient une issue et un `connus`, jamais une borne
   élargie. `npm run scenarios` écrit `releve-scenarios.md` et les `deroule-<nom>.jsonl` dans `BANC_DIR/scenarios`.
@@ -73,7 +73,7 @@ Prérequis : Node `^22.13.0 || >=24`, `uv`. Voir `docs/README.md`.
 - `npm run chaine` joue les scénarios sur la page construite dans Chrome, le service de voix et le serveur de la chaîne
   (un serveur compatible sur un faux modèle, lancé avant ; dans l'écosystème Lun', le core le fournit), en temps réel ;
   il écrit `releve-chaine.md` et les `deroule-chaine-<nom>.jsonl` dans `BANC_DIR/chaine`. Sur le poste seulement,
-  jamais en CI. Son `--reporter=default` est voulu : sous un agent, Vitest prend `minimal`, qui tait la ligne de résumé.
+  jamais en CI. Les quatre bancs ont `--reporter=default` : sous un agent, Vitest prend `minimal`, qui tait leur sortie.
 - La course, chaque scénario trente fois avec Hortense, puis la robustesse, deux fois par voix, jamais la sienne ; sous
   PowerShell, une commande par ligne (chaque bloc retire ses variables, qui resteraient sinon dans la session) :
 
