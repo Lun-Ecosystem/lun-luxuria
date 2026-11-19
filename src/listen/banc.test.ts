@@ -179,11 +179,13 @@ interface Fiche {
   phrases?: number;
   textes?: string[];
 }
-// Not `gestes/`: its takes are named by the ids of its list, which `releve.md` would copy.
+// Not the folders of the other benches: their sounds and outputs are theirs, and the takes of `gestes/` are named by
+// the ids of its list, which `releve.md` would copy.
+const OTHER_BENCHES = new Set(['gestes', 'chaine', 'scenarios']);
 const wavs = (dir: string, top = true): string[] =>
   readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
-    if (top && name === 'gestes') return [];
+    if (top && OTHER_BENCHES.has(name)) return [];
     return statSync(path).isDirectory() ? wavs(path, false) : name.endsWith('.wav') ? [path] : [];
   });
 const json = (path: string): Fiche =>
@@ -191,14 +193,27 @@ const json = (path: string): Fiche =>
 const ms = (n: number) => `${(n / 1000).toFixed(2)} s`;
 
 describe('the folder of the bench', () => {
-  it('leaves out the bench of gestures, whose takes are named by its list', () => {
+  it('leaves out the folders of the other benches: gestures, chain and scenarios', () => {
     const dir = mkdtempSync(join(tmpdir(), 'banc-'));
     try {
-      for (const f of ['a.wav', 'sous/b.wav', 'gestes/prises/oui-1.wav', 'gestes/temoins/c.wav']) {
+      for (const f of [
+        'a.wav',
+        'sous/b.wav',
+        'sous/chaine/z.wav',
+        'gestes/prises/oui-1.wav',
+        'gestes/temoins/c.wav',
+        'chaine/sons/x.wav',
+        'scenarios/y.wav',
+      ]) {
         mkdirSync(dirname(join(dir, f)), { recursive: true });
         writeFileSync(join(dir, f), writeWav([new Float32Array(16)]));
       }
-      expect(wavs(dir).map((f) => relative(dir, f).replaceAll('\\', '/'))).toEqual(['a.wav', 'sous/b.wav']);
+      expect(wavs(dir).map((f) => relative(dir, f).replaceAll('\\', '/'))).toEqual([
+        'a.wav',
+        'sous/b.wav',
+        // only the first level is another bench's: a deeper `chaine` is still read
+        'sous/chaine/z.wav',
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
