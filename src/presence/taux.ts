@@ -411,30 +411,39 @@ export function releveTaux(lignes: readonly Resultat[]): string {
 /**
  * The steps of a turn, in the order of the budget of the veille (each step's budget), with the ADR 0011 of lun-docs
  * for the VIP target, end to end. `delai` is the delay of the trace that measures the step; none, it is not measured.
+ * `vraieVoix`: a fake synthesis (`synthese: 'fausse'`) waits the pause its scenario fixes, not a measure, so its
+ * games stay out of the step.
  */
-const BUDGET: { etape: string; delai?: string; budget: string; vip?: string }[] = [
+const BUDGET: {
+  etape: string;
+  delai?: DelayName | 'synthese 1';
+  budget: string;
+  vip?: string;
+  vraieVoix?: true;
+}[] = [
   { etape: 'Détection de voix', budget: '< 30 ms' },
-  { etape: 'Fin de tour', delai: 'attente_fin', budget: '< 100 ms' },
+  { etape: 'Fin de tour', delai: 'attente_fin', budget: '< 100 ms (repli 700 ms)' },
   { etape: 'Transcription', delai: 'transcription', budget: '< 300 ms' },
   { etape: 'Première phrase du modèle', delai: 'premiere_phrase', budget: '< 700 ms' },
   // The first sentence alone: the one she makes wait for.
-  { etape: 'Synthèse', delai: 'synthese 1', budget: '< 400 ms' },
+  { etape: 'Synthèse', delai: 'synthese 1', budget: '< 400 ms', vraieVoix: true },
   { etape: 'Sa voix (RVC)', budget: '< 100 ms' },
-  { etape: 'Bout en bout', delai: 'blanc_de_tour', budget: '1,5 s', vip: '2,5 s' },
+  { etape: 'Bout en bout', delai: 'blanc_de_tour', budget: '1,5 s', vip: '2,5 s', vraieVoix: true },
 ];
 
 /**
  * The section « Budget », from the lines alone: each step's delay over every turn of every game played, by voice,
  * beside its budget. A measure only, never a failure.
  */
-// shortcut: the turns with an `essai` and the others are pooled; split them if the desktop's table shows them apart.
+// shortcut: a line of `resultats.jsonl` does not keep whether a turn left on an `essai`, so no table can split the two
+// kinds of turns; add that field to `Resultat` first if the desktop needs them apart.
 export function releveBudget(lignes: readonly Resultat[]): string {
   const jouees = lignes.filter((r) => r.raison === undefined);
-  const rangs = BUDGET.flatMap(({ etape, delai, budget, vip }) => {
+  const rangs = BUDGET.flatMap(({ etape, delai, budget, vip, vraieVoix }) => {
     const parVoix = unique(jouees.map((r) => r.voix))
       .map((vx) => {
         const xs = jouees
-          .filter((r) => r.voix === vx)
+          .filter((r) => r.voix === vx && !(vraieVoix && r.synthese === 'fausse'))
           .flatMap((r) => r.delais.flatMap(delaisDe))
           .filter(([n]) => n === delai)
           .map(([, ms]) => ms);
@@ -447,11 +456,11 @@ export function releveBudget(lignes: readonly Resultat[]): string {
     '## Budget',
     '',
     ...table(
-      ['Étape', 'Délai', 'Voix', 'Médiane', '95e centile', 'Valeurs', 'Budget', 'Cible du VIP'],
+      ['Étape', 'Délai', 'Voix', 'Médiane (ms)', '95e centile (ms)', 'Valeurs', 'Budget', 'Cible du VIP'],
       rangs,
     ),
     '',
-    'Une mesure seulement, jamais un échec : sur ce poste et avec ce modèle, ces chiffres ne valent que comparés à une autre course du même poste.',
+    "Une mesure seulement, jamais un échec : sur ce poste et avec ce modèle, ces chiffres ne valent que comparés à une autre course du même poste. La table compte toutes les parties de la suite, quand le reste du relevé de la chaîne ne décrit que le premier passage ; une synthèse fausse n'entre ni dans la synthèse ni dans le bout en bout.",
     '',
   ].join('\n');
 }
