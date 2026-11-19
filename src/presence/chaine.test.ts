@@ -23,7 +23,7 @@ import type { Banc, Plan } from './chaine/sonde.ts';
 import { juger, passe, type Verdict } from './judge.ts';
 import { jouer } from './player.ts';
 import { releveChaine, type Jouee, type PartieChaine } from './releve.ts';
-import { echoue, releveTaux, resultat, type Resultat } from './taux.ts';
+import { echoue, releveBudget, releveTaux, resultat, type Resultat } from './taux.ts';
 import {
   ancre,
   charger,
@@ -597,8 +597,10 @@ describe.runIf(enChaine)('la chaîne', () => {
     arreter(apercu);
     arreter(voix);
     mkdirSync(DIR, { recursive: true });
-    writeFileSync(join(DIR, 'releve-chaine.md'), releveChaine(parties));
-    if (!UNE) writeFileSync(join(DIR, 'releve-taux.md'), releveTaux(lignes));
+    // A measure, never a failure: the section of the budget closes each report.
+    const budget = releveBudget(lignes);
+    writeFileSync(join(DIR, 'releve-chaine.md'), `${releveChaine(parties)}\n\n${budget}`);
+    if (!UNE) writeFileSync(join(DIR, 'releve-taux.md'), `${releveTaux(lignes)}\n${budget}`);
     console.log(`Relevés, déroulés et resultats.jsonl écrits dans ${DIR}.`);
     if (!UNE) console.log(resume(lignes));
   });

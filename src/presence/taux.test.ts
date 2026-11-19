@@ -1,9 +1,9 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { Verdict } from './judge.ts';
 import type { Jouee } from './releve.ts';
 import type { Partie, Scenario } from './scenario.ts';
-import { echoue, releveTaux, resultat, tenue, type Resultat } from './taux.ts';
+import { echoue, releveBudget, releveTaux, resultat, tenue, type Resultat } from './taux.ts';
 
 type V = Resultat['verdicts'][number];
 const v = (x: Partial<V>): V => ({
@@ -499,5 +499,209 @@ describe('the report of the rates', () => {
       '| pour-de-bon | en_trop | transcription | 2833 |',
       '',
     ]);
+  });
+});
+
+describe('the budget, a delay per step', () => {
+  const COLONNES = ['Étape', 'Délai', 'Voix', 'Médiane', '95e centile', 'Valeurs', 'Budget', 'Cible du VIP'];
+  const ETAPES = [
+    'Détection de voix',
+    'Fin de tour',
+    'Transcription',
+    'Première phrase du modèle',
+    'Synthèse',
+    'Sa voix (RVC)',
+    'Bout en bout',
+  ];
+  type Rang = Record<string, string>;
+  const cellules = (l: string) =>
+    l
+      .replace(/^\| ?/, '')
+      .replace(/ ?\|$/, '')
+      .split(' | ')
+      .map((c) => c.trim());
+  /** The rows of the table, each under the name of its columns. */
+  const rangs = (md: string): Rang[] => {
+    const l = md.split('\n').filter((x) => x.startsWith('|'));
+    const tete = cellules(l[0]!);
+    expect(tete).toEqual(COLONNES);
+    return l.slice(2).map((x) => Object.fromEntries(cellules(x).map((c, i) => [tete[i]!, c])));
+  };
+  const de = (md: string, etape: string, voix?: string) =>
+    rangs(md).filter((r) => r['Étape'] === etape && (voix === undefined || r['Voix'] === voix));
+  const un = (md: string, etape: string, voix: string) => {
+    const rs = de(md, etape, voix);
+    expect(rs).toHaveLength(1);
+    return rs[0]!;
+  };
+
+  // Two voices, three games played and one not: every cell below is worked out by hand.
+  const lignes = [
+    ligne({
+      partie: 'a#1',
+      delais: [
+        {
+          tour: 1,
+          ms: { attente_fin: 100, transcription: 300, premiere_phrase: 600, blanc_de_tour: 2000 },
+          synthese: [400, 50],
+        },
+        // A turn without a first sentence nor a synthesis: its other delays count all the same.
+        { tour: 2, ms: { attente_fin: 200, transcription: 500, blanc_de_tour: 3000 }, synthese: [] },
+      ],
+    }),
+    ligne({
+      partie: 'a#2',
+      rang: 2,
+      delais: [
+        {
+          tour: 1,
+          ms: { attente_fin: 300, transcription: 400, premiere_phrase: 800, blanc_de_tour: 1000 },
+          synthese: [200],
+        },
+      ],
+    }),
+    ligne({
+      partie: 'a#3',
+      rang: 3,
+      voix: 'julie',
+      delais: [
+        { tour: 1, ms: { attente_fin: 150, transcription: 250, blanc_de_tour: 1500 }, synthese: [100] },
+      ],
+    }),
+    ligne({
+      partie: 'b#1',
+      scenario: 'b',
+      raison: 'pas de micro',
+      delais: [{ tour: 1, ms: { attente_fin: 99999, blanc_de_tour: 99999 }, synthese: [99999] }],
+    }),
+  ];
+  let md = '';
+  // In a hook, so a missing function fails these tests and not the whole file.
+  beforeAll(() => {
+    md = releveBudget(lignes);
+  });
+
+  it('is a section « Budget » with a note: a measure, not a verdict', () => {
+    expect(md.split('\n')[0]).toBe('## Budget');
+    expect(md).toContain('mesure seulement');
+    expect(md).toContain('même poste');
+    // The public repository names no path: the reference is the budget of the veille and the ADR 0011.
+    expect(md).not.toMatch(/[A-Za-z]:\\|\/Users\/|perplexity/);
+  });
+
+  it('gives a row per step and per voice, the steps in the order of the budget', () => {
+    expect(rangs(md).map((r) => [r['Étape'], r['Voix']])).toEqual([
+      ['Détection de voix', ''],
+      ['Fin de tour', 'hortense'],
+      ['Fin de tour', 'julie'],
+      ['Transcription', 'hortense'],
+      ['Transcription', 'julie'],
+      ['Première phrase du modèle', 'hortense'],
+      ['Synthèse', 'hortense'],
+      ['Synthèse', 'julie'],
+      ['Sa voix (RVC)', ''],
+      ['Bout en bout', 'hortense'],
+      ['Bout en bout', 'julie'],
+    ]);
+  });
+
+  it('names the delay of each step, her first sentence of synthesis alone', () => {
+    const delai = (e: string) => [...new Set(de(md, e).map((r) => r['Délai']))];
+    expect(delai('Fin de tour')).toEqual(['attente_fin']);
+    expect(delai('Transcription')).toEqual(['transcription']);
+    expect(delai('Première phrase du modèle')).toEqual(['premiere_phrase']);
+    expect(delai('Synthèse')).toEqual(['synthese 1']);
+    expect(delai('Bout en bout')).toEqual(['blanc_de_tour']);
+  });
+
+  it('gives the exact median and count, over every turn of every game of a voice', () => {
+    const lu = (e: string, vx: string) => {
+      const r = un(md, e, vx);
+      return [r['Médiane'], r['Valeurs']];
+    };
+    expect(lu('Fin de tour', 'hortense')).toEqual(['200', '3']);
+    expect(lu('Transcription', 'hortense')).toEqual(['400', '3']);
+    expect(lu('Première phrase du modèle', 'hortense')).toEqual(['700', '2']);
+    // `synthese 1` only: 400 and 200, not the 50 of the second sentence.
+    expect(lu('Synthèse', 'hortense')).toEqual(['300', '2']);
+    expect(lu('Bout en bout', 'hortense')).toEqual(['2000', '3']);
+    expect(lu('Fin de tour', 'julie')).toEqual(['150', '1']);
+    expect(lu('Bout en bout', 'julie')).toEqual(['1500', '1']);
+  });
+
+  it('counts a game not played nowhere', () => {
+    expect(md).not.toContain('99999');
+  });
+
+  it('writes a step with a single value, and no 95th percentile under twenty values', () => {
+    const r = un(md, 'Fin de tour', 'julie');
+    expect([r['Médiane'], r['Valeurs'], r['95e centile']]).toEqual(['150', '1', '']);
+    expect(un(md, 'Fin de tour', 'hortense')['95e centile']).toBe('');
+  });
+
+  it('gives the 95th percentile from twenty values, the nearest rank', () => {
+    const vingt = releveBudget([
+      ligne({
+        delais: Array.from({ length: 20 }, (_, k) => ({
+          tour: k + 1,
+          ms: { attente_fin: (k + 1) * 10 },
+          synthese: [],
+        })),
+      }),
+    ]);
+    const r = un(vingt, 'Fin de tour', 'hortense');
+    expect([r['Médiane'], r['95e centile'], r['Valeurs']]).toEqual(['105', '190', '20']);
+  });
+
+  it('writes a step without any delay as not measured, with its row and its budget', () => {
+    for (const e of ['Détection de voix', 'Sa voix (RVC)']) {
+      const rs = de(md, e);
+      expect(rs).toHaveLength(1);
+      expect(rs[0]!['Médiane']).toBe('non mesurée');
+      expect(rs[0]!['95e centile']).toBe('');
+    }
+  });
+
+  it('keeps a step no voice has a value for, as not measured, beside the others', () => {
+    const sans = releveBudget([ligne({ delais: [{ tour: 1, ms: { attente_fin: 120 }, synthese: [] }] })]);
+    expect(rangs(sans).map((r) => r['Étape'])).toEqual(ETAPES);
+    expect(un(sans, 'Fin de tour', 'hortense')['Médiane']).toBe('120');
+    for (const e of ['Transcription', 'Première phrase du modèle', 'Synthèse', 'Bout en bout']) {
+      const rs = de(sans, e);
+      expect(rs).toHaveLength(1);
+      expect(rs[0]!['Médiane']).toBe('non mesurée');
+    }
+  });
+
+  it('does not break on no line at all, nor on games all not played', () => {
+    for (const vide of [releveBudget([]), releveBudget([ligne({ raison: 'x' })])]) {
+      expect(rangs(vide).map((r) => r['Étape'])).toEqual(ETAPES);
+      expect(rangs(vide).every((r) => r['Médiane'] === 'non mesurée')).toBe(true);
+    }
+  });
+
+  it('shows each step its budget of the veille, and the VIP target on the end to end alone', () => {
+    const budgets: Record<string, string> = {
+      'Détection de voix': '< 30 ms',
+      'Fin de tour': '< 100 ms',
+      Transcription: '< 300 ms',
+      'Première phrase du modèle': '< 700 ms',
+      Synthèse: '< 400 ms',
+      'Sa voix (RVC)': '< 100 ms',
+      'Bout en bout': '1,5 s',
+    };
+    for (const r of rangs(md)) {
+      expect(r['Budget']).toBe(budgets[r['Étape']!]);
+      expect(r['Cible du VIP']).toBe(r['Étape'] === 'Bout en bout' ? '2,5 s' : '');
+    }
+  });
+
+  it('is a measure, never a failure: a delay far past its budget changes no verdict', () => {
+    const lent = [
+      ligne({ delais: [{ tour: 1, ms: { blanc_de_tour: 60000, transcription: 60000 }, synthese: [60000] }] }),
+    ];
+    expect(() => releveBudget(lent)).not.toThrow();
+    expect(echoue(lent)).toEqual([]);
+    expect(un(releveBudget(lent), 'Bout en bout', 'hortense')['Médiane']).toBe('60000');
   });
 });

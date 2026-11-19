@@ -407,3 +407,51 @@ export function releveTaux(lignes: readonly Resultat[]): string {
   }
   return out.join('\n');
 }
+
+/**
+ * The steps of a turn, in the order of the budget of the veille (each step's budget), with the ADR 0011 of lun-docs
+ * for the VIP target, end to end. `delai` is the delay of the trace that measures the step; none, it is not measured.
+ */
+const BUDGET: { etape: string; delai?: string; budget: string; vip?: string }[] = [
+  { etape: 'Détection de voix', budget: '< 30 ms' },
+  { etape: 'Fin de tour', delai: 'attente_fin', budget: '< 100 ms' },
+  { etape: 'Transcription', delai: 'transcription', budget: '< 300 ms' },
+  { etape: 'Première phrase du modèle', delai: 'premiere_phrase', budget: '< 700 ms' },
+  // The first sentence alone: the one she makes wait for.
+  { etape: 'Synthèse', delai: 'synthese 1', budget: '< 400 ms' },
+  { etape: 'Sa voix (RVC)', budget: '< 100 ms' },
+  { etape: 'Bout en bout', delai: 'blanc_de_tour', budget: '1,5 s', vip: '2,5 s' },
+];
+
+/**
+ * The section « Budget », from the lines alone: each step's delay over every turn of every game played, by voice,
+ * beside its budget. A measure only, never a failure.
+ */
+// shortcut: the turns with an `essai` and the others are pooled; split them if the desktop's table shows them apart.
+export function releveBudget(lignes: readonly Resultat[]): string {
+  const jouees = lignes.filter((r) => r.raison === undefined);
+  const rangs = BUDGET.flatMap(({ etape, delai, budget, vip }) => {
+    const parVoix = unique(jouees.map((r) => r.voix))
+      .map((vx) => {
+        const xs = jouees
+          .filter((r) => r.voix === vx)
+          .flatMap((r) => r.delais.flatMap(delaisDe))
+          .filter(([n]) => n === delai)
+          .map(([, ms]) => ms);
+        return [etape, delai, vx, mediane(xs), centile95(xs), xs.length, budget, vip];
+      })
+      .filter((r) => r[5] !== 0);
+    return parVoix.length ? parVoix : [[etape, delai, '', 'non mesurée', undefined, 0, budget, vip]];
+  });
+  return [
+    '## Budget',
+    '',
+    ...table(
+      ['Étape', 'Délai', 'Voix', 'Médiane', '95e centile', 'Valeurs', 'Budget', 'Cible du VIP'],
+      rangs,
+    ),
+    '',
+    'Une mesure seulement, jamais un échec : sur ce poste et avec ce modèle, ces chiffres ne valent que comparés à une autre course du même poste.',
+    '',
+  ].join('\n');
+}
