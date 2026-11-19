@@ -51,6 +51,16 @@ jobs:
       - run: npm ci
       - run: npm run mutations
 
+  # The voice service: its own test, fake voices and fake servers, no model loaded.
+  voix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.4'
+      - run: uv run --python 3.12 --with numpy --with httpx --with soundfile python voix/test_service.py
+
   # The window: Rust side on the system it ships for. The page is built first, the app embeds it.
   window:
     runs-on: windows-latest
