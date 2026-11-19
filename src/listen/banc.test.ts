@@ -199,6 +199,7 @@ describe('the folder of the bench', () => {
       for (const f of [
         'a.wav',
         'sous/b.wav',
+        'sous/chaine/z.wav',
         'gestes/prises/oui-1.wav',
         'gestes/temoins/c.wav',
         'chaine/sons/x.wav',
@@ -207,7 +208,12 @@ describe('the folder of the bench', () => {
         mkdirSync(dirname(join(dir, f)), { recursive: true });
         writeFileSync(join(dir, f), writeWav([new Float32Array(16)]));
       }
-      expect(wavs(dir).map((f) => relative(dir, f).replaceAll('\\', '/'))).toEqual(['a.wav', 'sous/b.wav']);
+      expect(wavs(dir).map((f) => relative(dir, f).replaceAll('\\', '/'))).toEqual([
+        'a.wav',
+        'sous/b.wav',
+        // only the first level is another bench's: a deeper `chaine` is still read
+        'sous/chaine/z.wav',
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
