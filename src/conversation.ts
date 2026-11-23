@@ -1,4 +1,4 @@
-import type { Brain, LiveEvent, Message, SendEvent } from './brain.ts';
+import { emotionOf, type Brain, type LiveEvent, type Message, type SendEvent } from './brain.ts';
 import { decide } from './listen/filter.ts';
 import type { EndpointEvent, Moment } from './listen/endpoint.ts';
 import type { Layout, Settings } from './settings.ts';
@@ -19,7 +19,7 @@ export interface ConversationDeps {
     hold(id: number): void;
     release(id: number): void;
     drop(id: number): void;
-    add(id: number, text: string, urgent?: boolean): void;
+    add(id: number, text: string, urgent?: boolean, emotion?: string): void;
     /** `by`: the sentence whose sound suspends her, for the trace. */
     suspend(soft?: boolean, by?: number): void;
     resume(): void;
@@ -175,7 +175,7 @@ export class Conversation {
         return;
       }
       if (e.why !== 'reply' && !speak[e.why]) return;
-      this.#d.speaker.add(e.id, e.text, e.why === 'p0');
+      this.#d.speaker.add(e.id, e.text, e.why === 'p0', emotionOf(e.emotion));
     } else if (e.type === 'speech-end') {
       this.#d.speaker.end(e.id);
     }
