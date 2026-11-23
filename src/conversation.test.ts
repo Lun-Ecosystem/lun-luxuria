@@ -2331,3 +2331,102 @@ describe('an urgency', () => {
     expect(t.events.filter((e) => e.type === 'said')).toHaveLength(0);
   });
 });
+
+describe('the emotion of a sentence, received with it', () => {
+  const speech = (t: ReturnType<typeof setup>, text: string, emotion?: unknown, n = 1) =>
+    t.convo.onLive({ type: 'speech', id: 7, n, text, why: 'reply', emotion } as never);
+  const subtitles = (t: ReturnType<typeof setup>) => {
+    const spy = vi.spyOn(t.convo, 'onSpeaker');
+    return () => spy.mock.calls.map(([e]) => e).filter((e) => e.type === 'subtitle');
+  };
+
+  it('gives the speaker the emotion with its sentence', () => {
+    const t = setup();
+    const add = vi.spyOn(t.speaker, 'add');
+    speech(t, 'Un café.', 'douce');
+    expect(add).toHaveBeenCalledWith(7, 'Un café.', false, 'douce');
+  });
+
+  it('shows it at the real start of that sentence, not at its reception', async () => {
+    const t = setup();
+    const seen = subtitles(t);
+    speech(t, 'Un.', 'douce');
+    speech(t, 'Deux.', 'seche', 2);
+    expect(seen()).toEqual([]);
+    await tick();
+    expect(seen()).toEqual([{ type: 'subtitle', id: 7, text: 'Un.', emotion: 'douce' }]);
+    t.sounds[0]!.end();
+    await tick();
+    expect(seen().at(-1)).toEqual({ type: 'subtitle', id: 7, text: 'Deux.', emotion: 'seche' });
+  });
+
+  it('without an emotion, nothing changes: the speaker gets what it got before', async () => {
+    const t = setup();
+    const add = vi.spyOn(t.speaker, 'add');
+    const seen = subtitles(t);
+    t.say(7, 'Comme avant.');
+    await tick();
+    expect(add.mock.calls[0]![3]).toBeUndefined();
+    expect(seen()).toEqual([{ type: 'subtitle', id: 7, text: 'Comme avant.' }]);
+  });
+
+  it.each([
+    ['capitals and a sign', 'DOUCE !'],
+    ['a number', 42],
+    ['empty', ''],
+    ['40 signs', 'a'.repeat(40)],
+    ['an accent', 'gênée'],
+    ['a digit', 'douce2'],
+    ['braces', '{douce}'],
+  ])('a malformed one (%s) is taken as absent, without an error', async (_, bad) => {
+    const t = setup();
+    const add = vi.spyOn(t.speaker, 'add');
+    const seen = subtitles(t);
+    expect(() => speech(t, 'Dite quand même.', bad)).not.toThrow();
+    await tick();
+    expect(add.mock.calls[0]![3]).toBeUndefined();
+    expect(seen()).toEqual([{ type: 'subtitle', id: 7, text: 'Dite quand même.' }]);
+  });
+
+  it('24 signs of [a-z_] are well formed, 25 are not', () => {
+    const t = setup();
+    const add = vi.spyOn(t.speaker, 'add');
+    speech(t, 'Un.', 'a_'.repeat(12));
+    speech(t, 'Deux.', 'a_'.repeat(12) + 'a', 2);
+    expect(add.mock.calls[0]![3]).toBe('a_'.repeat(12));
+    expect(add.mock.calls[1]![3]).toBeUndefined();
+  });
+
+  it('a sentence said again after a suspension keeps its emotion', async () => {
+    const t = setup();
+    const seen = subtitles(t);
+    speech(t, 'Un.', 'inquiete');
+    await tick();
+    t.speaker.suspend();
+    t.speaker.resume();
+    await tick();
+    expect(seen().map((e) => ('emotion' in e ? e.emotion : null))).toEqual(['inquiete', 'inquiete']);
+  });
+
+  it('a turn the voice does not say takes nothing of it', () => {
+    const t = setup({}, 'Bonjour toi', () => true);
+    const add = vi.spyOn(t.speaker, 'add');
+    speech(t, 'Muette.', 'douce');
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it('is written nowhere in the trace, and no brace reaches the voice or the screen', async () => {
+    const t = setup();
+    const seen = subtitles(t);
+    speech(t, 'Un café, c’est pas un repas.', 'douce');
+    await tick();
+    t.sounds[0]!.end();
+    t.convo.onLive({ type: 'speech-end', id: 7, why: 'reply' });
+    await tick();
+    const lines = t.trace.lines();
+    expect(lines).toContain('phrase_recue');
+    expect(lines).not.toContain('douce');
+    expect(seen().length).toBeGreaterThan(0);
+    for (const e of seen()) expect('text' in e && e.text).not.toMatch(/[{}]|douce/);
+  });
+});

@@ -741,3 +741,71 @@ async function said(w: ReturnType<typeof world>, loud = 20, quiet = 40) {
   }
   void w;
 }
+
+describe('the emotion of the sentence being read', () => {
+  const emotional = (w: ReturnType<typeof world>, id: number, n: number, emotion: unknown) =>
+    w.live!({ type: 'speech', id, n, text: `phrase ${n}`, why: 'reply', emotion } as never);
+
+  it('is held from the real start of its sentence, never shown, and forgotten at the silence', async () => {
+    const w = world();
+    await w.s.enter();
+    // Her voice is slow: the sentence is received, not yet read.
+    w.tts = 'held';
+    emotional(w, 1, 1, 'douce');
+    await flushAll();
+    expect(w.s.emotion).toBeUndefined();
+    w.pending.shift()!();
+    await flushAll();
+    expect(w.s.emotion).toBe('douce');
+    // Held, not shown: the words on screen are the words alone, and nothing of it is written.
+    expect(w.s.subtitle).toBe('phrase 1');
+    expect(w.s.turns.lines()).not.toContain('douce');
+    w.tts = 'ok';
+    emotional(w, 1, 2, 'seche');
+    w.live!({ type: 'speech-end', id: 1, why: 'reply' });
+    endSentence();
+    await flushAll();
+    expect(w.s.emotion).toBe('seche');
+    endSentence();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(w.s.emotion).toBeUndefined();
+  });
+
+  it('a sentence without one, or with a malformed one, holds none', async () => {
+    const w = world();
+    await w.s.enter();
+    emotional(w, 1, 1, 'douce');
+    emotional(w, 1, 2, undefined);
+    emotional(w, 1, 3, 'DOUCE !');
+    w.live!({ type: 'speech-end', id: 1, why: 'reply' });
+    await flushAll();
+    expect(w.s.emotion).toBe('douce');
+    endSentence();
+    await flushAll();
+    expect(w.s.emotion).toBeUndefined();
+    endSentence();
+    await flushAll();
+    expect(w.s.emotion).toBeUndefined();
+  });
+
+  it('the words of a voice that failed hold it too', async () => {
+    const w = world();
+    await w.s.enter();
+    w.tts = '502';
+    emotional(w, 1, 1, 'genee');
+    await flushAll();
+    expect(w.s.subtitle).toBe('phrase 1');
+    expect(w.s.emotion).toBe('genee');
+  });
+
+  it('a cut forgets it with the words', async () => {
+    const w = world();
+    await w.s.enter();
+    emotional(w, 1, 1, 'vexee');
+    await flushAll();
+    expect(w.s.emotion).toBe('vexee');
+    w.s.silence();
+    await flushAll();
+    expect(w.s.emotion).toBeUndefined();
+  });
+});
