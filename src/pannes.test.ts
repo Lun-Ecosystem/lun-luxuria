@@ -767,8 +767,10 @@ describe('the emotion of the sentence being read', () => {
     await flushAll();
     expect(w.s.emotion).toBe('seche');
     endSentence();
-    await vi.advanceTimersByTimeAsync(5000);
+    await flushAll();
+    // Forgotten at the silence itself, while its words still stay on screen for a while.
     expect(w.s.emotion).toBeUndefined();
+    expect(w.s.subtitle).toBe('phrase 2');
   });
 
   it('a sentence without one, or with a malformed one, holds none', async () => {
@@ -796,6 +798,28 @@ describe('the emotion of the sentence being read', () => {
     await flushAll();
     expect(w.s.subtitle).toBe('phrase 1');
     expect(w.s.emotion).toBe('genee');
+  });
+
+  it('an urgency that goes in front holds none, and the sentence it passed keeps its own', async () => {
+    const w = world();
+    await w.s.enter();
+    emotional(w, 1, 1, 'seche');
+    w.live!({ type: 'speech-end', id: 1, why: 'reply' });
+    await flushAll();
+    expect(w.s.emotion).toBe('seche');
+    emotional(w, 2, 1, 'douce');
+    w.live!({ type: 'speech-end', id: 2, why: 'reply' });
+    w.live!({ type: 'speech', id: 3, n: 1, text: 'Alerte.', why: 'p0' });
+    w.live!({ type: 'speech-end', id: 3, why: 'p0' });
+    await flushAll();
+    endSentence();
+    await flushAll();
+    expect(w.s.subtitle).toBe('Alerte.');
+    expect(w.s.emotion).toBeUndefined();
+    endSentence();
+    await flushAll();
+    expect(w.s.subtitle).toBe('phrase 1');
+    expect(w.s.emotion).toBe('douce');
   });
 
   it('a cut forgets it with the words', async () => {
