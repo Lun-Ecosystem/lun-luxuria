@@ -17,12 +17,13 @@ export interface Output {
 
 export type SpeakerEvent =
   | { type: 'first-sound'; id: number }
-  | { type: 'subtitle'; id: number; text: string; mute?: true }
+  | { type: 'subtitle'; id: number; text: string; mute?: true; emotion?: string }
   | { type: 'silent'; cut?: boolean }
   | { type: 'failed'; text: string };
 
 interface Piece {
   text: string;
+  emotion?: string | undefined;
   clip: Promise<Clip | null>;
 }
 
@@ -47,6 +48,9 @@ const ENDED_KEPT = 64;
 
 /** How long words without a voice stay on screen before the next sentence: enough to read them. */
 export const readingMs = (text: string) => Math.max(1500, 60 * text.length);
+
+/** The key is absent without an emotion: a sentence without one is the same as before. */
+const emotionField = (p: Piece) => (p.emotion ? { emotion: p.emotion } : {});
 
 /** The words heard of a sentence cut in the middle: the sound carries no words, only a ratio. */
 export function wordsHeard(text: string, ratio: number): string {
@@ -135,7 +139,7 @@ export class Speaker {
   }
 
   /** `urgent`: this turn goes in front of the ones that wait. */
-  add(id: number, text: string, urgent = false): void {
+  add(id: number, text: string, urgent = false, emotion?: string): void {
     if (this.#past(id)) return;
     // One at a time: a voice conversion takes one call at a time, and order matters more than speed.
     // shortcut: an urgency waits for the sentences already being made, give it its own lane if that is heard.
@@ -145,7 +149,7 @@ export class Speaker {
     const rang = turn.pieces.length + 1;
     const clip = this.#chain.then(() => this.#oneClip(text, id, rang));
     this.#chain = clip;
-    turn.pieces.push({ text, clip });
+    turn.pieces.push({ text, clip, emotion });
     this.#pump();
   }
 
@@ -207,7 +211,7 @@ export class Speaker {
       turn.next++;
       if (!clip) {
         // Its voice failed, its words are still paid for: said on screen, and nobody heard them.
-        this.#on({ type: 'subtitle', id: turn.id, text: piece.text, mute: true });
+        this.#on({ type: 'subtitle', id: turn.id, text: piece.text, mute: true, ...emotionField(piece) });
         this.#reading = setTimeout(() => {
           this.#reading = null;
           this.#pump();
@@ -218,7 +222,7 @@ export class Speaker {
         turn.sounded = true;
         this.#on({ type: 'first-sound', id: turn.id });
       }
-      this.#on({ type: 'subtitle', id: turn.id, text: piece.text });
+      this.#on({ type: 'subtitle', id: turn.id, text: piece.text, ...emotionField(piece) });
       // `rang`: the sentence of the reply, from 1; a sentence said again after a suspension keeps its rank.
       this.#trace?.add('son', { reponse: turn.id }, { etape: 'debut', rang: turn.next });
       const sound = this.#out.play(clip, () => {

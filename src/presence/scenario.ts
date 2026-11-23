@@ -289,6 +289,12 @@ export interface Scenario {
   /** Her voice: synthesis time, sound time per character, texts whose synthesis fails. */
   voix?: { syntheseMs?: number; msParCaractere?: number; echoue?: string[] };
   gestes?: Geste[];
+  /**
+   * The chain only: what the session holds when each sentence of `modele` starts to sound (`undefined`: neutral), and
+   * that no `{`, no tag id, reaches the screen or the voice. A phrase of the model may open with `{id}` (the core's
+   * tag): the false server of the exact level takes it out and publishes it as the core does.
+   */
+  emotionsLues?: { texte: string; emotion: string | undefined }[];
   /** End of the game; by default `DEFAUTS.finApresMs` after the last planned event. */
   jusqua?: number;
   attendus: Attendu[];

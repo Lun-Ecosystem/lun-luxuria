@@ -193,7 +193,10 @@ en contexte, découpés en phrases pour la voix. La voix ne lit pas le markdown 
 le fil le garde écrit. Le plafond est vérifié avant l'appel : la réponse qui le franchit va à son
 terme, la suivante est refusée. Le fil ne garde que le jour courant. Une clé ne part jamais en clair hors du poste.
 
-**Relié** (`src/core.ts`), entrant : `speech { id, n, text, why }` et `speech-end { id, why }` sur `GET /api/live`.
+**Relié** (`src/core.ts`), entrant : `speech { id, n, text, why, emotion? }` et `speech-end { id, why }` sur `GET /api/live`.
+`emotion` dit comment la phrase se dit : un identifiant de forme `[a-z_]{1,24}` ; absent, elle est neutre, et toute
+autre valeur est ignorée comme absente. Elle vaut au début réel de la lecture de sa phrase, non à sa réception ; elle
+n'est ni affichée, ni passée à la synthèse, ni écrite dans la trace.
 Le corps en dépend : un numéro de réponse ne sert qu'une fois, et rien ne suit sa fin de parole (des mots venus après
 elle sont ignorés). Une réponse que son `done` dit menée à bout se dit par le live, même si le flux de son envoi casse
 ensuite.

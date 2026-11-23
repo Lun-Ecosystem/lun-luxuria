@@ -149,6 +149,32 @@ function pourquoiPas(s: Scenario): string | undefined {
   return undefined;
 }
 
+/**
+ * The criterion 5 of « l'émotion par phrase »: the session held the expected emotion at the first sound of each
+ * sentence, and no brace or tag id reached the screen or the voice. It throws, so the game fails.
+ */
+export function verifierEmotions(
+  s: Scenario,
+  vu: { lues: { texte: string; emotion: string | undefined }[]; textes: string[] },
+): void {
+  console.log(`émotions lues au premier son (${s.nom}) : ${JSON.stringify(vu.lues)}`);
+  for (const { texte, emotion } of s.emotionsLues ?? []) {
+    const lue = vu.lues.find((l) => l.texte === texte);
+    if (!lue) throw new Error(`émotion : « ${texte} » n'a pas sonné (lues : ${JSON.stringify(vu.lues)})`);
+    if (lue.emotion !== emotion)
+      throw new Error(`émotion de « ${texte} » : ${String(lue.emotion)} au lieu de ${String(emotion)}`);
+  }
+  const ids = new Set(
+    (s.modele?.reponses ?? []).flatMap((r) => r.phrases.flatMap((p) => /^\{([^{}\s]*)\}/.exec(p)?.[1] ?? [])),
+  );
+  for (const t of [...vu.textes, ...vu.lues.map((l) => l.texte)]) {
+    if (/[{}]/.test(t)) throw new Error(`émotion : une accolade à l'écran ou à la voix : ${t.slice(0, 80)}`);
+    for (const id of ids)
+      if (t.toLowerCase().includes(id.toLowerCase()))
+        throw new Error(`émotion : l'identifiant « ${id} » à l'écran ou à la voix : ${t.slice(0, 80)}`);
+  }
+}
+
 /** A game of the launch: its round `r`, and `k`, the count of the scenario's games over the launch, both from 1. */
 interface Jeu<S, V> {
   r: number;
@@ -708,6 +734,11 @@ describe.runIf(enChaine)('la chaîne', () => {
       const echec = await mots;
       if (echec !== undefined) throw echec;
       const sonde = temoinDe ? [] : await page.evaluate(() => window.__banc!.fin());
+      if (!temoinDe && s.emotionsLues)
+        verifierEmotions(
+          s,
+          await page.evaluate(() => ({ lues: window.__banc!.emotions, textes: window.__banc!.textes })),
+        );
       const sortieMs = temoinDe ? undefined : await page.evaluate(() => window.__banc!.sortieAnnonceeMs);
       const fin = await maintenant();
       const [tete, ...lignes] = (await exporter(page)).trim().split('\n');
@@ -952,3 +983,27 @@ const deroule = (p: Partie) =>
   [{ format: p.format }, ...[...p.page, ...p.banc].sort((x, y) => x.at - y.at)]
     .map((e) => JSON.stringify(e))
     .join('\n') + '\n';
+
+describe("la vérification de l'émotion par phrase", () => {
+  const s = {
+    modele: { reponses: [{ phrases: ['{douce} Va dormir.'] }] },
+    emotionsLues: [{ texte: 'Va dormir.', emotion: 'douce' }],
+  } as unknown as Scenario;
+  const bon = { lues: [{ texte: 'Va dormir.', emotion: 'douce' }], textes: ['Va dormir.'] };
+
+  it('laisse passer ce que la session a tenu, et refuse une autre émotion, ou aucune phrase lue', () => {
+    expect(() => verifierEmotions(s, bon)).not.toThrow();
+    expect(() =>
+      verifierEmotions(s, { ...bon, lues: [{ texte: 'Va dormir.', emotion: undefined }] }),
+    ).toThrow(/undefined au lieu de douce/);
+    expect(() => verifierEmotions(s, { ...bon, lues: [] })).toThrow(/n'a pas sonné/);
+  });
+
+  it("refuse une accolade ou l'identifiant à l'écran ou à la voix", () => {
+    expect(() => verifierEmotions(s, { ...bon, textes: ['{douce} Va dormir.'] })).toThrow(/accolade/);
+    expect(() => verifierEmotions(s, { ...bon, textes: ['Douce nuit'] })).toThrow(/identifiant/);
+    expect(() =>
+      verifierEmotions(s, { ...bon, lues: [{ texte: '[douce] Va dormir.', emotion: 'douce' }] }),
+    ).toThrow();
+  });
+});

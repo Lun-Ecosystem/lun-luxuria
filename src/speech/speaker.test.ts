@@ -527,3 +527,105 @@ describe('the end of a turn that is over, or that showed nothing', () => {
     expect(silents(t)).toHaveLength(1);
   });
 });
+
+describe('the emotion of a sentence, held until it really starts', () => {
+  const subtitleEvents = (events: SpeakerEvent[]) => events.filter((e) => e.type === 'subtitle');
+
+  it('is carried by the subtitle of its own sentence, not before it sounds', async () => {
+    const t = setup();
+    t.speaker.add(1, 'Un.', false, 'douce');
+    t.speaker.add(1, 'Deux.', false, 'seche');
+    t.speaker.end(1);
+    await tick();
+    expect(subtitleEvents(t.events)).toEqual([{ type: 'subtitle', id: 1, text: 'Un.', emotion: 'douce' }]);
+    t.sounds[0]!.end();
+    await tick();
+    expect(subtitleEvents(t.events).at(-1)).toEqual({
+      type: 'subtitle',
+      id: 1,
+      text: 'Deux.',
+      emotion: 'seche',
+    });
+  });
+
+  it('a sentence without one carries none, and the others keep theirs', async () => {
+    const t = setup();
+    t.speaker.add(1, 'Un.', false, 'douce');
+    t.speaker.add(1, 'Deux.');
+    await tick();
+    t.sounds[0]!.end();
+    await tick();
+    expect(subtitleEvents(t.events)).toEqual([
+      { type: 'subtitle', id: 1, text: 'Un.', emotion: 'douce' },
+      { type: 'subtitle', id: 1, text: 'Deux.' },
+    ]);
+    expect('emotion' in subtitleEvents(t.events)[1]!).toBe(false);
+  });
+
+  it('the words of a voice that failed keep it too', async () => {
+    const t = setup(async () => {
+      throw new Error('hors service');
+    });
+    t.speaker.add(1, 'Sans voix.', false, 'genee');
+    await tick();
+    expect(subtitleEvents(t.events)).toEqual([
+      { type: 'subtitle', id: 1, text: 'Sans voix.', mute: true, emotion: 'genee' },
+    ]);
+  });
+
+  it('a held turn shows nothing of it until released', async () => {
+    const t = setup();
+    t.speaker.hold(1);
+    t.speaker.add(1, 'Prête.', false, 'amusee');
+    await tick();
+    expect(subtitleEvents(t.events)).toEqual([]);
+    t.speaker.release(1);
+    await tick();
+    expect(subtitleEvents(t.events)).toEqual([
+      { type: 'subtitle', id: 1, text: 'Prête.', emotion: 'amusee' },
+    ]);
+  });
+
+  it('a sentence said again after a suspension keeps its emotion', async () => {
+    const t = setup();
+    t.speaker.add(1, 'Un.', false, 'inquiete');
+    t.speaker.add(1, 'Deux.', false, 'vexee');
+    await tick();
+    t.speaker.suspend();
+    t.speaker.resume();
+    await tick();
+    // The sentence it was in is said again from its start, with the same emotion.
+    expect(subtitleEvents(t.events)).toEqual([
+      { type: 'subtitle', id: 1, text: 'Un.', emotion: 'inquiete' },
+      { type: 'subtitle', id: 1, text: 'Un.', emotion: 'inquiete' },
+    ]);
+    t.sounds[1]!.end();
+    await tick();
+    expect(subtitleEvents(t.events).at(-1)).toEqual({
+      type: 'subtitle',
+      id: 1,
+      text: 'Deux.',
+      emotion: 'vexee',
+    });
+  });
+
+  it('is written nowhere in the trace', async () => {
+    const trace = new Trace(() => 0);
+    const t = setup(async () => CLIP, trace);
+    t.speaker.add(1, 'Un.', false, 'douce');
+    t.speaker.end(1);
+    await tick();
+    t.sounds[0]!.end();
+    await tick();
+    expect(trace.events.length).toBeGreaterThan(0);
+    expect(trace.lines()).not.toContain('douce');
+  });
+
+  it('the synthesis gets the words alone', async () => {
+    const synth = vi.fn<(text: string) => Promise<Clip>>(async () => CLIP);
+    const t = setup(synth);
+    t.speaker.add(1, 'Un café.', false, 'douce');
+    await tick();
+    expect(synth.mock.calls).toEqual([['Un café.']]);
+  });
+});

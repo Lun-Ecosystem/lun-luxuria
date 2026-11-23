@@ -26,8 +26,8 @@ const deroule = (p: Partie) =>
     .join('\n') + '\n';
 
 describe('les scénarios de départ', () => {
-  it('sont trente', () => {
-    expect(Object.keys(scenarios)).toHaveLength(30);
+  it('sont trente et un', () => {
+    expect(Object.keys(scenarios)).toHaveLength(31);
   });
 
   it.each(Object.entries(scenarios))("%s : chargé, joué deux fois à l'identique, tenu", async (file, s) => {

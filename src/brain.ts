@@ -1,9 +1,14 @@
 export type SpeechWhy = 'reply' | 'ritual' | 'p0' | 'spontaneous';
 
 export type LiveEvent =
-  | { type: 'speech'; id: number; n: number; text: string; why: SpeechWhy }
+  /** `emotion`: how the sentence is said, an id of the server's list; absent, neutral. */
+  | { type: 'speech'; id: number; n: number; text: string; why: SpeechWhy; emotion?: string }
   | { type: 'speech-end'; id: number; why: SpeechWhy }
   | { type: 'message'; threadId: string; id: number };
+
+/** An emotion as the server sends it: kept only in the form of an id, anything else is absent. */
+export const emotionOf = (v: unknown): string | undefined =>
+  typeof v === 'string' && /^[a-z_]{1,24}$/.test(v) ? v : undefined;
 
 export interface Message {
   id: number;
