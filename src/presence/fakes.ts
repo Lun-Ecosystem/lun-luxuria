@@ -18,6 +18,13 @@ import {
  * `setTimeout`, as the speaker does, so a false clock plays them exactly; nothing here reads a clock of its own.
  */
 
+/** The tag the core takes out of a sentence: `{id}` at its head. The neutral gives no field; any other value goes out raw. */
+const etiquette = (phrase: string): { text: string; emotion?: string } => {
+  const m = /^\{([^{}\s]*)\}\s*/.exec(phrase);
+  if (!m) return { text: phrase };
+  return { text: phrase.slice(m[0].length), ...(m[1] === 'neutre' ? {} : { emotion: m[1]! }) };
+};
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** The player's log, on the page's clock. */
@@ -200,7 +207,7 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
       }
       for (const text of pieces) {
         if (this.#cut.has(id)) return;
-        this.#live({ type: 'speech', id, n: ++n, text, why: 'reply' });
+        this.#live({ type: 'speech', id, n: ++n, ...etiquette(text), why: 'reply' });
       }
     }
     if (this.#cut.has(id)) return;
@@ -208,7 +215,7 @@ export class FauxServeur implements Pick<Brain, 'send' | 'cut' | 'withdraw'> {
     on({
       type: 'done',
       message: msg(id, 'assistant', {
-        text: r.phrases.join(' '),
+        text: r.phrases.map((p) => etiquette(p).text).join(' '),
         durations,
         ...(r.erreur && { status: 'error', error: r.erreur }),
       }),

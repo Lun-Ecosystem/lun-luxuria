@@ -23,6 +23,10 @@ export interface Banc {
   jouer(): Promise<number>;
   /** The replies still coming (their stream open, not cut, not withdrawn), and when the last one stopped (0: none). */
   reponses(): { enCours: number; finie: number };
+  /** What the session held at the first sound of each of her sentences (plan « l'émotion par phrase », task 5). */
+  emotions: { texte: string; emotion: string | undefined }[];
+  /** Every distinct text the page showed, for the one who looks for a brace or a tag id that must never reach it. */
+  textes: string[];
   /** The game is over: each anchor never come writes `parole_sautee`, or `geste` 'saute'. Gives the journal. */
   fin(): BancEvent[];
 }
@@ -85,6 +89,16 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
     sautee: [BancNom, Record<string, TraceValue>];
   }[] = [];
   let joue = false;
+  // The emotion the session holds: it tells it through `__emotion` (`session.svelte.ts`), nothing else of it is read.
+  let emotionTenue: string | undefined;
+  const emotions: Banc['emotions'] = [];
+  (win as unknown as { __emotion: (e: string | undefined) => void }).__emotion = (e) => (emotionTenue = e);
+  // What is on the page, each time it changes.
+  const textes = new Set<string>();
+  new win.MutationObserver(() => {
+    const t = win.document.body?.textContent;
+    if (t) textes.add(t);
+  }).observe(win.document, { subtree: true, childList: true, characterData: true });
 
   const log = (name: BancNom, valeurs: Record<string, TraceValue | undefined> = {}, at = now()) => {
     const e: BancEvent = { de: 'banc', at, name };
@@ -230,6 +244,7 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
         dernier = p + (e.playbackTime - tap.bufferSize / sr + i / sr - ct) * 1000;
         if (premier === undefined) {
           premier = dernier;
+          emotions.push({ texte: s?.texte ?? '', emotion: emotionTenue });
           log('joue', { reponse: s?.reponse, phrase, texte: s?.texte ?? '', tete: s?.tete }, premier);
         }
       }
@@ -256,6 +271,10 @@ export function installerSonde(win: Window & typeof globalThis, plan: Plan): Ban
 
   const banc: Banc = {
     journal,
+    emotions,
+    get textes() {
+      return [...textes];
+    },
     async jouer() {
       if (!micCtx || !dest) throw new Error('jouer avant que la page ouvre le micro');
       const [ctx, sortie] = [micCtx, dest];

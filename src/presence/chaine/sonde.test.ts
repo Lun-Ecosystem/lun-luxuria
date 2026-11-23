@@ -96,6 +96,7 @@ function installer(paroles: ({ a: number } | { apres: Apres })[], gestes: Geste[
     setTimeout: (f: () => void, ms: number) => setTimeout(f, ms),
     navigator: { mediaDevices: {} },
     document,
+    MutationObserver,
     AudioContext: Ctx,
     AudioWorkletNode: Worklet,
     AudioBufferSourceNode: Ctx.Source,
@@ -181,6 +182,15 @@ describe('installerSonde', () => {
     expect(encore).not.toBe(stream);
     expect(encore).toMatchObject({ micro: micro() });
     expect(Ctx.tous).toHaveLength(1);
+  });
+
+  it('hears the emotion the session holds through __emotion, and every text the page shows', async () => {
+    installer([{ a: 300 }]);
+    (win as unknown as { __emotion: (e?: string) => void }).__emotion('douce');
+    document.body.textContent = 'Il est tard.';
+    await Promise.resolve();
+    expect(banc.textes).toContain('Il est tard.');
+    expect(banc.emotions).toEqual([]);
   });
 
   it('dates a sample at the instant it entered the tap, not when the tap gives it out', async () => {

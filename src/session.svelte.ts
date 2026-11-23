@@ -67,6 +67,10 @@ function store(key: string, value: string | null): void {
   }
 }
 
+/** Test access: the chain's probe, posed before the page, hears the emotion held. Nothing is shown, nothing traced. */
+const probeEmotion = (emotion: string | undefined) =>
+  (globalThis as { __emotion?: (e: string | undefined) => void }).__emotion?.(emotion);
+
 /** Ties the pure parts to the browser. Nothing is decided here that a test should see. */
 export class Session {
   settings = $state<Settings>(readSettings(stored(SETTINGS_KEY)));
@@ -472,6 +476,7 @@ export class Session {
       clearTimeout(this.#subtitleTimer);
       this.subtitle = e.text;
       this.emotion = e.emotion;
+      probeEmotion(this.emotion);
       // Without a voice it is not speaking, and the failure that says why stays.
       this.reading = e.mute === true;
       if (e.mute) return;
@@ -483,6 +488,7 @@ export class Session {
       this.speaking = false;
       this.reading = false;
       this.emotion = undefined;
+      probeEmotion(undefined);
       // Cut, its words leave with its voice: nothing on screen keeps talking.
       if (e.cut) this.subtitle = '';
       else this.#subtitleTimer = setTimeout(() => (this.subtitle = ''), SUBTITLE_STAYS_MS);
