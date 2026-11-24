@@ -52,6 +52,8 @@
   .lien {
     position: relative;
     display: flex;
+    /* A link keeps its height when the rail overflows: the list scrolls instead. */
+    flex: none;
     align-items: center;
     gap: 10px;
     height: 34px;
