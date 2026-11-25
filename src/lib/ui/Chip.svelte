@@ -24,7 +24,7 @@
   }: Props = $props();
 </script>
 
-<button {...rest} {type} class={['chip', { on }, className]} aria-pressed={on}>
+<button {...rest} {type} class={['chip', { on }, className]} aria-pressed={rest.role ? undefined : on}>
   {#if Icon}<Icon size={14} strokeWidth={ICON_STROKE} aria-hidden="true" />{/if}
   {@render children()}
   {#if count !== undefined}<span class="compte">{count}</span>{/if}
