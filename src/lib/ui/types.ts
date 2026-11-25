@@ -53,3 +53,35 @@ export interface NavItem {
   /** `ia`: counts what waits for a validation. */
   countTone?: 'neutre' | 'ia' | undefined;
 }
+
+/** How much a card matters, as the contract of the posts says it. Only `urgent` shows. */
+export type CardImportance = 'urgent' | 'normal' | 'low' | 'info' | 'log';
+
+/** A value the post proposes on a card, which the card can correct in place (contract 1.5). */
+export interface CardField {
+  name: string;
+  label: string;
+  /** The proposed choices, by their `value`. */
+  value: string[];
+  choices: { value: string; label: string }[];
+  /** Zero or more choices; without it, exactly one. */
+  multiple?: true;
+}
+
+/** What a group of cards shows of a card of the contract. */
+export interface GroupCard {
+  id: string;
+  title: string;
+  kind?: string | undefined;
+  meta?: string[] | undefined;
+  lines?: string[] | undefined;
+  reason?: string | undefined;
+  importance?: CardImportance | undefined;
+  fields?: CardField[] | undefined;
+  /** Can be decided with others, in one gesture. */
+  bulk?: boolean | undefined;
+  /** What accepting sends out of the post: never in a group. */
+  sends?: string | undefined;
+  /** The answers of a question: never in a group. */
+  options?: string[] | undefined;
+}

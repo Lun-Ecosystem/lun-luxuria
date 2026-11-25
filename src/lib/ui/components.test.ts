@@ -2,6 +2,7 @@
 import { render, screen } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
 import { describe, expect, it } from 'vitest';
+import Chip from './Chip.svelte';
 import ServiceCard from './ServiceCard.svelte';
 import StandaloneCard from './StandaloneCard.svelte';
 import StatCard from './StatCard.svelte';
@@ -74,5 +75,22 @@ describe('StatCard', () => {
     const link = screen.getByRole('link', { name: 'Contradictions : Trancher' });
     expect(link).toHaveAttribute('href', '/valider?filtre=contradictions');
     expect(link).toHaveClass('secondaire');
+  });
+});
+
+describe('Chip', () => {
+  const label = createRawSnippet(() => ({ render: () => '<span>Factures</span>' }));
+
+  it('without a role, aria-pressed follows on', () => {
+    const { unmount } = render(Chip, { props: { on: true, children: label } });
+    expect(screen.getByRole('button', { name: 'Factures' })).toHaveAttribute('aria-pressed', 'true');
+    unmount();
+    render(Chip, { props: { children: label } });
+    expect(screen.getByRole('button', { name: 'Factures' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('with a role given, no aria-pressed: the role says the state', () => {
+    render(Chip, { props: { on: true, role: 'radio', 'aria-checked': true, children: label } });
+    expect(screen.getByRole('radio', { name: 'Factures' })).not.toHaveAttribute('aria-pressed');
   });
 });

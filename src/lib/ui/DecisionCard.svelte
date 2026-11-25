@@ -1,10 +1,15 @@
 <!-- Copie générée depuis lun-docs/design/kit : ne pas modifier ici -->
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { RadioGroup } from 'bits-ui';
+  import { type Snippet, tick, untrack } from 'svelte';
   import type { HTMLAttributes } from 'svelte/elements';
+  import Badge from './Badge.svelte';
   import Button from './Button.svelte';
+  import Checkbox from './Checkbox.svelte';
+  import Chip from './Chip.svelte';
   import { Check, Clock, ICON_STROKE, type IconComponent, TriangleAlert, Undo, X } from './Icon.ts';
   import Kbd from './Kbd.svelte';
+  import type { CardField, CardImportance } from './types.ts';
 
   /*
    * A card, in the sense of the dictionary: a proposal a post prepared, which waits in a queue to be decided. Drawn
@@ -50,6 +55,14 @@
     off?: string | undefined;
     /** The answers of a question, in place of accept and refuse. */
     options?: string[] | undefined;
+    /** `urgent` shows « Urgent » first in the eyebrow; the other levels show nothing. */
+    importance?: CardImportance | undefined;
+    /** The values the post proposes, shown and corrected in place. Ignored when `options` are given. */
+    fields?: CardField[] | undefined;
+    /** Accepts the card as corrected, with the fields that changed only. Without it, no « Corriger ». */
+    oncorrect?: ((values: Record<string, string[]>) => void) | undefined;
+    /** Initial state, read once: the card mounts unfolded, without taking the focus. */
+    correcting?: boolean | undefined;
     acceptLabel?: string | undefined;
     /** The keys the app listens to, shown as a hint (« V », « R »). */
     shortcuts?: string[] | undefined;
@@ -90,6 +103,10 @@
     busy = false,
     off,
     options,
+    importance,
+    fields = [],
+    oncorrect,
+    correcting = false,
     acceptLabel = 'Valider',
     shortcuts = [],
     narrow = false,
@@ -104,16 +121,82 @@
     actions,
     doneActions,
     class: className,
+    onkeydown,
     ...rest
   }: Props = $props();
 
   const locked = $derived(busy || !!off);
+
+  const uid = $props.id();
+  const panel = `${uid}-choix`;
+  const shown = $derived(options?.length ? [] : fields);
+  const correctable = $derived(shown.length > 0 && !!oncorrect);
+  const proposed = () => Object.fromEntries(fields.map((f) => [f.name, [...f.value]]));
+
+  // Read once, as the prop says: the card folds and unfolds itself afterwards.
+  const initial = untrack(() => correcting);
+  let open = $state(initial);
+  let draft = $state<Record<string, string[]>>(initial ? proposed() : {});
+  let sheet = $state<HTMLElement>();
+
+  const picked = (f: CardField) => draft[f.name] ?? f.value;
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((v) => b.includes(v));
+  const changed = $derived(shown.filter((f) => !same(picked(f), f.value)));
+  const ready = $derived(changed.length > 0 && shown.every((f) => f.multiple || picked(f).length === 1));
+
+  const said = (f: CardField) =>
+    f.value.length
+      ? f.value.map((v) => f.choices.find((c) => c.value === v)?.label ?? v).join(', ')
+      : 'aucun choix';
+  const toggle = (f: CardField, value: string, on: boolean) => {
+    const rest = picked(f).filter((v) => v !== value);
+    draft[f.name] = on ? [...rest, value] : rest;
+  };
+
+  const unfold = async () => {
+    draft = proposed();
+    open = true;
+    await tick();
+    const first = sheet?.querySelector(`#${panel} [data-field]`);
+    const target =
+      first?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]') ??
+      first?.querySelector<HTMLElement>('button');
+    target?.focus();
+  };
+  const fold = async () => {
+    open = false;
+    await tick();
+    sheet?.querySelector<HTMLElement>(`[aria-controls="${panel}"]`)?.focus();
+  };
+  // No focus afterwards: the card is about to change status or place, the app decides.
+  const correct = () => {
+    // The contract takes only values among the choices: a proposed one outside them does not go back.
+    const among = (f: CardField) => picked(f).filter((v) => f.choices.some((c) => c.value === v));
+    const values = Object.fromEntries(changed.map((f) => [f.name, among(f)]));
+    open = false;
+    oncorrect?.(values);
+  };
+  const keydown: HTMLAttributes<HTMLElement>['onkeydown'] = (event) => {
+    onkeydown?.(event);
+    if (!open || event.key !== 'Escape') return;
+    // Taken here, so that an unfolded row or a group around the card does not close with it.
+    event.preventDefault();
+    event.stopPropagation();
+    void fold();
+  };
 </script>
 
 {#if status === 'pending'}
-  <article {...rest} class={['card', tone, { narrow }, className]} aria-busy={busy}>
-    {#if kind || meta.length}
+  <article
+    {...rest}
+    bind:this={sheet}
+    class={['card', tone, { narrow }, className]}
+    aria-busy={busy}
+    onkeydown={keydown}
+  >
+    {#if importance === 'urgent' || kind || meta.length}
       <p class="eyebrow">
+        {#if importance === 'urgent'}<Badge tone="attention">Urgent</Badge>{/if}
         {#if kind}<span class="kind">{kind}</span>{/if}
         {#each meta as m (m)}<span>{m}</span>{/each}
       </p>
@@ -128,6 +211,51 @@
         {#each lines as line, i (i)}<p>{line}</p>{/each}
       </div>
     {/if}
+    {#if open && correctable}
+      <div class="choices" id={panel}>
+        {#each shown as f, i (f.name)}
+          <div class="choice" data-field>
+            <span class="label" id="{panel}-{i}">{f.label}</span>
+            {#if f.multiple}
+              <div class="row" role="group" aria-labelledby="{panel}-{i}">
+                {#each f.choices as c (c.value)}
+                  <Checkbox
+                    label={c.label}
+                    checked={picked(f).includes(c.value)}
+                    disabled={locked}
+                    onchange={(on) => toggle(f, c.value, on)}
+                  />
+                {/each}
+              </div>
+            {:else}
+              <RadioGroup.Root
+                class="row"
+                aria-labelledby="{panel}-{i}"
+                disabled={locked}
+                bind:value={() => picked(f)[0] ?? '', (v) => (draft[f.name] = v ? [v] : [])}
+              >
+                {#each f.choices as c (c.value)}
+                  <RadioGroup.Item value={c.value}>
+                    {#snippet child({ props, checked })}
+                      <Chip {...props} on={checked}>{c.label}</Chip>
+                    {/snippet}
+                  </RadioGroup.Item>
+                {/each}
+              </RadioGroup.Root>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {:else if shown.length}
+      <dl class="values">
+        {#each shown as f (f.name)}
+          <div>
+            <dt>{f.label}</dt>
+            <dd>{said(f)}</dd>
+          </div>
+        {/each}
+      </dl>
+    {/if}
     {#if reason}<p class="reason"><span>Pourquoi</span>{reason}</p>{/if}
     {#if error}
       <p class="note danger" role="alert">
@@ -139,39 +267,59 @@
     {/if}
     {#if off}<p class="note">{off}</p>{/if}
     <div class="gestures">
-      {#if onretry}
-        <Button variant="principal" size="petit" disabled={locked} onclick={onretry}>Réessayer</Button>
-      {/if}
-      {#if options?.length && onaccept}
-        {#each options as option, i (option)}
+      {#if open && correctable}
+        <Button variant="principal" size="petit" icon={Check} disabled={locked || !ready} onclick={correct}
+          >Valider ainsi</Button
+        >
+      {:else}
+        {#if onretry}
+          <Button variant="principal" size="petit" disabled={locked} onclick={onretry}>Réessayer</Button>
+        {/if}
+        {#if options?.length && onaccept}
+          {#each options as option, i (option)}
+            <Button
+              variant={i === 0 && !onretry ? 'principal' : 'secondaire'}
+              size="petit"
+              disabled={locked}
+              onclick={() => onaccept(option)}>{option}</Button
+            >
+          {/each}
+        {:else if onaccept}
           <Button
-            variant={i === 0 && !onretry ? 'principal' : 'secondaire'}
+            variant={tone === 'danger' ? 'danger' : onretry ? 'secondaire' : 'principal'}
             size="petit"
-            disabled={locked}
-            onclick={() => onaccept(option)}>{option}</Button
+            icon={Check}
+            loading={busy}
+            disabled={!!off}
+            onclick={() => onaccept()}>{acceptLabel}</Button
           >
-        {/each}
-      {:else if onaccept}
+        {/if}
+      {/if}
+      {#if correctable}
         <Button
-          variant={tone === 'danger' ? 'danger' : onretry ? 'secondaire' : 'principal'}
+          variant="secondaire"
           size="petit"
-          icon={Check}
-          loading={busy}
-          disabled={!!off}
-          onclick={() => onaccept()}>{acceptLabel}</Button
+          disabled={locked}
+          aria-expanded={open}
+          aria-controls={panel}
+          onclick={() => (open ? fold() : unfold())}>Corriger</Button
         >
       {/if}
-      {#if onedit}
-        <Button variant="secondaire" size="petit" disabled={locked} onclick={onedit}>Modifier</Button>
+      {#if open && correctable}
+        <Button variant="fantome" size="petit" onclick={fold}>Annuler</Button>
+      {:else}
+        {#if onedit}
+          <Button variant="secondaire" size="petit" disabled={locked} onclick={onedit}>Modifier</Button>
+        {/if}
+        {#if onrefuse}
+          <Button variant="fantome" size="petit" disabled={locked} onclick={onrefuse}>Refuser</Button>
+        {/if}
+        {#if onlater}
+          <Button variant="fantome" size="petit" disabled={locked} onclick={onlater}>Plus tard</Button>
+        {/if}
+        {@render actions?.()}
       {/if}
-      {#if onrefuse}
-        <Button variant="fantome" size="petit" disabled={locked} onclick={onrefuse}>Refuser</Button>
-      {/if}
-      {#if onlater}
-        <Button variant="fantome" size="petit" disabled={locked} onclick={onlater}>Plus tard</Button>
-      {/if}
-      {@render actions?.()}
-      {#if shortcuts.length && !narrow}
+      {#if shortcuts.length && !narrow && !(open && correctable)}
         <span class="keys" aria-hidden="true">
           {#each shortcuts as key (key)}<Kbd>{key}</Kbd>{/each}
         </span>
@@ -258,6 +406,42 @@
   }
   .lines p {
     margin: 0;
+  }
+  .values {
+    display: grid;
+    gap: 3px;
+    margin: 0;
+    font-size: 13px;
+  }
+  .values div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 8px;
+  }
+  .values dt {
+    color: var(--texte-3);
+  }
+  .values dd {
+    margin: 0;
+    color: var(--texte);
+  }
+  .choices {
+    display: grid;
+    gap: 12px;
+  }
+  .choice {
+    display: grid;
+    gap: 6px;
+  }
+  .choice .label {
+    font-size: 12px;
+    color: var(--texte-3);
+  }
+  /* The chips go to the line on a phone and stay 28 px high. */
+  .choice :global(.row) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
   }
   .reason {
     margin: 0;
