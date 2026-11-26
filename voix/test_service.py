@@ -5,6 +5,7 @@ uv run --with numpy --with httpx --with soundfile python voix/test_service.py
 """
 import json
 import math
+import os
 import threading
 import time
 import urllib.error
@@ -17,6 +18,7 @@ import service
 
 PORT = 18793
 FAKE_PORT = 18794
+PROXY_PORT = 18796  # 18795 is the service without a voice (check_no_tts)
 
 
 def fake_server(port, answer):
@@ -117,6 +119,39 @@ def check_bricks():
         assert service.bricks("faster:small", "::")["rvc"] == {"up": False}, \
             "an address that is not one is a brick that does not answer, not a crash"
     finally:
+        server.shutdown()
+
+
+def check_no_proxy():
+    """The audio stays on this machine: a proxy set for the system is not asked for the local bricks."""
+    through = []
+
+    def proxy_answer(path, body):
+        through.append(path)
+        return 200, "application/json", json.dumps({"text": "proxy"}).encode()
+
+    def answer(path, body):
+        if path == "/inference":
+            return 200, "application/json", json.dumps({"text": "oui"}).encode()
+        return 200, "application/octet-stream", body[-service.RVC_BLOCK * 4:]
+
+    names = ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy")
+    before = {name: os.environ.get(name) for name in names}
+    proxy = fake_server(PROXY_PORT, proxy_answer)
+    server = fake_server(PROXY_PORT + 1, answer)
+    try:
+        for name in names:
+            os.environ[name] = "" if "NO" in name.upper() else f"http://127.0.0.1:{PROXY_PORT}"
+        up = f"http://127.0.0.1:{PROXY_PORT + 1}"
+        assert service.make_stt(f"whisper-server:{up}", "fr")(np.zeros(1600, dtype="<f4"))[0] == "oui"
+        service.make_rvc(up)(np.zeros(1600, dtype="<f4"), 16000)
+        assert service.reach(up)
+        assert not service.reach("http://127.0.0.1:1"), "the proxy does not answer for a brick that is down"
+        assert through == [], through
+    finally:
+        for name, value in before.items():
+            os.environ.pop(name, None) if value is None else os.environ.__setitem__(name, value)
+        proxy.shutdown()
         server.shutdown()
 
 
@@ -269,6 +304,7 @@ def main():
     check_whisper_confidence()
     check_rvc_blocks()
     check_bricks()
+    check_no_proxy()
     check_microphone()
     print("ok")
 
