@@ -29,6 +29,8 @@ import soundfile as sf
 SR_STT = 16000
 MAX_BODY = 64 * 1024 * 1024
 DRAIN_MAX = 1024 * 1024  # what a refused page may make the service read, at most
+# The bricks are on this machine: no proxy of the system or of the environment is asked, the audio stays here.
+LOCAL = {"trust_env": False}
 ORIGINS = ("http://127.0.0.1:5180", "http://localhost:5180", "tauri://localhost", "http://tauri.localhost")
 
 
@@ -59,7 +61,7 @@ def make_stt(spec, lang):
             sf.write(buf, audio, SR_STT, format="WAV")
             r = httpx.post(f"{arg}/inference", files={"file": ("a.wav", buf.getvalue())},
                            data={"language": lang, "response_format": "verbose_json", "token_timestamps": "false"},
-                           timeout=60)
+                           timeout=60, **LOCAL)
             r.raise_for_status()
             body = r.json()
             # Text tokens only, unlike faster-whisper's avg_logprob; whisper.cpp's own avg_logprob counts special tokens.
@@ -114,7 +116,7 @@ def make_rvc(url, gain=2.0):
         with lock:
             for i in range(0, len(x), RVC_BLOCK):
                 r = httpx.post(f"{url}/api/voice-changer/convert_chunk",
-                               files={"waveform": x[i:i + RVC_BLOCK].tobytes()}, timeout=30)
+                               files={"waveform": x[i:i + RVC_BLOCK].tobytes()}, timeout=30, **LOCAL)
                 r.raise_for_status()
                 y = np.frombuffer(r.content, "<f4")[:RVC_BLOCK]
                 out.append(np.pad(y, (0, RVC_BLOCK - len(y))))
@@ -126,7 +128,7 @@ def make_rvc(url, gain=2.0):
 def reach(url):
     """Any answer counts: the program is there. Short, the screen asks often."""
     try:
-        httpx.get(url, timeout=0.5)
+        httpx.get(url, timeout=0.5, **LOCAL)
         return True
     except Exception:  # refused, too slow, or an address that is not one: not answering
         return False
