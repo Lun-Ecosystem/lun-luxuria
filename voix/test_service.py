@@ -18,7 +18,7 @@ import service
 
 PORT = 18793
 FAKE_PORT = 18794
-PROXY_PORT = 18795
+PROXY_PORT = 18796  # 18795 is the service without a voice (check_no_tts)
 
 
 def fake_server(port, answer):
